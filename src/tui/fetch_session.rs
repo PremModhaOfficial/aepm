@@ -125,6 +125,7 @@ impl FetchSession {
         runner: R,
         tree: Tree,
         now: SystemTime,
+        motion: bool,
     ) -> Result<Self, StartFailure>
     where
         R: CommandRunner + Send + 'static,
@@ -184,6 +185,7 @@ impl FetchSession {
             last_key: None,
             argv,
         };
+        session.set_motion(motion);
         session.last_key = Some(session.frame_key());
         Ok(session)
     }
@@ -227,6 +229,13 @@ impl FetchSession {
     /// The captured log, oldest first, bounded by [`LOG_LINES`].
     pub fn lines(&self) -> &VecDeque<StreamLine> {
         &self.lines
+    }
+
+    /// Freeze the spinner for this run (`--no-motion`). The ten-per-second tick
+    /// still observes the cache; it just stops asking for a frame that only the
+    /// spinner moved.
+    fn set_motion(&mut self, motion: bool) {
+        self.monitor.set_motion(motion);
     }
 
     /// The action line and the keys that are legal in this phase.
@@ -643,6 +652,7 @@ mod tests {
             BlockingRunner::new(Arc::clone(&fake)),
             fixture.tree(),
             at(1),
+            true,
         )
         .err()
         .expect("lock gate");
@@ -670,7 +680,7 @@ mod tests {
         fake.push_stream(0, &[], &[]);
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
-        let session = FetchSession::start(&fixture.config, runner, fixture.tree(), at(1))
+        let session = FetchSession::start(&fixture.config, runner, fixture.tree(), at(1), true)
             .expect("session starts");
         let footer = session.footer(false);
 
@@ -699,6 +709,7 @@ mod tests {
             BlockingRunner::new(Arc::clone(&fake)),
             fixture.tree(),
             at(1),
+            true,
         )
         .expect("session starts");
 
@@ -734,6 +745,7 @@ mod tests {
             BlockingRunner::new(Arc::clone(&fake)),
             fixture.tree(),
             at(1),
+            true,
         )
         .expect("session starts");
 
@@ -765,6 +777,7 @@ mod tests {
             BlockingRunner::new(Arc::clone(&fake)),
             fixture.tree(),
             at(1),
+            true,
         )
         .err()
         .expect("lock gate");
@@ -784,7 +797,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         runner.release();
         assert!(wait_until(|| {
@@ -811,7 +824,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         runner.release();
         assert!(wait_until(|| {
@@ -846,7 +859,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
 
         fs::write(fixture.part(), [0u8; 400]).expect("write part");
@@ -899,7 +912,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         session.tree(); // the tree stays available for the result frame
         runner.release();
@@ -948,7 +961,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         fs::write(fixture.part(), [0u8; 400]).expect("write part");
         assert!(session.tick(at(2), false).changed);
@@ -1001,7 +1014,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         runner.release();
         assert!(wait_until(|| {
@@ -1019,6 +1032,64 @@ mod tests {
         assert!(
             !footer.failed,
             "an unwritable state file must not style a successful fetch as a failure"
+    fn no_motion_never_redraws_for_the_spinner_alone() {
+        // The control: with motion on, a running download turns the spinner
+        // cell every 100 ms, so a tick with no new fact still asks for a frame.
+        let moving = Fixture::new();
+        let fake = Arc::new(FakeRunner::new());
+        moving.queue_gates(&fake);
+        fake.push_stream(0, &[], &[]);
+        let runner = BlockingRunner::new(Arc::clone(&fake));
+        let mut moving_session =
+            FetchSession::start(&moving.config, runner.clone(), moving.tree(), at(1), true)
+                .expect("session starts");
+        fs::write(moving.part(), [0u8; 400]).expect("write part");
+        assert!(
+            moving_session
+                .tick(at(2) + Duration::from_millis(300), false)
+                .changed,
+            "the start is drawn"
+        );
+        assert!(
+            moving_session
+                .tick(at(2) + Duration::from_millis(600), false)
+                .changed,
+            "motion turns the spinner cell on its own"
+        );
+
+        // `--no-motion`: the same observation still lands, but the frame stays
+        // put until a real fact or the elapsed label changes.
+        let still = Fixture::new();
+        let fake = Arc::new(FakeRunner::new());
+        still.queue_gates(&fake);
+        fake.push_stream(0, &[], &[]);
+        let runner = BlockingRunner::new(Arc::clone(&fake));
+        let mut session =
+            FetchSession::start(&still.config, runner.clone(), still.tree(), at(1), false)
+                .expect("session starts");
+        fs::write(still.part(), [0u8; 400]).expect("write part");
+        assert!(
+            session
+                .tick(at(2) + Duration::from_millis(300), false)
+                .changed,
+            "the start is drawn"
+        );
+        assert_eq!(
+            session.live().state("tool"),
+            Some(NodeState::Running),
+            "the real observation landed"
+        );
+        assert!(
+            !session
+                .tick(at(2) + Duration::from_millis(600), false)
+                .changed,
+            "no-motion: the spinner alone never redraws"
+        );
+        // The elapsed label is data, not animation: it still crosses its
+        // one-second floor with motion off.
+        assert!(
+            session.tick(at(3), false).changed,
+            "the elapsed label still advances once a second"
         );
     }
 
@@ -1031,7 +1102,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         fs::write(fixture.part(), [0u8; 400]).expect("write part");
         assert!(session.tick(at(2), false).changed);
@@ -1074,7 +1145,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         assert!(!session.tick(at(2), false).changed);
     }
@@ -1088,7 +1159,7 @@ mod tests {
         let runner = BlockingRunner::new(Arc::clone(&fake));
 
         let mut session =
-            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1))
+            FetchSession::start(&fixture.config, runner.clone(), fixture.tree(), at(1), true)
                 .expect("session starts");
         fs::remove_dir_all(&fixture.cache).expect("remove cache");
         assert!(session.tick(at(2), false).changed);
