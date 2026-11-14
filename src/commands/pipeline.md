@@ -86,7 +86,11 @@ Private helpers with contract weight:
   [clean.rs:run] [clean.rs:run_with].
 - `clean` never deletes a yay build for a package that is not installed
   (`YayAction::KeepNotInstalled`) and only touches yay build directories older
-  than `THIRTY_DAYS` [clean.rs:YayAction] [clean.rs:THIRTY_DAYS].
+  than `THIRTY_DAYS` [clean.rs:YayAction] [clean.rs:THIRTY_DAYS]. A build names
+  itself through `.SRCINFO` or its built `*.pkg.tar.*` files; the directory is
+  the pkgbase, not an installed name, so it is never used. A build that names
+  nothing is kept (`YayAction::KeepUnidentified`) [clean.rs:package_names]
+  [clean.rs:built_package_names].
 - `init` prints its artifacts unless `apply` is set, and refuses
   `init --apply` when run under sudo by a different user, because the sudoers
   rule must be installed for the invoking user [init.rs:run].
