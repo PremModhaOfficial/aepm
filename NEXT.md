@@ -510,11 +510,19 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
 - [x] The log screen belongs to its session: `esc` on a finished session, and a
       `F` that a gate refuses, close the log with it, so no open-log flag is
       left with no screen to toggle it.
-- [ ] `--no-motion`, ASCII, 2,000-package performance pass.
+- [x] `--no-motion`, ASCII, 2,000-package performance pass.
+      `--no-motion` freezes the spinner and the 10 Hz pulse: the ten-per-second
+      tick still observes the cache, but only a real fact or the once-a-second
+      elapsed label redraws. `--ascii`
+      uses an ASCII frame set for every overlay and one sweep test asserts no
+      non-ASCII byte on any screen at 80x24 and 120x40.
 - [ ] Keymap overrides for the v1 keys.
 - [ ] No mouse, themes, or `tui.conf` in v1.
 
 Done when the frame budget in `TUI.md` holds and ASCII preserves meaning.
+Measured with `cargo test --release --test perf -- --nocapture` on 2,000 rows
+(worst of two release runs): key to frame 7.7 ms static and 10.4 ms live
+against 16 ms, peak RSS 9.2 MB against 30 MB.
 
 T4 stuck-flag fix landed: `esc` on a finished session closes its log with it,
 and so does the `F` path that drops a session before a gate refuses, so the
