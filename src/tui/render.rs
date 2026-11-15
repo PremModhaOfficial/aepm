@@ -1915,6 +1915,10 @@ fn live_row_line(
             Some(ArtifactState::Built) => Some("built".to_string()),
             _ => None,
         },
+        // A freeze-blocked row is not a downstream block, and the card
+        // counts downstream blocks. Say which one this is, so the two cannot
+        // read as a contradiction.
+        LiveState::BlockedByFreeze => Some("not started".to_string()),
         LiveState::Blocked => None,
     };
     if let Some(annotation) = annotation {
@@ -1964,8 +1968,15 @@ fn live_glyph(live: &super::live::LiveRow, ascii: bool) -> &'static str {
                 "[√]"
             }
         }
-        LiveState::Failed | LiveState::Blocked | LiveState::Skipped { satisfied: false } => {
-            if ascii { "[x]" } else { "[×]" }
+        LiveState::Failed
+        | LiveState::Blocked
+        | LiveState::BlockedByFreeze
+        | LiveState::Skipped { satisfied: false } => {
+            if ascii {
+                "[x]"
+            } else {
+                "[×]"
+            }
         }
         LiveState::Skipped { satisfied: true } => {
             if ascii {
@@ -1987,7 +1998,7 @@ fn live_state_label(live: &super::live::LiveRow) -> &'static str {
         },
         LiveState::Done => "done",
         LiveState::Failed => "failed",
-        LiveState::Blocked => "blocked",
+        LiveState::Blocked | LiveState::BlockedByFreeze => "blocked",
         LiveState::Skipped { .. } => "skipped",
     }
 }
@@ -1998,7 +2009,7 @@ fn live_color(state: LiveState) -> Color {
         LiveState::Running => ACTIVE,
         LiveState::Done => DONE,
         LiveState::Failed => FAILURE,
-        LiveState::Blocked | LiveState::Skipped { .. } => DIM,
+        LiveState::Blocked | LiveState::BlockedByFreeze | LiveState::Skipped { .. } => DIM,
     }
 }
 
@@ -4036,10 +4047,11 @@ mod tests {
                 "{needle:?} must survive at 80x24:\n{narrow}"
             );
         }
-        // The viewport contract is explicit: running, failed and blocked rows
-        // are always kept. Everything else is kept while it fits. At this size
-        // all eight packages fit, so the frame is honest with no marker at
-        // all; a marker is only owed when a run is actually hidden.
+        // The viewport contract is explicit: running, failed and
+        // reducer-blocked rows are always kept. Everything else is kept while
+        // it fits. At this size all eight packages fit, so the frame is honest
+        // with no marker at all; a marker is only owed when a run is actually
+        // hidden.
         let hidden_runs = narrow.matches('⋮').count();
         let shown_packages = narrow
             .lines()
@@ -4062,21 +4074,22 @@ mod tests {
             "no replacement character at 80x24:\n{narrow}"
         );
 
-        // Every state the view can draw, in one frame.
+        // Every state this frame can draw. A frozen frame has no planned row,
+        // by design: an unstarted node reads blocked. `[ ]` and `waiting for`
+        // are proven on the non-frozen `roots` and `diamond` goldens.
         for needle in [
-            "[ ]",         // planned
             "[|]",         // running
             "[√]",         // done
             "[×]",         // failed
             "downloading", // activity kind
             "building",    // activity kind
-            "waiting for", // prerequisite counts
             "⏱",           // a timer above the floor
             "MiB/",        // both observed sizes
             "81.9%",       // the only percent either size can produce
             "PRE-FLIGHT",  // the gate checklist
             "cached",      // a satisfied artifact
             "frozen",      // the frontier stopped
+            "not started", // an unstarted row the freeze will never run
         ] {
             assert!(frame.contains(needle), "{needle:?} missing:\n{frame}");
         }
@@ -4119,7 +4132,7 @@ mod tests {
             "ASCII stays ASCII"
         );
         // ASCII swaps the whole marker set, not just the bars.
-        for needle in ["[v]", "[|]", "[x]", "[ ]", "81.9%", "repair: ", "+  lock"] {
+        for needle in ["[v]", "[|]", "[x]", "81.9%", "repair: ", "+  lock"] {
             assert!(
                 ascii.contains(needle),
                 "{needle:?} missing from ASCII:\n{ascii}"
