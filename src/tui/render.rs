@@ -5379,7 +5379,7 @@ mod tests {
             let separator = Footer {
                 status: Some("fetch: running sudo -n pacman -Syuw · install blocked"),
                 keys: Some("esc detach | g ledger | l log"),
-                failure: false,
+                failed: false,
                 repair: None,
             };
             let separator_frame = render_live_frame_status(

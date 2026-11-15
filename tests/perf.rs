@@ -102,7 +102,7 @@ fn the_frame_budget_holds_with_two_thousand_packages() {
     let footer = Footer {
         status: Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm"),
         keys: Some("esc detach | g ledger | l log | ? help"),
-        failure: false,
+        failed: false,
         repair: None,
     };
 

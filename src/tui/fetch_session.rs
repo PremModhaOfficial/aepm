@@ -1032,6 +1032,10 @@ mod tests {
         assert!(
             !footer.failed,
             "an unwritable state file must not style a successful fetch as a failure"
+        );
+    }
+
+    #[test]
     fn no_motion_never_redraws_for_the_spinner_alone() {
         // The control: with motion on, a running download turns the spinner
         // cell every 100 ms, so a tick with no new fact still asks for a frame.
