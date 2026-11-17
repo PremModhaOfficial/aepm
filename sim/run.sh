@@ -68,7 +68,11 @@ build_image() {
 
     # Only a BuildKit that cannot run at all is retried. A Dockerfile error is a
     # real error and must not be papered over by a second builder.
-    if grep -q 'failed to add the host <=> sandbox pair interfaces' "$build_log"; then
+    # Docker names the two veth endpoints, so the words are not adjacent:
+    # `failed to add the host (veth1a2b) <=> sandbox (veth3c4d) pair
+    # interfaces`. The literal form matched nothing from Docker 24 on, which
+    # made this retry dead code on exactly the hosts it exists for.
+    if grep -Eq 'failed to add the host.*<=> sandbox.*pair interfaces' "$build_log"; then
         reason='BuildKit cannot create the build sandbox'
     elif grep -q 'BuildKit is enabled but the buildx component is missing' "$build_log"; then
         reason='BuildKit is enabled but buildx is unavailable'

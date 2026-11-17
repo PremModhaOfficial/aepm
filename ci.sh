@@ -32,6 +32,9 @@ cargo test --all-targets --all-features --locked
 echo "=== sim image tag (per worktree) ==="
 ./sim/check-image-tag.sh
 
+echo "=== sim build retry (BuildKit sandbox fault) ==="
+bash sim/check-build-retry.sh
+
 echo "=== fmt --check ==="
 cargo fmt --all --check
 

@@ -30,9 +30,11 @@ Scenario numbers are a shared namespace across everything under `sim/`, so
 `sim/check-scenario-numbers.sh` on its own first.
 
 If the host's BuildKit cannot create the build sandbox ("failed to add the
-host <=> sandbox pair interfaces", or BuildKit enabled with no `buildx`),
+host (veth…) <=> sandbox (veth…) pair interfaces", or BuildKit enabled with no
+`buildx`),
 `run.sh` says so and retries the build once with `DOCKER_BUILDKIT=0 --network
-host`. That flag belongs to the build only; the scenario argv is asserted to
+host`. `sim/check-build-retry.sh` proves the retry fires on that wording and
+that a Dockerfile error still fails instead of being retried. That flag belongs to the build only; the scenario argv is asserted to
 carry `--network none`, and `run.sh` exits 1 rather than run a container
 without it.
 
