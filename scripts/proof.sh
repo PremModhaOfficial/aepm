@@ -13,7 +13,8 @@ cd "$(dirname "$0")/.."
 QUIET=0
 [ "${1:-}" = "--quiet" ] && QUIET=1
 fail=0
-say() { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
+say() { printf '%s\n' "$*"; }      # always: quiet mode only drops per-PR rows
+detail() { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 say "proof taken $(now)"
@@ -28,9 +29,9 @@ if git rev-parse --verify -q origin/main >/dev/null; then
   git fetch -q origin main 2>/dev/null || true
   ahead=$(git rev-list --count origin/main..HEAD)
   behind=$(git rev-list --count HEAD..origin/main)
-  say "vs origin/main: $ahead ahead, $behind behind ($(git rev-parse --short origin/main))"
+  detail "vs origin/main: $ahead ahead, $behind behind ($(git rev-parse --short origin/main))"
 else
-  say "vs origin/main: no remote ref"
+  detail "vs origin/main: no remote ref"
   fail=1
 fi
 
@@ -44,7 +45,7 @@ if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
             ((.statusCheckRollup // []) | group_by(.conclusion // .state // "PENDING")
              | map((.[0].conclusion // .[0].state // "PENDING") + ":" + (length|tostring))
              | join(","))' 2>/dev/null)
-    say "  ${row:-#$n checks unreadable}"
+    detail "  ${row:-#$n checks unreadable}"
   done
   say "issues open: $(gh issue list --state open --json number --jq 'length' 2>/dev/null || echo 0)"
 else
@@ -53,12 +54,15 @@ else
 fi
 
 # --- plan ------------------------------------------------------------------
-if [ -f NEXT.md ]; then
-  done_n=$(grep -c '^- \[x\]' NEXT.md)
-  open_n=$(grep -c '^- \[ \]' NEXT.md)
+# Measured on origin/main, not the working tree: a checkout 28 commits behind
+# reported 95/117 while main was at 114/128, which is a stale proof.
+plan_src=$(git rev-parse --verify -q origin/main >/dev/null && echo origin/main || echo HEAD)
+if git show "$plan_src:NEXT.md" >/tmp/proof-next.md 2>/dev/null; then
+  done_n=$(grep -c '^- \[x\]' /tmp/proof-next.md)
+  open_n=$(grep -c '^- \[ \]' /tmp/proof-next.md)
   total=$((done_n + open_n))
   pct=$(( total ? done_n * 100 / total : 0 ))
-  say "plan: $done_n/$total done (${pct}%), $open_n left"
+  say "plan: $done_n/$total done (${pct}%), $open_n left [$plan_src]"
 else
   say "plan: NEXT.md missing"
   fail=1
@@ -70,9 +74,9 @@ fi
 newest=$(ls -t /tmp/*ci*.log /tmp/*sim*.log /tmp/*test*.log /tmp/*clippy*.log 2>/dev/null | head -1)
 if [ -n "$newest" ]; then
   age=$(( $(date +%s) - $(stat -c %Y "$newest") ))
-  say "newest evidence: $(basename "$newest"), ${age}s old"
+  detail "newest evidence: $(basename "$newest"), ${age}s old"
 else
-  say "newest evidence: none"
+  detail "newest evidence: none"
   fail=1
 fi
 
