@@ -18,6 +18,24 @@ SIM_IMAGE=aepm-sim:mine ./sim/run.sh   # override the image tag
 
 Requires Docker or Podman. The container runs with `--network none`.
 
+Each scenario runs under a timeout (`SIM_SCENARIO_TIMEOUT`, default 300s) and
+writes one log into a directory `run.sh` prints on stdout
+(`sim-logs/<utc-timestamp>/` unless `SIM_LOG_DIR` says otherwise). CI uploads
+that directory as the `sim-logs-*` artifact, so a failed or timed-out run keeps
+its evidence. A timeout fails that one scenario with its name and elapsed
+seconds; it does not hang the job.
+
+Scenario numbers are a shared namespace across everything under `sim/`, so
+`run.sh` refuses to start when two files share one, and CI runs
+`sim/check-scenario-numbers.sh` on its own first.
+
+If the host's BuildKit cannot create the build sandbox ("failed to add the
+host <=> sandbox pair interfaces", or BuildKit enabled with no `buildx`),
+`run.sh` says so and retries the build once with `DOCKER_BUILDKIT=0 --network
+host`. That flag belongs to the build only; the scenario argv is asserted to
+carry `--network none`, and `run.sh` exits 1 rather than run a container
+without it.
+
 The image tag defaults to `aepm-sim:<worktree directory>-<8 hex of
 its path>`, with the directory sanitised to docker's tag characters, a leading
 dot or dash dropped, and `worktree` used when the name leaves nothing usable.

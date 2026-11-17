@@ -22,5 +22,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check scenario numbering
+        # Two scenario files with the same number make a log line and a README
+        # row ambiguous. Fails before the image build spends a minute.
+        run: ./sim/check-scenario-numbers.sh
       - name: Build sim image and run scenarios
+        env:
+          # Flat directory so the artifact path is stable; run.sh prints it.
+          SIM_LOG_DIR: sim-logs
         run: ./sim/run.sh
+      - name: Upload scenario logs
+        # Always: a failed or timed-out run is the one whose log is needed.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sim-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sim-logs/
+          if-no-files-found: warn
+          retention-days: 14

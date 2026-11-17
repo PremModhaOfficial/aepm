@@ -67,7 +67,10 @@ override=$(tag "$tmp/alpha" example:override)
 [[ $override == "example:override" ]] ||
     { echo "sim: SIM_IMAGE ignored, build used '$override'" >&2; exit 1; }
 
-built=$(argv "$tmp/alpha" - --build-only --no-cache)
+# awk, not grep -m1: an early-closing reader gives the writer SIGPIPE, and
+# pipefail turns that into a failed check.
+built=$(argv "$tmp/alpha" - --build-only --no-cache |
+    awk '/^build /{if (!seen) {print; seen=1}}')
 [[ $built == build\ --no-cache\ -f\ sim/Dockerfile\ -t\ * ]] ||
     { echo "sim: --no-cache not passed to the build: '$built'" >&2; exit 1; }
 
