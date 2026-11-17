@@ -146,7 +146,9 @@ review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
 review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
 
 # Typed state block pr-agent embeds in the review comment (multi-line HTML comment).
-state_json="$(printf '%s\n' "$review_body" | awk '/pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
+# The start rule must fire once: the marker is also quoted inside finding bodies,
+# and a start rule that re-triggers on those lines swallows the JSON line.
+state_json="$(printf '%s\n' "$review_body" | awk '!f && /pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   complete="$(jq -r '.last_run.complete // false' <<<"$state_json")"
   excluded="$(jq -r '(.last_run.excluded_files // []) | length' <<<"$state_json")"

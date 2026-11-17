@@ -143,4 +143,11 @@ run describe-newer 1 'older than the PR head'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$describe_body")]"
 run describe-after-review 0 'gate: pass'
 
-printf 'review gate: 14/14\n'
+# The review body quotes the marker name inside its own findings, so the block
+# start must fire once. A start rule that re-triggers on the quoted line eats
+# the JSON line and the gate reads "does not record a head" at a real head.
+quoted="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[{"body":"the marker is `pr-agent-review-state:v1`","state":"ACTIVE"}],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$quoted")]"
+run marker-quoted 0 'gate: pass'
+
+printf 'review gate: 15/15\n'

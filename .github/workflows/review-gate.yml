@@ -1,9 +1,11 @@
 name: Review Gate
 
 # Model-free coverage gate. The review bot deliberately does not run on push,
-# so this check re-evaluates after every push and after every review run, and
-# fails when the review is missing, stale, or its verdict is not a clean pass.
-# It never calls a model and never spends credits.
+# so this check re-evaluates only when a review run finishes. After a push the
+# new head has no `Review Gate` check at all, and once this check is required
+# that absence is what blocks the merge. It fails when the review is missing,
+# stale, or its verdict is not the clean pass. It never calls a model and never
+# spends credits.
 #
 # Two triggers only, both of which load this file and the gate script from the
 # default branch, so a PR can neither rewrite the check nor hand it a script.
