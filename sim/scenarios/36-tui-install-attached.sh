@@ -6,7 +6,7 @@ source /usr/local/lib/sim/lib.sh
 
 echo "scenario: the tui install runs the attached upgrade and restores the terminal"
 
-state_dir=/home/installer/.local/state/aur-prefetch
+state_dir=/home/installer/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 
@@ -25,7 +25,7 @@ rm -rf "$state_dir"
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec 'stty rows 40 cols 120; aur-prefetch tui; rc=$?; stty -a | grep -q icanon && test "$rc" = 0' /dev/null
+script -qec 'stty rows 40 cols 120; aepm tui; rc=$?; stty -a | grep -q icanon && test "$rc" = 0' /dev/null
 EOF
 chmod 755 "$driver"
 

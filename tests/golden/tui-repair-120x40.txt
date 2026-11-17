@@ -1,4 +1,4 @@
-aur-prefetch · Fetch · 5 packages · live
+aepm · Fetch · 5 packages · live
 Dependency Graph:                                                                              install 5 packages · live
 [|] solo 2.0.0-1                               downloading · ⏱ 2s                                                1.1 MiB
 ┌─ [×] right 2.0.0-1                           blocked                                                           1.1 MiB

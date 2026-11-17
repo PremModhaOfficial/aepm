@@ -12,7 +12,7 @@ echo "scenario: live fetch streams real bytes from the real cache"
 
 cache=/var/cache/pacman/pkg
 package=simapp-2.0.0-1-x86_64.pkg.tar.zst
-state_dir=/home/builder/.local/state/aur-prefetch
+state_dir=/home/builder/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 
@@ -26,7 +26,7 @@ rm -rf "$state_dir"
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec "stty rows 40 cols 120; aur-prefetch tui" /dev/null
+script -qec "stty rows 40 cols 120; aepm tui" /dev/null
 EOF
 chmod 755 "$driver"
 
@@ -110,7 +110,7 @@ assert_eq "$state_files" "state.json" "the TUI wrote only fetch's state file"
 assert_contains "$(cat "$state_dir/state.json" 2>/dev/null)" '"last_fetch_pending":1' \
     "fetch recorded the one pending package"
 assert_eq "$(find /home/builder/.local/state -type f -printf '%P\n' 2>/dev/null | sort)" \
-    "aur-prefetch/state.json" "no other state file appeared"
+    "aepm/state.json" "no other state file appeared"
 
 # 6. The only escalation is the one sudoers allows. No install, no AUR build,
 #    and no second pacman argv.

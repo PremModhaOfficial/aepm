@@ -47,7 +47,7 @@ pacman -Syy --noconfirm >/dev/null
 assert_eq "$(pacman -Sl aurto | awk '{print $2, $3}')" "$pkgname 1.0.0-1" \
     "the local aurto repo only holds the old version"
 check_log=$(mktemp)
-runuser -l builder -c 'aur-prefetch check' >"$check_log" 2>&1
+runuser -l builder -c 'aepm check' >"$check_log" 2>&1
 assert_contains "$(cat "$check_log")" "check: aur updates: 1" \
     "check sees the pending AUR update, so install can see it too"
 assert_eq "$(installed_version)" "1.0.0-1" "nothing has been installed yet"
@@ -55,7 +55,7 @@ assert_eq "$(installed_version)" "1.0.0-1" "nothing has been installed yet"
 # The install. It is legal and it succeeds: the risk is not a failure, it is
 # that a build may now hold the terminal and nothing said so.
 log=$(mktemp)
-runuser -l installer -c 'aur-prefetch install --yes' >"$log" 2>&1
+runuser -l installer -c 'aepm install --yes' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "install exits 0"

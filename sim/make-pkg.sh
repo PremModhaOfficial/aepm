@@ -24,10 +24,10 @@ cat >"$dir/.PKGINFO" <<EOF
 pkgname = $name
 pkgbase = $name
 pkgver = $version-1
-pkgdesc = Deterministic package for aur-prefetch simulation tests
-url = https://example.invalid/aur-prefetch/sim
+pkgdesc = Deterministic package for aepm simulation tests
+url = https://example.invalid/aepm/sim
 builddate = $(date -u +%s)
-packager = aur-prefetch sim harness
+packager = aepm sim harness
 size = $isize
 arch = x86_64
 license = MIT

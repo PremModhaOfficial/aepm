@@ -48,7 +48,7 @@ branch into this one.
    from hiding work`. `./ci.sh` green.
 8. Runtime proof: `sim/scenarios/39-fetch-state-unwritable.sh`, plus the table
    row. Commit 4 `81ec096`.
-9. `docker build --no-cache -f sim/Dockerfile -t aur-prefetch-sim:local .` then
+9. `docker build --no-cache -f sim/Dockerfile -t aepm-sim:local .` then
    `./sim/run.sh`: 33 scenarios, 33 `PASS`, exit 0.
 
 ## Reversals actually run
@@ -56,10 +56,10 @@ branch into this one.
 - Finding 3, unit level: `state.save(&config.state_file)?` put back in
   `run_with`, `record_success` left defined so the suite still compiles.
   `a_state_save_failure_does_not_turn_a_successful_fetch_into_an_error` failed:
-  `Failed("cannot write /proc/self/aur-prefetch-state.json.tmp: No such file or
+  `Failed("cannot write /proc/self/aepm-state.json.tmp: No such file or
   directory (os error 2)")`. Fix restored, green.
 - Finding 3, sim level: the same old body, `cargo build --release`,
-  `SIM_BINARY=target/release/aur-prefetch ./sim/run.sh
+  `SIM_BINARY=target/release/aepm ./sim/run.sh
   sim/scenarios/39-*.sh` → `FAIL a completed download is not a failure
   (expected [0], got [2])`, `FAIL the warning is loud`. Fix restored.
 - Finding 4: old `temp_path` (`name.push(".tmp")`) put back. Both new tests
@@ -86,7 +86,7 @@ branch into this one.
   literal rule (`src/commands/init.rs:194`), and `doctor` *verifies* that same
   literal (`src/commands/doctor.rs:158`, `sudo_list_ok`). Changing `init` alone
   would make `doctor` reject the rule `init` had just written whenever
-  `AUR_PREFETCH_PACMAN` is overridden — a new false failure in place of the old
+  `AEPM_PACMAN` is overridden — a new false failure in place of the old
   one. `doctor.rs` is out of scope per the task (PR #32 is rebasing it), so the
   half-fix is worse than the bug and the finding stays open.
 - Findings 5 and 7: `src/tui/**`, out of scope by the task.

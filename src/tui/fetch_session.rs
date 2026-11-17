@@ -495,26 +495,21 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "aur-prefetch-fetch-session-{}-{id}",
-                std::process::id()
-            ));
+            let root = std::env::temp_dir()
+                .join(format!("aepm-fetch-session-{}-{id}", std::process::id()));
             let cache = root.join("cache");
             fs::create_dir_all(&cache).expect("create cache");
             let mut map: HashMap<String, String> = HashMap::new();
             for (key, value) in [
                 ("HOME", root.join("home")),
-                ("AUR_PREFETCH_STATE", root.join("state.json")),
-                ("AUR_PREFETCH_PACMAN_LOCK", root.join("db.lck")),
-                ("AUR_PREFETCH_SNAPPER_CONFIG_DIR", root.join("snapper")),
-                ("AUR_PREFETCH_PACMAN_CACHE_DIR", cache.clone()),
+                ("AEPM_STATE", root.join("state.json")),
+                ("AEPM_PACMAN_LOCK", root.join("db.lck")),
+                ("AEPM_SNAPPER_CONFIG_DIR", root.join("snapper")),
+                ("AEPM_PACMAN_CACHE_DIR", cache.clone()),
             ] {
                 map.insert(key.to_string(), value.to_string_lossy().into_owned());
             }
-            map.insert(
-                "AUR_PREFETCH_MIN_FREE_BYTES".to_string(),
-                "1048576".to_string(),
-            );
+            map.insert("AEPM_MIN_FREE_BYTES".to_string(), "1048576".to_string());
             let config = Config::from_lookup(move |name| map.get(name).cloned()).expect("config");
             Self {
                 root,
@@ -1007,7 +1002,7 @@ mod tests {
         let mut fixture = Fixture::new();
         // /proc/self accepts reads but not file creation, so the state save
         // fails while the command still exits 0.
-        fixture.config.state_file = PathBuf::from("/proc/self/aur-prefetch-state.json");
+        fixture.config.state_file = PathBuf::from("/proc/self/aepm-state.json");
         let fake = Arc::new(FakeRunner::new());
         fixture.queue_gates(&fake);
         fake.push_stream(0, &[], &[]);

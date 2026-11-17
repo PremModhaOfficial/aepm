@@ -13,12 +13,12 @@ touching your machine.
 ./sim/run.sh --build-only       # just build
 ./sim/run.sh --no-cache         # rebuild from scratch, no layer cache
 ./sim/run.sh sim/scenarios/01-download-only-keeps-usr.sh
-SIM_IMAGE=aur-prefetch-sim:mine ./sim/run.sh   # override the image tag
+SIM_IMAGE=aepm-sim:mine ./sim/run.sh   # override the image tag
 ```
 
 Requires Docker or Podman. The container runs with `--network none`.
 
-The image tag defaults to `aur-prefetch-sim:<worktree directory>-<8 hex of
+The image tag defaults to `aepm-sim:<worktree directory>-<8 hex of
 its path>`, with the directory sanitised to docker's tag characters, a leading
 dot or dash dropped, and `worktree` used when the name leaves nothing usable.
 Two worktrees running the sim at the same time therefore build into and run
@@ -72,7 +72,7 @@ fresh image.
 - `/usr/local/bin/make-pkg.sh`, which publishes an ad-hoc package with a blob
   of any size into the sim repo, for the chaos scenarios that need a payload
   worth interrupting
-- `/usr/local/bin/aur-prefetch`, built inside the image so the glibc matches
+- `/usr/local/bin/aepm`, built inside the image so the glibc matches
 
 The sim binary is built with the `sim-hooks` feature. It adds one env-gated
 forced panic after the terminal guard is active, used to prove the panic hook

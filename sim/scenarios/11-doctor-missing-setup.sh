@@ -10,7 +10,7 @@ log=$(mktemp)
 before_usr=$(usr_state)
 before_cache=$(cache_files)
 
-aur-prefetch doctor >"$log" 2>&1
+aepm doctor >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "doctor exited 1"

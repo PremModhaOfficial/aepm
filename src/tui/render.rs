@@ -1038,12 +1038,12 @@ fn header_lines(
         // fatal error stopped before collecting would invent `0 pending`.
         let header = match (snapshot.official.data(), snapshot.aur.data()) {
             (Some(official), Some(aur)) => format!(
-                "aur-prefetch {separator} {} pending {separator} {} action(s)",
+                "aepm {separator} {} pending {separator} {} action(s)",
                 official.len() + aur.len(),
                 snapshot.actionable
             ),
             _ => format!(
-                "aur-prefetch {separator} unknown pending {separator} {} action(s)",
+                "aepm {separator} unknown pending {separator} {} action(s)",
                 snapshot.actionable
             ),
         };
@@ -1052,7 +1052,7 @@ fn header_lines(
     let Some(report) = snapshot.prefetch.data() else {
         let pending = pending_count(snapshot);
         let header = format!(
-            "aur-prefetch {separator} {pending} pending {separator} {} action(s)",
+            "aepm {separator} {pending} pending {separator} {} action(s)",
             snapshot.actionable
         );
         return vec![Line::styled(cell_text(&header, width, ascii), bold())];
@@ -1066,11 +1066,11 @@ fn header_lines(
 
     let header = match live {
         Some(live) => format!(
-            "aur-prefetch {separator} Fetch {separator} {} {separator} live",
+            "aepm {separator} Fetch {separator} {} {separator} live",
             package_count(live.summary.total)
         ),
         None => format!(
-            "aur-prefetch {separator} Progress {separator} {} pending {separator} {} prefetched {separator} {} built",
+            "aepm {separator} Progress {separator} {} pending {separator} {} prefetched {separator} {} built",
             counts.total(),
             counts.ready(),
             counts.built

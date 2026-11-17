@@ -7,7 +7,7 @@ source /usr/local/lib/sim/lib.sh
 echo "scenario: a dismissed session closes the log, so no flag is stranded"
 
 cache=/var/cache/pacman/pkg
-state_dir=/home/builder/.local/state/aur-prefetch
+state_dir=/home/builder/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 before_usr=$(usr_state)
@@ -25,7 +25,7 @@ cp /bin/sleep /tmp/makepkg
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec "stty rows 40 cols 120; aur-prefetch tui" /dev/null
+script -qec "stty rows 40 cols 120; aepm tui" /dev/null
 EOF
 chmod 755 "$driver"
 

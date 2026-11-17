@@ -7,7 +7,7 @@ Thread D. Owns `--json` for `check`/`doctor`, the `PKGBUILD`, the
 Goal: ship the packaging path for a real Arch user without changing any
 behaviour `check` and `doctor` already prove.
 
-Ledger: `/tmp/aur-prefetch-runs/09/ledger.tsv`.
+Ledger: `/tmp/aepm-runs/09/ledger.tsv`.
 
 ## Steps
 
@@ -15,7 +15,7 @@ Ledger: `/tmp/aur-prefetch-runs/09/ledger.tsv`.
    `println!` and has no golden text test; `check` already has two frozen text
    tests (`clean_text_is_frozen`, `pending_text_is_frozen`).
    Check: a temporary baseline test run under `--nocapture` writes
-   `/tmp/aur-prefetch-runs/09/doctor-baseline.txt`; every line starts
+   `/tmp/aepm-runs/09/doctor-baseline.txt`; every line starts
    `doctor: `; line count is recorded. This file is the byte contract for
    step 3.
 
@@ -41,7 +41,7 @@ Ledger: `/tmp/aur-prefetch-runs/09/ledger.tsv`.
    Depends on `pacman`, optional `aurto`/`yay`. No new unit, no manpage.
    Check: `bash -n PKGBUILD`; a test in `init`'s own test module proves the
    packaged timer is byte-equal to `render_timer()` and the packaged service
-   runs `/usr/bin/aur-prefetch fetch`, so the units cannot drift. `makepkg` is
+   runs `/usr/bin/aepm fetch`, so the units cannot drift. `makepkg` is
    not run on this host (rules); the exact container command is handed to the
    human.
 
@@ -74,7 +74,7 @@ All four items landed, `./ci.sh` green before each commit.
 
 1. `--json` for `check` and `doctor` — `572311f`. The doctor refactor is
    proven byte-identical: 117 captured lines across 15 setup states,
-   `/tmp/aur-prefetch-runs/09/doctor-baseline.txt` vs `doctor-after.txt`, diff
+   `/tmp/aepm-runs/09/doctor-baseline.txt` vs `doctor-after.txt`, diff
    empty. Two frozen text tests now hold it. `check`'s two existing frozen tests
    still pass. Exit codes unchanged.
 2. `PKGBUILD` — `5e08582`. `bash -n` OK; `build()`/`package()` driven into a
@@ -106,13 +106,13 @@ docker run --rm -it --network host -v "$PWD":/src:ro archlinux:latest bash -lc '
   useradd -m builder && printf "builder ALL=(ALL) NOPASSWD: ALL\n" > /etc/sudoers.d/builder
   cp -r /src /work && chown -R builder /work
   su builder -c "cd /work && makepkg -f"
-  pacman -U --noconfirm /work/aur-prefetch-0.1.0-1-*.pkg.tar.zst
-  pacman -Ql aur-prefetch | grep -E "bin/|systemd/user"
-  aur-prefetch --version
+  pacman -U --noconfirm /work/aepm-0.1.0-1-*.pkg.tar.zst
+  pacman -Ql aepm | grep -E "bin/|systemd/user"
+  aepm --version
 '
 ```
 
-Expected: `makepkg` reports `Finished making: aur-prefetch 0.1.0-1`,
-`pacman -Ql` lists `/usr/bin/aur-prefetch` and the two units under
+Expected: `makepkg` reports `Finished making: aepm 0.1.0-1`,
+`pacman -Ql` lists `/usr/bin/aepm` and the two units under
 `/usr/lib/systemd/user`, and `--version` prints `0.1.0`. A `sha256sums=('SKIP')`
 warning from a trust check is expected for a git source.

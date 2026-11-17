@@ -16,7 +16,7 @@ before_usr=$(usr_state)
 before_pkgs=$(pkg_state)
 log=$(mktemp)
 
-runuser -l builder -c "AUR_PREFETCH_STATE=$state_dir/state.json aur-prefetch fetch" >"$log" 2>&1
+runuser -l builder -c "AEPM_STATE=$state_dir/state.json aepm fetch" >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "a completed download is not a failure"

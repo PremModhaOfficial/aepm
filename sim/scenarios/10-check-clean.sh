@@ -9,12 +9,12 @@ pacman -Syu --noconfirm >/dev/null
 log=$(mktemp)
 before_usr=$(usr_state)
 
-runuser -l builder -c 'aur-prefetch check' >"$log" 2>&1
+runuser -l builder -c 'aepm check' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "check exited 0"
 assert_contains "$(cat "$log")" "check: clean" "check reported clean"
 assert_eq "$(usr_state)" "$before_usr" "check left /usr unchanged"
-assert_false "check wrote no state" test -e /home/builder/.local/state/aur-prefetch/state.json
+assert_false "check wrote no state" test -e /home/builder/.local/state/aepm/state.json
 
 finish

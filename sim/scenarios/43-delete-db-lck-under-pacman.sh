@@ -28,12 +28,12 @@ printf '1\n' >/etc/sim/snapper.exit
 mkdir -p /etc/aurto
 chown alpm:alpm "$cache"
 chmod 0755 "$cache"
-printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aur-prefetch
-chmod 0440 /etc/sudoers.d/aur-prefetch
+printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aepm
+chmod 0440 /etc/sudoers.d/aepm
 printf 'maintainer\n' >/etc/aurto/trusted-users
 printf 'Include = /etc/pacman.d/aurto\n' >>/etc/pacman.conf
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=500M\n' >/etc/systemd/journald.conf
-printf 'Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n' >/etc/sim/systemctl.out
+printf 'Tue 2026-11-11 00:00:00 UTC  aepm.timer\n' >/etc/sim/systemctl.out
 
 before_usr=$(usr_state)
 before_local=$(local_db_state)
@@ -44,7 +44,7 @@ echo 20 >/etc/sim/xfer-delay
 
 # The read-only baseline: no lock file, no pacman, nothing to report.
 idle=$(mktemp)
-runuser -l builder -c 'aur-prefetch check' >"$idle" 2>&1
+runuser -l builder -c 'aepm check' >"$idle" 2>&1
 assert_contains "$(cat "$idle")" "check: lock: none" "an idle system reports no lock"
 
 pacman_log=$(mktemp)
@@ -70,7 +70,7 @@ assert_true "pacman is still running" kill -0 "$holder"
 # 1. `check` is honest about the state without the file: it reads the process
 #    list, names the live pacman, and marks the session action-needed.
 check_log=$(mktemp)
-runuser -l builder -c 'aur-prefetch check' >"$check_log" 2>&1
+runuser -l builder -c 'aepm check' >"$check_log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "check exits 1 (a pending update and a live transaction)"
@@ -80,7 +80,7 @@ assert_contains "$(cat "$check_log")" "check: lock: held by pacman" \
 # 2. `fetch` refuses too, and the refusal is the process, not the file: this is
 #    why a deleted lock cannot be exploited through this tool.
 fetch_log=$(mktemp)
-runuser -l builder -c 'aur-prefetch fetch' >"$fetch_log" 2>&1
+runuser -l builder -c 'aepm fetch' >"$fetch_log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "fetch refuses while the live pacman runs"
@@ -93,7 +93,7 @@ assert_eq "$(sudo_log)" "" "the refused fetch escalated nothing"
 #    with no lock file. This is the gap: it needs the same lock section `check`
 #    already prints. src/ owns that change; this scenario states the claim.
 doctor_log=$(mktemp)
-aur-prefetch doctor >"$doctor_log" 2>&1
+aepm doctor >"$doctor_log" 2>&1
 
 # GAP: doctor has no lock check. This asserts the gap is still open; when
 # doctor gains the lock section, this line goes red on purpose — invert it and

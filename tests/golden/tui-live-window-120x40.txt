@@ -1,4 +1,4 @@
-aur-prefetch · Fetch · 200 packages · live
+aepm · Fetch · 200 packages · live
 Dependency Graph showing 31 of 197 roots:                                                    install 200 packages · live
   ⋮
 ┌─ [|] z-mid 2.0.0-1                        downloading · ⏱ 2s                                                   1.1 MiB

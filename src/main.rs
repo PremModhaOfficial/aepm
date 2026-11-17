@@ -2,12 +2,12 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use aur_prefetch::commands;
-use aur_prefetch::error::Error;
+use aepm::commands;
+use aepm::error::Error;
 
 #[derive(Parser)]
 #[command(
-    name = "aur-prefetch",
+    name = "aepm",
     version,
     about = "Split Arch updates: background fetch/build, foreground install",
     after_help = "Exit codes: 0 healthy or done, 1 action needed or gated, 2 execution error, 130 Ctrl-C in the interactive TUI."
@@ -81,14 +81,14 @@ fn main() -> ExitCode {
             render_once,
             ascii,
             no_motion,
-        } => aur_prefetch::tui::run(render_once, ascii, !no_motion),
+        } => aepm::tui::run(render_once, ascii, !no_motion),
     };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(Error::Interrupted) => ExitCode::from(130),
         Err(error) => {
-            eprintln!("aur-prefetch: {error}");
+            eprintln!("aepm: {error}");
             ExitCode::from(error.exit_code())
         }
     }

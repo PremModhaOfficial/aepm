@@ -9,7 +9,7 @@ before_usr=$(usr_state)
 before_pkgs=$(pkg_state)
 before_cache=$(cache_files)
 
-runuser -l builder -c 'aur-prefetch check' >"$log" 2>&1
+runuser -l builder -c 'aepm check' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "check exited 1"
@@ -18,6 +18,6 @@ assert_contains "$(cat "$log")" "official updates: 1" "check counted one officia
 assert_eq "$(usr_state)" "$before_usr" "check left /usr unchanged"
 assert_eq "$(pkg_state)" "$before_pkgs" "check installed nothing"
 assert_eq "$(cache_files)" "$before_cache" "check left the cache unchanged"
-assert_false "check wrote no state" test -e /home/builder/.local/state/aur-prefetch/state.json
+assert_false "check wrote no state" test -e /home/builder/.local/state/aepm/state.json
 
 finish

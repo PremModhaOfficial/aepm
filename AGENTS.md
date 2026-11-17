@@ -81,6 +81,24 @@ silent: no output, no error, no exit. Three hours have been lost to this twice.
 - Do not pad a finished answer with repeated acknowledgements. One closing
   line, then stop.
 - If blocked, state exactly what blocks you once. Do not loop.
+- A report that contradicts the proof (`./ci.sh` red, `scripts/proof.sh` failing,
+  a conflict it did not mention) is a failed report, not a partial pass.
+
+## Proof rules
+
+Every claim about this repo is anchored to a proof taken now, not remembered.
+
+1. `scripts/proof.sh` is the anchor: git head, ahead/behind `origin/main`, every
+   open PR's mergeable state and check counts, open issues, plan percentage, and
+   the age of the newest evidence file. It exits 1 when a proof cannot be taken.
+2. A number in chat, a commit message, a PR body or an issue comment names its
+   source: `scripts/proof.sh`, a `/tmp/*.log` from this HEAD, or the command that
+   printed it. No source, no number.
+3. Evidence older than the current HEAD is not proof. Re-run, or say it is stale.
+4. A worker's report is a claim until its log is read. `DONE` without a log path
+   and exit code is not done.
+5. When a proof contradicts an earlier claim, the proof wins and the correction
+   is stated plainly.
 
 ## Agent review surface
 

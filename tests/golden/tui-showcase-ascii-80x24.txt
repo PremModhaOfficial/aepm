@@ -1,4 +1,4 @@
-aur-prefetch | Fetch | 8 packages | live
+aepm | Fetch | 8 packages | live
 Dependency Graph:                                      install 8 packages | live
 PRE-FLIGHT
 +  lock     no lock file, no pacman process

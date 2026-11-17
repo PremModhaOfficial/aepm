@@ -1,8 +1,8 @@
 [package]
-name = "aur-prefetch"
+name = "aepm"
 version = "0.1.0"
 description = "Split Arch Linux updates: download in the background, install in the foreground"
-repository = "https://github.com/PremModhaOfficial/aur-prefetch"
+repository = "https://github.com/PremModhaOfficial/aepm"
 keywords = ["archlinux", "pacman", "aur", "updates"]
 categories = ["command-line-utilities", "os"]
 license = "MIT OR Apache-2.0"

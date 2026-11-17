@@ -67,7 +67,7 @@ echo "PACCACHE_ARGS='-k1'" | sudo tee -a /etc/conf.d/pacman-contrib
 ```
 `-a` means add the line, not overwrite the whole file. If the line is already there, open the file and check it instead of adding a second copy. Do not use tee without `-a`.
 This makes timer match Step 4 manual clean. PACCACHE_ARGS = extra options for timer clean.
-Point the timer at the `aur-prefetch` binary. `aur-prefetch fetch` runs only `sudo -n pacman -Syuw --noconfirm`. AUR builds are handled by aurto's own root update-aurto timers installed by aurto init.
+Point the timer at the `aepm` binary. `aepm fetch` runs only `sudo -n pacman -Syuw --noconfirm`. AUR builds are handled by aurto's own root update-aurto timers installed by aurto init.
 The free-space gate lives in the binary, so the timer needs no wrapper. The block below is the teaching example: it shows the rule the binary implements. Do not install it as a second gate.
 ```bash
 #!/bin/bash
@@ -82,19 +82,19 @@ sudo -n pacman -Syuw --noconfirm
 ```
 2097152 KB is 2 GB. That is the floor. Rule: keep free space at least 2 times the download size plus a 2 to 5 GB floor. Use 5 GB floor if you use snapshots. The binary applies the same rule to the CacheDir filesystem and to `/`.
 Note: this gate guards only `pacman -Syuw`. It does NOT guard aurto builds. aurto builds use same disk with no check. Builds can still fill disk even when gate passes. Check build folders in Step 4.
-Add one sudoers line for that exact command only. The file is `/etc/sudoers.d/aur-prefetch`. Edit it with `sudo visudo -f /etc/sudoers.d/aur-prefetch`. Use NOPASSWD for `/usr/bin/pacman -Syuw --noconfirm`. No other commands. No wildcards.
+Add one sudoers line for that exact command only. The file is `/etc/sudoers.d/aepm`. Edit it with `sudo visudo -f /etc/sudoers.d/aepm`. Use NOPASSWD for `/usr/bin/pacman -Syuw --noconfirm`. No other commands. No wildcards.
 Create two files. This is two files, not one. Each block below is one file. Do not paste both into one file.
 
-File `~/.config/systemd/user/aur-prefetch.service`:
+File `~/.config/systemd/user/aepm.service`:
 ```ini
 [Unit]
 Description=Prefetch packages
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/aur-prefetch fetch
+ExecStart=%h/.local/bin/aepm fetch
 ```
 
-File `~/.config/systemd/user/aur-prefetch.timer`:
+File `~/.config/systemd/user/aepm.timer`:
 ```ini
 [Timer]
 OnCalendar=daily
@@ -106,12 +106,12 @@ The .service is the job (runs the command once). The .timer is the clock (runs i
 %h = your home folder. Type=oneshot = run once and stop. OnCalendar=daily = run once a day. Persistent=true = if the computer was off at run time, run soon after you turn it on. WantedBy = start with timers.
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now aur-prefetch.timer
+systemctl --user enable --now aepm.timer
 systemctl --user list-timers
 ```
 daemon-reload = tell systemd to read new files. list-timers = list timers and next run time.
-Expected output: a line names `aur-prefetch.timer` and shows a future time.
-Check logs: `journalctl --user -u aur-prefetch.service`. journalctl = show logs.
+Expected output: a line names `aepm.timer` and shows a future time.
+Check logs: `journalctl --user -u aepm.service`. journalctl = show logs.
 Cap logs. Daily timers make many logs. No cap means logs eat disk.
 Edit `/etc/systemd/journald.conf`. Storage means where logs are kept. Persistent means keep them on disk. Without this, SystemMaxUse does nothing. Logs stay in RAM only.
 First make the journal folder, then edit the file. Set these lines:
@@ -226,7 +226,7 @@ Then check kernel: `uname -r && ls /usr/lib/modules/`
 If something fails:
 - Disk low but install never started: clean caches in Step 4, then retry.
 - Disk low during install: clean caches, then repair above for each broken package.
-- Lock stuck: check `systemctl --user status aur-prefetch.service` or `pgrep -x -l 'pacman|yay|makepkg|aurto'`. Timer status shows active waiting. It does not show if download is running. Only remove lock file if no pacman transaction or AUR build is running.
+- Lock stuck: check `systemctl --user status aepm.service` or `pgrep -x -l 'pacman|yay|makepkg|aurto'`. Timer status shows active waiting. It does not show if download is running. Only remove lock file if no pacman transaction or AUR build is running.
 - Breaking news: do not install yet. Read news first.
 - Build did not run today: rebuild by hand after reading PKGBUILD.
 Finish Step 3 with pacdiff. Pacdiff is part of install, not extra tidy. Run it before reboot or service restart. See Ways to mess up #4.

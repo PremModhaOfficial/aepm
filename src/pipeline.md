@@ -2,7 +2,7 @@
 
 ## Overview
 
-The library crate `aur_prefetch` behind the `aur-prefetch` binary. It splits an
+The library crate `aepm` behind the `aepm` binary. It splits an
 Arch update in two: `fetch` downloads packages in the background, `install`
 runs the upgrade in the foreground. Every fact the tool reports comes from an
 external program's output collected through one trait, and every rendering
@@ -91,7 +91,7 @@ Subdirectories:
 - `State::save` writes a sibling temp file, fsyncs, then renames over the
   target, so a reader never sees a partial state file. A missing file is an
   empty state; a malformed value is an error [state.rs:save] [state.rs:load].
-- `Config` reads every path and limit from an `AUR_PREFETCH_*` variable with a
+- `Config` reads every path and limit from an `AEPM_*` variable with a
   static default, and `from_lookup` takes the lookup function so tests never
   touch the process environment [config.rs:Config].
 - `gate::GateState::Fail` stops an executing gate sequence: in

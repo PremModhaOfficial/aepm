@@ -1,4 +1,4 @@
-# aur-prefetch
+# aepm
 
 Split Arch Linux updates into two steps: download in the background, install in
 the foreground when you are ready.
@@ -18,31 +18,31 @@ while implementing, and `sim/` is where behaviour gets proven.
 From the AUR:
 
 ```bash
-yay -S aur-prefetch
+yay -S aepm
 ```
 
 With cargo, if you would rather have the binary in `~/.cargo/bin`:
 
 ```bash
-cargo install --git https://github.com/PremModhaOfficial/aur-prefetch --locked
+cargo install --git https://github.com/PremModhaOfficial/aepm --locked
 ```
 
 Rust 1.85 or newer. `--locked` builds the exact dependency set in the committed
 `Cargo.lock`, and the `sim-hooks` feature stays off. This route installs only
-the binary; `aur-prefetch init --apply` then writes the user units with
+the binary; `aepm init --apply` then writes the user units with
 `ExecStart` pointing at that binary, because the unit generator uses the
 running executable's own path, and installs the sudoers rule.
 
-The AUR package installs `/usr/bin/aur-prefetch` and the two user units in
+The AUR package installs `/usr/bin/aepm` and the two user units in
 `/usr/lib/systemd/user`. Enabling the timer is your call:
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now aur-prefetch.timer
+systemctl --user enable --now aepm.timer
 ```
 
 `pacman` is required either way; `aurto` and `yay` are optional and only used
-by the paths that need them. `aur-prefetch init --apply` is the command that
+by the paths that need them. `aepm init --apply` is the command that
 installs the exact `pacman -Syuw` sudoers rule through `visudo -c`. The
 `PKGBUILD` and its units live at the repo root and in `packaging/`.
 
@@ -64,13 +64,13 @@ its side effects. Each command's acceptance criteria are in `NEXT.md`.
 
 ## Commands
 
-- `aur-prefetch init [--apply]` — print, or with `--apply` write, the user service, timer, and exact sudoers rule. Run it as your user; it prompts for sudo only to install the rule, and never runs `aurto`
-- `aur-prefetch check [--json]` — pending updates, disk, lock, caches, timer status
-- `aur-prefetch fetch` — free-space gate, `pacman -Syuw` only
-- `aur-prefetch install [--yes] [--force]` — news gate, lock check, then `yay -Syuu`. A non-TTY needs `--yes`; an empty trust file needs `--force`. Blocks if the AUR update list cannot be read. Refuses to run as root, because yay and PKGBUILDs must never run as root
-- `aur-prefetch clean [--apply]` — dry run by default: prints sizes and the exact commands. `--apply` needs root (sudo) for `paccache` and removes only yay builds older than 30 days whose package is installed. A build is identified by the names in its `.SRCINFO`, or by the package names in its built `*.pkg.tar.*` files when `.SRCINFO` is gone; the directory name is only the pkgbase, which is not an installed name for a split package. A build that names nothing (no `.SRCINFO`, no built package) is kept and printed as `keep (cannot tell what it installs: ...)` rather than guessed
-- `aur-prefetch doctor [--json]` — verify timers, limits, repo, journald
-- `aur-prefetch tui [--render-once] [--ascii] [--no-motion]` — dependency tree. Starting it and quitting is read-only; `F` runs the same `fetch` command and draws its real `.part` bytes. `--render-once` prints one frame and works in a pipe. Interactive use needs a terminal.
+- `aepm init [--apply]` — print, or with `--apply` write, the user service, timer, and exact sudoers rule. Run it as your user; it prompts for sudo only to install the rule, and never runs `aurto`
+- `aepm check [--json]` — pending updates, disk, lock, caches, timer status
+- `aepm fetch` — free-space gate, `pacman -Syuw` only
+- `aepm install [--yes] [--force]` — news gate, lock check, then `yay -Syuu`. A non-TTY needs `--yes`; an empty trust file needs `--force`. Blocks if the AUR update list cannot be read. Refuses to run as root, because yay and PKGBUILDs must never run as root
+- `aepm clean [--apply]` — dry run by default: prints sizes and the exact commands. `--apply` needs root (sudo) for `paccache` and removes only yay builds older than 30 days whose package is installed. A build is identified by the names in its `.SRCINFO`, or by the package names in its built `*.pkg.tar.*` files when `.SRCINFO` is gone; the directory name is only the pkgbase, which is not an installed name for a split package. A build that names nothing (no `.SRCINFO`, no built package) is kept and printed as `keep (cannot tell what it installs: ...)` rather than guessed
+- `aepm doctor [--json]` — verify timers, limits, repo, journald
+- `aepm tui [--render-once] [--ascii] [--no-motion]` — dependency tree. Starting it and quitting is read-only; `F` runs the same `fetch` command and draws its real `.part` bytes. `--render-once` prints one frame and works in a pipe. Interactive use needs a terminal.
 
 ### `tui`
 
@@ -146,21 +146,21 @@ An empty value falls back to the default.
 
 | Variable | Default |
 |---|---|
-| `AUR_PREFETCH_PACMAN` | `/usr/bin/pacman` |
-| `AUR_PREFETCH_PACMAN_CONF` | `/etc/pacman.conf` |
-| `AUR_PREFETCH_PACMAN_CACHE_DIR` | `/var/cache/pacman/pkg` |
-| `AUR_PREFETCH_PACMAN_LOCK` | `/var/lib/pacman/db.lck` |
-| `AUR_PREFETCH_PACMAN_LOG` | `/var/log/pacman.log` |
-| `AUR_PREFETCH_YAY_CACHE_DIR` | `$XDG_CACHE_HOME/yay` or `~/.cache/yay` |
-| `AUR_PREFETCH_TRUSTED_USERS` | `/etc/aurto/trusted-users` |
-| `AUR_PREFETCH_AURTO_REPO` | `/var/cache/pacman/aurto` |
-| `AUR_PREFETCH_AURBUILD_DIR` | `/var/lib/aurbuild` |
-| `AUR_PREFETCH_ARCHBUILD_DIR` | `/var/lib/archbuild` |
-| `AUR_PREFETCH_SNAPPER_CONFIG_DIR` | `/etc/snapper/configs` |
-| `AUR_PREFETCH_SUDOERS` | `/etc/sudoers.d/aur-prefetch` |
-| `AUR_PREFETCH_USER_UNIT_DIR` | `$XDG_CONFIG_HOME/systemd/user` or `~/.config/systemd/user` |
-| `AUR_PREFETCH_STATE` | `$XDG_STATE_HOME/aur-prefetch/state.json` |
-| `AUR_PREFETCH_MIN_FREE_BYTES` | `2147483648` (2 GiB) |
+| `AEPM_PACMAN` | `/usr/bin/pacman` |
+| `AEPM_PACMAN_CONF` | `/etc/pacman.conf` |
+| `AEPM_PACMAN_CACHE_DIR` | `/var/cache/pacman/pkg` |
+| `AEPM_PACMAN_LOCK` | `/var/lib/pacman/db.lck` |
+| `AEPM_PACMAN_LOG` | `/var/log/pacman.log` |
+| `AEPM_YAY_CACHE_DIR` | `$XDG_CACHE_HOME/yay` or `~/.cache/yay` |
+| `AEPM_TRUSTED_USERS` | `/etc/aurto/trusted-users` |
+| `AEPM_AURTO_REPO` | `/var/cache/pacman/aurto` |
+| `AEPM_AURBUILD_DIR` | `/var/lib/aurbuild` |
+| `AEPM_ARCHBUILD_DIR` | `/var/lib/archbuild` |
+| `AEPM_SNAPPER_CONFIG_DIR` | `/etc/snapper/configs` |
+| `AEPM_SUDOERS` | `/etc/sudoers.d/aepm` |
+| `AEPM_USER_UNIT_DIR` | `$XDG_CONFIG_HOME/systemd/user` or `~/.config/systemd/user` |
+| `AEPM_STATE` | `$XDG_STATE_HOME/aepm/state.json` |
+| `AEPM_MIN_FREE_BYTES` | `2147483648` (2 GiB) |
 
 ## Rules the tool will not break
 

@@ -2,4 +2,4 @@
 Description=Prefetch packages
 [Service]
 Type=oneshot
-ExecStart="/usr/bin/aur-prefetch" fetch
+ExecStart="/usr/bin/aepm" fetch

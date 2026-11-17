@@ -64,6 +64,6 @@ RUN chmod 755 /usr/local/bin/yay /usr/local/bin/make-repo.sh \
         /usr/local/bin/snapper \
     && /usr/local/bin/make-repo.sh
 
-COPY --from=builder /src/target/release/aur-prefetch /usr/local/bin/aur-prefetch
+COPY --from=builder /src/target/release/aepm /usr/local/bin/aepm
 
 WORKDIR /root

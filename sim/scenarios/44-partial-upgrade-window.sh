@@ -16,7 +16,7 @@ source /usr/local/lib/sim/lib.sh
 echo "scenario: a single install between fetch and install is the partial upgrade check reports"
 
 pkgname=bigpkg
-state=/home/builder/.local/state/aur-prefetch/state.json
+state=/home/builder/.local/state/aepm/state.json
 cache=/var/cache/pacman/pkg
 
 # Two pending packages: without the second one, installing "one package" would
@@ -34,7 +34,7 @@ before_pkgs=$(pkg_state | sha256sum)
 # Step 1: the prefetch. Lists refreshed, both artifacts downloaded, state
 # written - the window is now open and the tool knows when it opened.
 fetch_log=$(mktemp)
-runuser -l builder -c 'aur-prefetch fetch' >"$fetch_log" 2>&1
+runuser -l builder -c 'aepm fetch' >"$fetch_log" 2>&1
 assert_eq "$?" "0" "fetch prefetched the pending set"
 assert_contains "$(cat "$fetch_log")" "fetch: ok" "fetch reported success"
 assert_true "both artifacts are in the cache" \
@@ -64,7 +64,7 @@ assert_true "the prefetched artifact for the still-pending package is still cach
 check_log=$(mktemp)
 before_check_local=$(local_db_state | sha256sum)
 before_check_usr=$(usr_state)
-runuser -l builder -c 'aur-prefetch check' >"$check_log" 2>&1
+runuser -l builder -c 'aepm check' >"$check_log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "check exits 1 (an update is still pending)"

@@ -456,8 +456,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-install-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-install-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -466,10 +465,10 @@ mod tests {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
             ("HOME", dir.join("home")),
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_LOCK", dir.join("db.lck")),
-            ("AUR_PREFETCH_TRUSTED_USERS", dir.join("trusted-users")),
-            ("AUR_PREFETCH_PACMAN_LOG", dir.join("pacman.log")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_LOCK", dir.join("db.lck")),
+            ("AEPM_TRUSTED_USERS", dir.join("trusted-users")),
+            ("AEPM_PACMAN_LOG", dir.join("pacman.log")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }
@@ -814,7 +813,7 @@ mod tests {
         fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
         // /proc/self accepts reads but not file creation, so load sees a
         // missing state and save fails without relying on test permissions.
-        config.state_file = PathBuf::from("/proc/self/aur-prefetch-state.json");
+        config.state_file = PathBuf::from("/proc/self/aepm-state.json");
         let runner = FakeRunner::new();
         queue_lists(&runner, "");
         runner.push_interactive(0);
@@ -878,7 +877,7 @@ mod tests {
     fn record_install_names_the_state_path_when_saving_fails() {
         let dir = temp_dir();
         let mut config = test_config(&dir);
-        config.state_file = PathBuf::from("/proc/self/aur-prefetch-state.json");
+        config.state_file = PathBuf::from("/proc/self/aepm-state.json");
         let mut state = State::default();
 
         let warning = record_install(&mut state, &config, Ok(42))

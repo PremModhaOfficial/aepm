@@ -9,7 +9,7 @@ Turn the one-shot `nh home switch . --update` capture into four artifacts:
 
 1. a validated, replayable record of what nom actually drew;
 2. an evidence-backed description of nom's visual grammar and animation;
-3. a side-by-side visual against the current `aur-prefetch` prefetch frame;
+3. a side-by-side visual against the current `aepm` prefetch frame;
 4. `docs/NOM.md` with an ordered, measured T2 adoption plan.
 
 The raw capture stays out of git and out of context. Every claim ships with a

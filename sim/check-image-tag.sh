@@ -38,10 +38,10 @@ done
 
 a=$(tag "$tmp/alpha" -)
 b=$(tag "$tmp/beta" -)
-[[ $a =~ ^aur-prefetch-sim:alpha-[0-9a-f]{8}$ ]] ||
-    { echo "sim: alpha derived '$a', expected aur-prefetch-sim:alpha-<8 hex>" >&2; exit 1; }
-[[ $b =~ ^aur-prefetch-sim:beta-[0-9a-f]{8}$ ]] ||
-    { echo "sim: beta derived '$b', expected aur-prefetch-sim:beta-<8 hex>" >&2; exit 1; }
+[[ $a =~ ^aepm-sim:alpha-[0-9a-f]{8}$ ]] ||
+    { echo "sim: alpha derived '$a', expected aepm-sim:alpha-<8 hex>" >&2; exit 1; }
+[[ $b =~ ^aepm-sim:beta-[0-9a-f]{8}$ ]] ||
+    { echo "sim: beta derived '$b', expected aepm-sim:beta-<8 hex>" >&2; exit 1; }
 [[ $a != "$b" ]] ||
     { echo "sim: two worktrees share the tag '$a'" >&2; exit 1; }
 
@@ -59,7 +59,7 @@ for name in .dot -dash 'héllo €' 'x y+z' "$(printf 'n%.0s' {1..200})"; do
     mkdir -p "$dir"
     cp -r "$repo/sim" "$dir/sim"
     odd=$(tag "$dir" -)
-    [[ $odd =~ ^aur-prefetch-sim:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] ||
+    [[ $odd =~ ^aepm-sim:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] ||
         { echo "sim: directory '$name' derived an invalid docker tag '$odd'" >&2; exit 1; }
 done
 

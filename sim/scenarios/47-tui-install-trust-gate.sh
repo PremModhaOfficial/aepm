@@ -7,7 +7,7 @@ source /usr/local/lib/sim/lib.sh
 
 echo "scenario: a missing trust file blocks the install gate and the action"
 
-state_dir=/home/builder/.local/state/aur-prefetch
+state_dir=/home/builder/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 
@@ -22,7 +22,7 @@ rm -f /etc/aurto/trusted-users
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec "stty rows 40 cols 120; aur-prefetch tui" /dev/null
+script -qec "stty rows 40 cols 120; aepm tui" /dev/null
 EOF
 chmod 755 "$driver"
 
@@ -55,7 +55,7 @@ assert_false "the gate never reaches the AUR build path" yay_built_something
 # 3. The CLI refuses the same state on a real terminal, with the same reason
 #    and the contract's exit code.
 cli=$(timeout 30 runuser -l builder -c \
-    'script -qec "aur-prefetch install" /dev/null' 2>&1)
+    'script -qec "aepm install" /dev/null' 2>&1)
 cli_rc=$?
 assert_eq "$cli_rc" "1" "the CLI exits 1 on the blocked state"
 assert_contains "$cli" "trusted-users is missing" "the CLI refuses a missing trust file"

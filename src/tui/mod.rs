@@ -91,7 +91,7 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
     // it. This panics after raw mode and the alternate screen are active, so
     // the pty check proves the panic hook restores the terminal.
     #[cfg(feature = "sim-hooks")]
-    if std::env::var_os("AUR_PREFETCH_TUI_TEST_PANIC").is_some() {
+    if std::env::var_os("AEPM_TUI_TEST_PANIC").is_some() {
         panic!("forced TUI panic for terminal-restore test");
     }
 
@@ -491,7 +491,7 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
     if detached {
         // The spec allows detaching but forbids claiming its result. The child
         // may still be running; we never killed it.
-        eprintln!("aur-prefetch: fetch detached; pacman may still be running");
+        eprintln!("aepm: fetch detached; pacman may still be running");
     }
     Ok(())
 }

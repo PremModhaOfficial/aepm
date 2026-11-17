@@ -17,7 +17,7 @@ for name in pacman yay makepkg aurto; do
     holder=$!
     sleep 0.2
 
-    runuser -l builder -c 'aur-prefetch fetch' >"$log" 2>&1
+    runuser -l builder -c 'aepm fetch' >"$log" 2>&1
     status=$?
 
     assert_eq "$status" "1" "$name: fetch refused with exit 1"
@@ -41,7 +41,7 @@ cp /bin/sleep /tmp/makepkg
 holder=$!
 sleep 0.2
 
-runuser -l builder -c 'aur-prefetch check' >"$check_log" 2>&1
+runuser -l builder -c 'aepm check' >"$check_log" 2>&1
 
 assert_contains "$(cat "$check_log")" "lock: held by makepkg" \
     "check names the live build process"

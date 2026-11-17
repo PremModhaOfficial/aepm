@@ -547,12 +547,7 @@ fn collect_timer(runner: &dyn CommandRunner) -> Result<TimerState, Error> {
 
     let result = runner.run(
         "systemctl",
-        &[
-            "--user",
-            "show",
-            "aur-prefetch.service",
-            "--property=Result",
-        ],
+        &["--user", "show", "aepm.service", "--property=Result"],
     )?;
     let value = result.stdout.trim();
     let last_result = if result.code == 0 && !value.is_empty() {
@@ -573,7 +568,7 @@ fn collect_timer(runner: &dyn CommandRunner) -> Result<TimerState, Error> {
 fn scheduled_timer(stdout: &str) -> Option<&str> {
     stdout
         .lines()
-        .find(|line| line.contains("aur-prefetch"))
+        .find(|line| line.contains("aepm"))
         .filter(|line| !line.trim_start().starts_with("n/a"))
 }
 
@@ -739,8 +734,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-check-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-check-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -748,19 +742,16 @@ mod tests {
     fn test_config(dir: &Path) -> Config {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_LOCK", dir.join("db.lck")),
-            ("AUR_PREFETCH_PACMAN_LOG", dir.join("pacman.log")),
-            ("AUR_PREFETCH_YAY_CACHE_DIR", dir.join("yay")),
-            ("AUR_PREFETCH_TRUSTED_USERS", dir.join("trusted-users")),
-            ("AUR_PREFETCH_SNAPPER_CONFIG_DIR", dir.join("snapper")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_LOCK", dir.join("db.lck")),
+            ("AEPM_PACMAN_LOG", dir.join("pacman.log")),
+            ("AEPM_YAY_CACHE_DIR", dir.join("yay")),
+            ("AEPM_TRUSTED_USERS", dir.join("trusted-users")),
+            ("AEPM_SNAPPER_CONFIG_DIR", dir.join("snapper")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }
-        map.insert(
-            "AUR_PREFETCH_MIN_FREE_BYTES".to_string(),
-            "1048576".to_string(),
-        );
+        map.insert("AEPM_MIN_FREE_BYTES".to_string(), "1048576".to_string());
 
         Config::from_lookup(move |name| map.get(name).cloned()).expect("config")
     }
@@ -1100,10 +1091,8 @@ mod tests {
 
     #[test]
     fn an_inactive_timer_is_not_scheduled() {
-        assert!(
-            scheduled_timer("n/a  n/a  Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer").is_none()
-        );
-        assert!(scheduled_timer("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer").is_some());
+        assert!(scheduled_timer("n/a  n/a  Tue 2026-11-11 00:00:00 UTC  aepm.timer").is_none());
+        assert!(scheduled_timer("Tue 2026-11-11 00:00:00 UTC  aepm.timer").is_some());
     }
 
     fn at() -> SystemTime {
@@ -1142,7 +1131,7 @@ mod tests {
             timer: Section::ready(
                 TimerState {
                     available: true,
-                    next: Some("Tue 2026-11-11 00:00:00 UTC aur-prefetch.timer".to_string()),
+                    next: Some("Tue 2026-11-11 00:00:00 UTC aepm.timer".to_string()),
                     last_result: Some("success".to_string()),
                     actionable: false,
                 },
@@ -1173,7 +1162,7 @@ check: aur updates: 0
 check: disk /var/cache/pacman/pkg: 50.0 GiB free of 100.0 GiB, 3200000 inodes free of 6553600
 check: lock: none
 check: cache downloads: 1.0 MiB
-check: timer: Tue 2026-11-11 00:00:00 UTC aur-prefetch.timer
+check: timer: Tue 2026-11-11 00:00:00 UTC aepm.timer
 check: timer: last service result: success
 check: state: last fetch 10m ago, last install 1d ago
 check: trust: 2 maintainer(s)
@@ -1208,7 +1197,7 @@ check: aur updates: 0
 check: disk /var/cache/pacman/pkg: 50.0 GiB free of 100.0 GiB, 3200000 inodes free of 6553600
 check: lock: none
 check: cache downloads: 1.0 MiB
-check: timer: Tue 2026-11-11 00:00:00 UTC aur-prefetch.timer
+check: timer: Tue 2026-11-11 00:00:00 UTC aepm.timer
 check: timer: last service result: success
 check: state: last fetch 10m ago, last install 1d ago
 check: trust: 2 maintainer(s)

@@ -1,4 +1,4 @@
-# cargo-deny policy for aur-prefetch.
+# cargo-deny policy for aepm.
 # Run: cargo deny check
 # (defaults to <cwd>/deny.toml; lockfile auto-discovered from manifest —
 # no --config/--lockfile flags; see ci.sh.)

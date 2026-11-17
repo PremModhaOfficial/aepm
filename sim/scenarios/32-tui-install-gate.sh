@@ -6,7 +6,7 @@ source /usr/local/lib/sim/lib.sh
 
 echo "scenario: the install gate reviews and cancels without installing"
 
-state_dir=/home/builder/.local/state/aur-prefetch
+state_dir=/home/builder/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 
@@ -21,7 +21,7 @@ rm -rf "$state_dir"
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec "stty rows 40 cols 120; aur-prefetch tui" /dev/null
+script -qec "stty rows 40 cols 120; aepm tui" /dev/null
 EOF
 chmod 755 "$driver"
 

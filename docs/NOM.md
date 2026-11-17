@@ -5,7 +5,7 @@ Read with [`PROGRESS.md`](../PROGRESS.md), [`docs/ANIMATION.md`](ANIMATION.md),
 [`TUI.md`](../TUI.md) and [`NEXT.md`](../NEXT.md). `NEXT.md` wins on order.
 
 The visual companion is
-[`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/nom-study.html),
+[`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/nom-study.html),
 archived on the `archive/prototype-studies` branch. It plays the colorized
 frames, shows the gap table and repeats the T2 order.
 
@@ -258,7 +258,7 @@ These claims are consistent with the capture but not proven by the source:
   41.00 s; the `script(1)` timing stream agrees within 0.2 s. The cast is
   authoritative for replay.
 
-## Gap table: nom versus aur-prefetch
+## Gap table: nom versus aepm
 
 The right column is the pre-T2a T1/T2 prefetch frame in
 `tests/golden/tui-prefetch-120x40.txt` and `src/tui/render.rs`. T2a has since
@@ -266,7 +266,7 @@ landed the nom forest (orientation, edges and the no-duplicate rule), so read
 this table as the measured baseline, not the current frame. The T2a note under
 step 1 records what changed.
 
-| Aspect | nom (measured) | aur-prefetch (pre-T2a) | Verdict |
+| Aspect | nom (measured) | aepm (pre-T2a) | Verdict |
 |---|---|---|---|
 | Orientation | Bottom-up. Goal is the last row; dependencies above. Frame 0456 rows 2-14. | Top-down `▾ install` root followed by a sorted list. Golden lines 3-7. | Differ. Adopt bottom-up for the tree. |
 | Edges | One node per derivation, deduped by `seen_ids`, children are direct dependencies. | No edges. `packages.sort_by(artifact.rank(), name)` at `render.rs:241`. | Differ. Adopt the tree model. |
@@ -287,7 +287,7 @@ step 1 records what changed.
 ## Not adopted
 
 - **Removing the alternate screen.** Nom can leave the tree in scrollback
-  because it has no gates, overlays or keyboard state. `aur-prefetch` needs a
+  because it has no gates, overlays or keyboard state. `aepm` needs a
   foreground surface for the install gate and the failure card. Keep
   `EnterAlternateScreen` and the `Drop` restore (`guard.rs:24`, `guard.rs:67`).
 - **Passive-only input.** Nom is a monitor. Our tree has `q`, `?`, `r`,
@@ -408,7 +408,7 @@ Ctrl-C, Ctrl-Z, SIGTERM and panic.
 After the TUI exits and restores, print the finished tree summary and a receipt
 to the normal screen. Nom supplies the `Finished at HH:MM:SS after <duration>`
 row. nh supplies the idea of the changed/added/paths/size/diff block. For
-`aur-prefetch install`, print the official and AUR changes, the pacdiff and
+`aepm install`, print the official and AUR changes, the pacdiff and
 reboot checks, and the next command. Do not print raw child output.
 
 Acceptance: a receipt golden frame. The exit code is preserved. Every line

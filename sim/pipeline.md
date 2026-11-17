@@ -3,7 +3,7 @@
 ## Overview
 
 The disposable Arch simulation harness. It builds a container image that runs the
-real `aur-prefetch` binary against a real pacman with a synthetic local repo and a
+real `aepm` binary against a real pacman with a synthetic local repo and a
 fake AUR helper, so writing behaviours can be proven without touching the
 development host. Every scenario runs in a fresh container with `--network none`.
 The simulation is the only place the project exercises side effects; the host is
@@ -19,7 +19,7 @@ and have no `pipeline.md` of their own.
 
 - `run.sh` — harness driver. Flags `--build-only`, `--no-cache`; env vars
   `SIM_RUNTIME` (docker/podman), `SIM_IMAGE` (image tag, default
-  `aur-prefetch-sim:<worktree directory>-<8 hex of its path>`), `SIM_BINARY`
+  `aepm-sim:<worktree directory>-<8 hex of its path>`), `SIM_BINARY`
   (host-built binary to mount); function `build_image`. [run.sh:--build-only] [run.sh:--no-cache] [run.sh:SIM_RUNTIME] [run.sh:SIM_IMAGE] [run.sh:build_image]
 - `check-image-tag.sh` — proves the tag is derived per worktree, stays a valid
   docker tag for any directory name, that `SIM_IMAGE` overrides it, and that the
