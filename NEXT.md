@@ -257,17 +257,25 @@ file.
 
 ## Phase 4: chaos level
 
-Requires fault injection in the sim.
+Requires fault injection in the sim: the control file `/etc/sim/xfer-fault`
+takes `kill`, `fill`, `corrupt` or `http500`, and fires once (see
+`sim/README.md`).
 
-- [ ] Kill pacman mid-download, verify cache is retryable and lists are new.
-- [ ] Fill the CacheDir tmpfs mid-download, verify exit 2 (D6: an execution
+- [x] Kill pacman mid-download, verify cache is retryable and lists are new.
+- [x] Fill the CacheDir tmpfs mid-download, verify exit 2 (D6: an execution
       error) and no `/usr` write.
-- [ ] Kill pacman mid-install, verify `pacman -Qkk` detects damage and `Qk`
+- [x] Kill pacman mid-install, verify `pacman -Qkk` detects damage and `Qk`
       does not.
 - [x] Delete `db.lck` while pacman runs, verify `doctor` catches it.
 - [x] Install a single package between fetch and install, verify `check`
       reports a partial upgrade.
 - [x] Stale aurto repo, verify `install` reports a foreground build risk.
+- [x] A mirror that answers 500 for the package transfer, verify the lists it
+      already received survive, the cache and local DB stay unchanged, `check`
+      and `doctor` write nothing, and the retry completes.
+- [x] A corrupt package on the wire and a corrupt artifact already in the
+      cache, verify pacman refuses both, nothing is installed from either, and
+      a corrupt cache never becomes an AUR rebuild.
 
 ## Phase 5: VM level
 

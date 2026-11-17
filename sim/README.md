@@ -86,9 +86,10 @@ fresh image.
 - Pacman config fixtures for default, multiple, empty, and moved `CacheDir`
   under `/usr/local/lib/sim/fixtures`
 - A slow `XferCommand` fixture (`sim-xfer` plus `pacman-slow-xfer.conf`) that
-  writes a package `.part` in two chunks and carries the optional `kill` and
-  `fill` faults. Scenarios 34, 41, 43 and 46 install it. pacman still chooses
-  the argv, verifies the package, and renames the final file
+  writes a package `.part` in two chunks and carries the optional `kill`,
+  `fill`, `corrupt` and `http500` faults. Scenarios 34, 41, 43, 46, 50, 51 and 52
+  install it. pacman still chooses the argv, verifies the package, and renames
+  the final file
 - `/usr/local/bin/make-pkg.sh`, which publishes an ad-hoc package with a blob
   of any size into the sim repo, for the chaos scenarios that need a payload
   worth interrupting
@@ -153,11 +154,15 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `46-kill-mid-download.sh` | the paced transfer SIGKILLs pacman after the first half: the `.part` is a real prefix of the repo artifact, no final artifact exists, the lock and the refreshed lists are left behind, the next fetch refuses on the stale lock without removing it, and the retry after the user removes it fetches the real bytes |
 | `48-doctor-shares-the-fetch-floor.sh` | a 1 MiB configured floor and a snapper config dir on a pinned 64 MiB `/dev/shm` `CacheDir`: only the 5 GiB snapshot floor can refuse, `doctor` exits 1, names the filesystem and that floor as its only problem, and `fetch` refuses on the same disk on the same machine, so the two verdicts cannot disagree |
 | `49-tui-log-dismiss.sh` | the log belongs to its session: `l` opens it on a finished fetch, a `makepkg` appears so the next `F` is refused by the lock gate, and one `esc` still dismisses the notice, so the refused-`F` path clears the open-log flag before its notice; `/usr` and the package DB stay unchanged and the app exits 0 instead of aborting on the loop's session/log assertion |
+| `50-mirror-500.sh` | the `http500` fault makes the package transfer fail the way a broken mirror does: `fetch` exits 2, quotes the 500, never claims success, keeps the lists it already received, leaves nothing in the cache and no lock, writes nothing to `/usr` or the local DB, `check` and `doctor` stay read-only, and the retry after the mirror recovers fetches the real artifact |
+| `51-corrupt-download.sh` | the `corrupt` fault flips one byte in the transfer, so pacman's own checksum check rejects the artifact: `fetch` exits 2 and quotes the rejection, keeps neither a final nor a partial artifact, still delivered the lists, leaves no lock, writes nothing to `/usr` or the local DB, and the retry fetches bytes that match the repo |
+| `52-corrupt-cached-artifact.sh` | a prefetched artifact is corrupted in place before the install: `check` and `doctor` stay read-only, `install --yes` discards the invalid cache file, transfers the real bytes and upgrades, pacman's log records the discarded copy, and the corrupt cache never turns into an AUR rebuild or an unverified install |
 
 41-46 are the Phase 4 chaos level from `NEXT.md`; they need the fault
 injection below. 43, 44 and 45 each drive a real fault and assert the detection
 it needs: `doctor` on the deleted lock, `check` on the hand install, `install`
-on the stale aurto repo.
+on the stale aurto repo. 50-52 are the same level for a mirror that answers 500
+and for bytes that are wrong, on the wire and already in the cache.
 
 01 and 02 are a pair. Passing 01 alone would prove nothing if the harness could
 not detect a real install at all.
@@ -218,21 +223,32 @@ frame a poll happens to catch.
 ## Fault injection
 
 The chaos scenarios need a real pacman to misbehave, and the harness provides
-three faults rather than a scenario faking the evidence:
+four faults rather than a scenario faking the evidence:
 
-- `sim/fixtures/sim-xfer` is the sim-only `XferCommand`. It paces a package
-transfer (`/etc/sim/xfer-delay`, seconds) so a poll can see real `.part` growth,
-and on the paced path its first chunk is renamed into place so the `.part` is
-never observable at zero bytes. pacman does not create that path; the hook
-does, so a plain `head -c ... >"$out"` would hand the TUI a few milliseconds of
-an empty file. The fault branches below write the target directly, because a
-fault wants the partial file on disk, not a paced one.
-It injects one fault per run when a scenario writes one word to
-`/etc/sim/xfer-fault`: `kill` SIGKILLs the running pacman after the first half
-of the package, `fill` writes into the cache until the kernel refuses (capped by
-`/etc/sim/xfer-fill-max`, default 64 MiB) and then tries to append the rest,
-which is a real `ENOSPC`. The fault disarms itself, so the retry a scenario runs
-next is a clean run.
+- **The control file is `/etc/sim/xfer-fault`.** A scenario writes one word to
+  it and runs the command; the fault fires once, disarms itself, and the retry
+  the scenario runs next is a clean run. A missing or empty file means no
+  fault, so every other scenario runs with the real bytes.
+- `sim/fixtures/sim-xfer` is the sim-only `XferCommand` that reads that file.
+  It paces a package transfer (`/etc/sim/xfer-delay`, seconds) so a poll can
+  see real `.part` growth, and on the paced path its first chunk is renamed
+  into place so the `.part` is never observable at zero bytes. pacman does not
+  create that path; the hook does, so a plain `head -c ... >"$out"` would hand
+  the TUI a few milliseconds of an empty file. The fault branches below write
+  the target directly, because a fault wants the partial file on disk, not a
+  paced one.
+
+The four words are:
+
+| Word | What a real system does that this copies | Scenario |
+|---|---|---|
+| `kill` | pacman is SIGKILLed mid-transfer: a `.part` with real bytes, no final artifact, a lock nobody holds | 46 |
+| `fill` | the cache filesystem hits `ENOSPC` mid-transfer (capped by `/etc/sim/xfer-fill-max`, default 64 MiB, then the rest append fails for real) | 41 |
+| `corrupt` | the mirror delivers the right number of wrong bytes, so pacman's own checksum check rejects the artifact (scenario 52 corrupts the cached copy directly, no fault needed) | 51 |
+| `http500` | the mirror answers `500 Internal Server Error` and the body never arrives; the hook exits 22, like `curl --fail` | 50 |
+
+Two harness helpers work with the control file:
+
 - `# sim-run-args: <flags>` in a scenario's header comments passes extra
 container flags to that one scenario. The `fill` fault needs a bounded
 filesystem to fill, so scenario 41 asks for `--tmpfs

@@ -32,8 +32,11 @@ size=$(stat -c %s "$src")
 half=$((size / 2))
 
 # Fault injection, off unless a scenario writes one word to xfer-fault:
-#   kill - the running pacman dies after the first chunk of the package
-#   fill - the filesystem holding the cache fills up before the last chunk
+#   kill    - the running pacman dies after the first chunk of the package
+#   fill    - the filesystem holding the cache fills up before the last chunk
+#   corrupt - the transfer completes with one byte flipped, so pacman's own
+#             checksum check rejects it
+#   http500 - the mirror answers 500 and the transfer never starts
 # The fault fires once and disarms itself, so the retry a scenario runs next is
 # a clean run. The scenario drives the fault from the harness; no scenario
 # sleeps to fake timing.
@@ -75,6 +78,22 @@ fill)
     done
     tail -c +"$((half + 1))" "$src" >>"$out" || exit 1
     exit 0
+    ;;
+corrupt)
+    rm -f /etc/sim/xfer-fault
+    # The size stays right, one byte in the middle is wrong: pacman's own
+    # checksum check rejects the artifact, so the scenario proves the tool
+    # refused the bytes rather than that a download was interrupted.
+    cp "$src" "$out"
+    printf '\xff' | dd of="$out" bs=1 seek="$half" conv=notrunc status=none
+    exit 0
+    ;;
+http500)
+    rm -f /etc/sim/xfer-fault
+    # A mirror that is up but broken: the request fails before any byte of the
+    # body arrives, and the downloader exits like curl --fail does.
+    printf 'sim-xfer: 500 Internal Server Error: %s\n' "$url" >&2
+    exit 22
     ;;
 esac
 
