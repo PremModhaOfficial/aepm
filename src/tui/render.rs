@@ -90,6 +90,13 @@ fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
 
+/// ASCII is a monochrome tier: the glyph fallback carries the meaning, so a
+/// colour request can never paint in ASCII mode. One gate for every panel, so
+/// no overlay can leak a colour whose glyph it already replaced.
+fn palette(ascii: bool, color: bool) -> bool {
+    color && !ascii
+}
+
 /// The optional action line above the key hint.
 ///
 /// The static frame passes [`Footer::default`], so its bytes never change.
@@ -295,6 +302,7 @@ fn buffer_text(buffer: &Buffer, width: u16) -> String {
 /// Draw the captured fetch log over the frame. The newest lines that fit are
 /// shown; every line crosses the same untrusted-cell gate as the tree.
 pub fn draw_log(frame: &mut Frame, lines: &VecDeque<StreamLine>, ascii: bool, color: bool) {
+    let color = palette(ascii, color);
     let area = frame.area();
     if area.width < 24 || area.height < 6 {
         return;
@@ -365,6 +373,7 @@ pub fn draw_install_gate(
     ascii: bool,
     color: bool,
 ) {
+    let color = palette(ascii, color);
     let area = frame.area();
     if area.width < 40 || area.height < 12 {
         return;
@@ -484,6 +493,7 @@ pub fn render_install_gate(
 /// kernel on disk, the `.pacnew` count and the reboot advice, and never edits
 /// `/etc`.
 pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ascii: bool, color: bool) {
+    let color = palette(ascii, color);
     let area = frame.area();
     if area.width < 40 || area.height < 12 {
         return;
@@ -877,6 +887,7 @@ fn draw_with(
     gates: Option<&[Gate]>,
     selection: Selection,
 ) {
+    let color = palette(ascii, color);
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         let message = if ascii {
@@ -1695,6 +1706,8 @@ struct RowPaint<'a> {
     /// True when the cursor is on this row. It takes the marker's leading
     /// cell, which is a space on every other row, so no column moves.
     cursor: bool,
+    /// The frame's palette flag, for the cursor mark's own colour.
+    color: bool,
 }
 
 /// Solve the shared column widths once per frame.
@@ -1781,9 +1794,7 @@ fn row_line(row: &TreeRow, paint: RowPaint<'_>, ascii: bool, width: usize) -> Li
     );
     // The separator after the label is one space on every row; on the cursor
     // row it is the mark. Same cell, same width, visible in a text dump.
-    let cursor_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
+    let cursor_style = accent_bold(paint.color, Color::Cyan);
     push_span(
         &mut spans,
         match (paint.cursor, ascii) {
@@ -1868,6 +1879,7 @@ fn static_row_line(
             size_style: dim(color),
             lead,
             cursor,
+            color,
         },
         ascii,
         width,
@@ -1937,6 +1949,7 @@ fn live_row_line(
             size_style: dim(color),
             lead,
             cursor,
+            color,
         },
         ascii,
         width,
@@ -2147,9 +2160,7 @@ fn progress_row_line(
         ascii,
     );
     // Same rule as a plain row: the separator is the cursor's cell.
-    let cursor_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
+    let cursor_style = accent_bold(color, Color::Cyan);
     push_span(
         &mut spans,
         match (cursor, ascii) {
@@ -5244,6 +5255,132 @@ mod tests {
             buffer.content().iter().all(|cell| cell.fg == Color::Reset),
             "NO_COLOR leaves no foreground color"
         );
+    }
+
+    /// One frame in a real ratatui buffer, so a palette claim is checked against
+    /// the cells the terminal receives, not against a text dump.
+    fn buffer_rendered(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut ratatui::Frame),
+    ) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        terminal.draw(draw).expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    fn assert_no_palette(buffer: &ratatui::buffer::Buffer, surface: &str) {
+        for (index, cell) in buffer.content().iter().enumerate() {
+            assert_eq!(
+                cell.fg,
+                Color::Reset,
+                "{surface}: cell {index} keeps a foreground colour"
+            );
+            assert_eq!(
+                cell.bg,
+                Color::Reset,
+                "{surface}: cell {index} keeps a background colour"
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_is_monochrome_on_every_surface() {
+        // `--ascii` is the full glyph tier, and its whole point is that the
+        // glyph carries the meaning. The tier therefore drops the palette by
+        // itself: a caller that passes `color = true` cannot paint a glyph it
+        // already replaced. The cursor cell used to be the leak.
+        let snapshot = diamond_snapshot();
+        let run = diamond_run();
+        let tree = tree_of(&snapshot);
+        let slots: Vec<super::WindowSlot> =
+            (0..tree.rows.len()).map(super::WindowSlot::Row).collect();
+        let cursor = Selection::none().moved(&tree, &slots, 1);
+        assert!(cursor.node().is_some(), "the fixture has a cursor to paint");
+
+        let live = buffer_rendered(120, 40, |frame| {
+            super::draw_live_status(
+                frame,
+                &snapshot,
+                &run,
+                Footer::default(),
+                true,
+                true,
+                false,
+                false,
+                None,
+                cursor.clone(),
+            )
+        });
+        let statics = buffer_rendered(120, 40, |frame| {
+            super::draw_status(
+                frame,
+                &snapshot,
+                Footer::default(),
+                true,
+                true,
+                false,
+                false,
+                None,
+                cursor,
+            )
+        });
+        let log = buffer_rendered(120, 40, |frame| {
+            super::draw_log(frame, &log_fixture(), true, true)
+        });
+        let gate = buffer_rendered(120, 40, |frame| {
+            super::draw_install_gate(frame, &install_preflight(), true, true, true)
+        });
+        let receipt = buffer_rendered(120, 40, |frame| {
+            super::draw_post_install(frame, &success_receipt(), true, true)
+        });
+
+        assert_no_palette(&live, "live frame");
+        assert_no_palette(&statics, "static frame");
+        assert_no_palette(&log, "log overlay");
+        assert_no_palette(&gate, "install gate");
+        assert_no_palette(&receipt, "post-install receipt");
+
+        // The cursor is on screen and is ASCII: the mark replaced a glyph, not
+        // a colour.
+        let text = super::buffer_text(&live, 120);
+        assert!(text.contains('>'), "the ASCII cursor is drawn\n{text}");
+        assert!(text.is_ascii(), "ASCII mode leaks a non-ASCII byte\n{text}");
+    }
+
+    #[test]
+    fn no_motion_makes_every_frame_a_settled_repaint() {
+        // The spinner is the only cell that moves on the clock alone, so it is
+        // the whole difference `--no-motion` has to remove. Two frames of one
+        // observation state are then byte-identical, whatever the time.
+        let snapshot = diamond_snapshot();
+        let mut moving = subsecond_run();
+        let mut still = moving.clone();
+        still.set_motion(false);
+
+        // Probes stay under the one-second timer floor: a label that crosses it
+        // is a measurement, and `--no-motion` keeps measurements.
+        let animated = render_live_frame(&snapshot, &moving, 120, 40, false, true, false);
+        moving.advance(live_at() + Duration::from_millis(700));
+        assert_ne!(
+            animated,
+            render_live_frame(&snapshot, &moving, 120, 40, false, true, false),
+            "the fixture animates on the clock alone"
+        );
+
+        let mut settled = still.clone();
+        settled.advance(live_at() + Duration::from_millis(500));
+        let expected = render_live_frame(&snapshot, &settled, 120, 40, false, true, false);
+        for ms in [500u64, 700, 900] {
+            let mut probe = still.clone();
+            probe.advance(live_at() + Duration::from_millis(ms));
+            assert_eq!(
+                expected,
+                render_live_frame(&snapshot, &probe, 120, 40, false, true, false),
+                "the no-motion frame changed at {ms} ms"
+            );
+        }
     }
 
     #[test]
