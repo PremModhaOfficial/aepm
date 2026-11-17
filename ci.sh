@@ -9,6 +9,12 @@ echo "=== sim scenario numbers (unique) ==="
 bash scripts/check-sim-numbers.sh --self-test
 bash scripts/check-sim-numbers.sh
 
+echo "=== sim scenario map (every src path names its scenarios) ==="
+# F19 — A src file no scenario exercises used to merge green. The map in
+# sim/scenario-map.tsv names the scenarios for every path under src/, and
+# .github/workflows/sim.yml runs exactly the mapped set for a pull request.
+bash scripts/gate-scenarios.sh --check-map
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

@@ -177,9 +177,28 @@ An empty value falls back to the default.
 
 ```bash
 cargo build --release
-./ci.sh          # scenario numbers, fmt, clippy -D warnings, tests, cargo-deny
+./ci.sh          # fmt, clippy -D warnings, tests, cargo-deny, sim gates
 ./sim/run.sh     # real pacman in a disposable Arch container, no network
+bash scripts/gate-coverage.sh          # line coverage vs coverage-floor.txt
+bash scripts/gate-scheduled-audit.sh   # deny + audit + --locked builds
+bash scripts/gate-scenarios.sh --check-map   # every src path names scenarios
 ```
+
+Three gates exist because three things drifted green at once and nothing
+noticed:
+
+- **Coverage.** `scripts/gate-coverage.sh` measures line coverage with
+  `cargo llvm-cov` and fails below `coverage-floor.txt`, which records what
+  the tree measured. CI publishes `target/lcov.info` as an artifact and keeps
+  the log of every job, so a red run can be read after it is gone.
+- **Drift nobody's PR touches.** `.github/workflows/scheduled-audit.yml` runs
+  weekly (Mondays 06:17 UTC): `cargo deny`, `cargo audit`, and
+  `cargo build --locked` on the pinned toolchain and on latest stable. It
+  opens one issue and comments on it; a green run closes it.
+- **A scenario nobody ran.** `sim/scenario-map.tsv` maps every path under
+  `src/` to the scenarios that exercise it. A pull request runs exactly that
+  set plus the scenarios it edits, and a `src/` path with no row fails rather
+  than merging unexercised.
 
 `ci.sh` is the local mirror of the GitHub checks. It cannot see pacman side
 effects. The `CI` workflow also runs `cargo publish --dry-run`, which packages

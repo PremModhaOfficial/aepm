@@ -1,0 +1,96 @@
+name: Scheduled audit
+
+# The lockfile, the toolchain pin and the advisory database drift on their own:
+# no pull request touches them, so `cargo deny`, `cargo audit` and a `--locked`
+# build can go red weeks after the commit that caused it. A weekly run turns
+# that into one issue with a link, instead of a surprise at release time.
+#
+# Weekly on Mondays at 06:17 UTC. Deliberately not on the hour: every workflow
+# on the planet is queued then.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The report job opens, comments on, and closes the single tracking issue.
+  issues: write
+
+concurrency:
+  group: scheduled-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Drift checks (pinned + stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The pinned floor: rust-toolchain.toml. `cargo build --locked` here
+      # proves the pin still builds the committed lockfile.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.85"
+      # The latest stable: a dependency that raised its rust-version shows up
+      # here first, and a resolution that no longer builds under --locked shows
+      # up as a lockfile that needs a deliberate update.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-audit
+      - name: Run the weekly checks
+        run: |
+          set -o pipefail
+          bash scripts/gate-scheduled-audit.sh 2>&1 | tee "$RUNNER_TEMP/scheduled-audit.log"
+      - name: Upload the audit log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scheduled-audit-log
+          path: ${{ runner.temp }}/scheduled-audit.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  report:
+    name: One issue, not one per run
+    needs: audit
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open or update the single tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESULT: ${{ needs.audit.result }}
+        run: |
+          set -euo pipefail
+          title="scheduled audit failed"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # The title is the key: one open issue per repo, never one per run.
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [[ $RESULT != success ]]; then
+            body=$(printf 'The weekly drift checks failed (%s).\n\nRun: %s\n\nWhat runs: `cargo deny --all-features check`, `cargo audit`, and `cargo build --locked` on the pinned toolchain and on latest stable (`scripts/gate-scheduled-audit.sh`).\n\nThis issue is updated in place by every failing run and closed by the next green one.' \
+              "$RESULT" "$run_url")
+            if [[ -n $open ]]; then
+              gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            fi
+          elif [[ -n $open ]]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" \
+              --body "Green again: $run_url. Closing."
+            gh issue close "$open" --repo "$GITHUB_REPOSITORY"
+          fi

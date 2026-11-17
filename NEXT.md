@@ -288,6 +288,25 @@ A container cannot test snapshots or boot.
 - [x] `--json` output for `check` and `doctor`.
 - [x] Release workflow with `cargo publish --dry-run`.
 
+### 6.1 Gates for the three drifts that shipped green
+
+Three things were missing and nothing failed, so each gets a gate that a
+missing signal turns red.
+
+- [x] Coverage: `scripts/gate-coverage.sh` runs `cargo llvm-cov`, fails below
+      the measured floor in `coverage-floor.txt`, and CI publishes
+      `target/lcov.info` as an artifact. Every CI job uploads its log.
+- [x] Weekly drift: `.github/workflows/scheduled-audit.yml` (Mondays 06:17 UTC)
+      runs `cargo deny`, `cargo audit` and `cargo build --locked` on the pinned
+      toolchain and on latest stable, then opens or comments on one issue; a
+      green run closes it. `scripts/gate-scheduled-audit.sh` is the same four
+      checks locally.
+- [x] Unexercised source: `sim/scenario-map.tsv` maps every path under `src/`
+      to the scenarios that run it; `scripts/gate-scenarios.sh` fails on an
+      unmapped path, `ci.sh` runs `--check-map`, and `Sim` runs exactly the
+      mapped set for a pull request. `src/json.rs` is the case that proved the
+      gap: no scenario ran `--json` until 09 and 12 did.
+
 ---
 
 ## Phase 7: TUI
@@ -624,7 +643,10 @@ Checked 2026-11-07.
 
 ## Nice to have, not blocking
 
-- Skip the Sim workflow for docs-only pushes (`paths-ignore`).
-- Docker layer cache between CI runs.
-- Coverage report for unit tests.
-- Branch protection requiring `CI` and `Sim` before merge.
+- [x] Skip the Sim workflow for docs-only pushes (`paths-ignore`): a pull
+      request that changes nothing the map covers selects no scenario and does
+      not build the image.
+- [ ] Docker layer cache between CI runs.
+- [x] Coverage report for unit tests: `scripts/gate-coverage.sh`, floor in
+      `coverage-floor.txt`, lcov artifact.
+- [ ] Branch protection requiring `CI` and `Sim` before merge.

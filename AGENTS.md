@@ -45,8 +45,14 @@ state and the first concrete move.
 
 ## Definition of done
 
-- `./ci.sh` green: fmt, clippy with `-D warnings`, tests, cargo-deny.
-- `./sim/run.sh` green.
+- `./ci.sh` green: fmt, clippy with `-D warnings`, tests, cargo-deny, and the
+  `src/` → scenario map.
+- `bash scripts/gate-coverage.sh` green: line coverage at or above the measured
+  floor in `coverage-floor.txt`.
+- `bash scripts/gate-scheduled-audit.sh` green before a release: cargo-deny,
+  cargo audit, and `cargo build --locked` on the pin and on stable.
+- `./sim/run.sh` green, or the mapped scenarios from
+  `bash scripts/gate-scenarios.sh --list <base>` green.
 - Any change that touches pacman behaviour has a scenario in `sim/scenarios/`.
   Unit tests with a fake runner are not enough for side-effect claims.
 - `README.md` updated when a command, flag, or path changes.
@@ -145,6 +151,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `.pr_agent.toml` | Review policy |
 | `.github/PR-AGENT.md` | Review decisions and measurements |
 | `scripts/review-state.sh` | Agent-facing review state |
+| `sim/scenario-map.tsv` | `src/` path → the sim scenarios that exercise it |
+| `scripts/gate-scenarios.sh` | The map check and the changed-scenario list |
+| `scripts/gate-coverage.sh` / `coverage-floor.txt` | Line-coverage gate and the measured floor |
+| `scripts/gate-scheduled-audit.sh` | The weekly deny, audit and `--locked` checks |
 
 ## Current status
 
