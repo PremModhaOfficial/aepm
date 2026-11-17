@@ -2,7 +2,7 @@
 # Phase 5, VM level: btrfs + snapper, snapshot, rollback, boot, snapper limits.
 #
 #   ./sim/vm/run.sh --probe     report the capabilities this level needs
-#   ./sim/vm/run.sh             boot the VM, run scenarios 46, 47 and 48
+#   ./sim/vm/run.sh             boot the VM, run scenarios 60, 61 and 62
 #
 # A container cannot snapshot or reboot, so this level needs a real kernel: an
 # Arch ISO boots under KVM, installs a btrfs root with snapper, runs the real
@@ -123,7 +123,7 @@ PY
     sleep 0.2
 done
 
-echo "vm: driving scenarios 46-48, transcript in $LOG"
+echo "vm: driving scenarios 60-62, transcript in $LOG"
 set +e
 SIM_VM_BASE_URL="http://10.0.2.2:$PORT" \
 SIM_VM_ISO=$ISO \
@@ -138,4 +138,4 @@ if ((rc != 0)); then
     echo "vm: FAILED (exit $rc); transcript: $LOG" >&2
     exit "$rc"
 fi
-echo "vm: PASS - scenarios 46, 47 and 48 are green; transcript: $LOG"
+echo "vm: PASS - scenarios 60, 61 and 62 are green; transcript: $LOG"

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Scenario 48 — VM: the rollback boots, and the snapper limits act as set.
+# Scenario 62 — VM: the rollback boots, and the snapper limits act as set.
 #
-# Runs after the driver rebooted the machine that scenario 47 rolled back. This
+# Runs after the driver rebooted the machine that scenario 61 rolled back. This
 # is the half a container cannot do: prove the booted kernel and the modules
 # tree agree, and prove SPACE_LIMIT and FREE_LIMIT are read from the config and
 # change what snapper does, not just what the file says.
 #
-# Nothing is carried over from scenario 47: a rollback reverts /root as well, so
+# Nothing is carried over from scenario 61: a rollback reverts /root as well, so
 # every fact here is read from the booted system itself.
 BASE=${VM_BASE_URL:?VM_BASE_URL is not set}
 curl -fsS "$BASE/sim/lib.sh" -o /tmp/sim-lib.sh || { echo "cannot reach $BASE" >&2; exit 1; }
 source /tmp/sim-lib.sh
 
-echo "scenario 48: the rollback boots, and the snapper limits behave"
+echo "scenario 62: the rollback boots, and the snapper limits behave"
 
 # A snapper command that prints why it failed instead of failing quietly.
 snap() {

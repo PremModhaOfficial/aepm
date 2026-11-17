@@ -277,13 +277,13 @@ disk, and drives three scenarios over the serial console:
 
 | Script | Proves |
 |---|---|
-| `sim/vm/scenarios/46-base-install.sh` | a btrfs root with `/` as subvolume `@`, `/.snapshots` on its own subvolume, an ext4 `/boot`, `GRUB` installed with a boot sector actually written, `snapper create-config` on that root, then a real `aepm fetch` and `aepm install --yes` as an unprivileged user: the prefetch downloads and changes nothing installed, the install upgrades through the helper, nothing builds from the AUR |
-| `sim/vm/scenarios/47-rollback-boot.sh` | a snapshot before an install, a package whose `post_upgrade` wipes `/usr/lib/modules` and leaves modules for a kernel that does not exist, `aepm install` reporting success anyway (nothing can know a package is hostile), then `snapper --ambit classic rollback` to the snapshot |
-| `sim/vm/scenarios/48-snapper-limits.sh` | after the reboot the machine runs the restored kernel, `uname -r` is the only directory in `/usr/lib/modules`, the bogus modules are gone and the package is back to the pre-install version; then `FREE_LIMIT` decides how far `snapper cleanup number` deletes (the same six snapshots stop at `NUMBER_LIMIT`'s maximum with `FREE_LIMIT=0.0` and are cut to its minimum with `FREE_LIMIT=0.99`), and `SPACE_LIMIT` is honoured while its condition is met. **Pins a limitation:** the unmet `SPACE_LIMIT` branch is not reachable in this VM, and the last assertion says so on purpose |
+| `sim/vm/scenarios/60-base-install.sh` | a btrfs root with `/` as subvolume `@`, `/.snapshots` on its own subvolume, an ext4 `/boot`, `GRUB` installed with a boot sector actually written, `snapper create-config` on that root, then a real `aepm fetch` and `aepm install --yes` as an unprivileged user: the prefetch downloads and changes nothing installed, the install upgrades through the helper, nothing builds from the AUR |
+| `sim/vm/scenarios/61-rollback-boot.sh` | a snapshot before an install, a package whose `post_upgrade` wipes `/usr/lib/modules` and leaves modules for a kernel that does not exist, `aepm install` reporting success anyway (nothing can know a package is hostile), then `snapper --ambit classic rollback` to the snapshot |
+| `sim/vm/scenarios/62-snapper-limits.sh` | after the reboot the machine runs the restored kernel, `uname -r` is the only directory in `/usr/lib/modules`, the bogus modules are gone and the package is back to the pre-install version; then `FREE_LIMIT` decides how far `snapper cleanup number` deletes (the same six snapshots stop at `NUMBER_LIMIT`'s maximum with `FREE_LIMIT=0.0` and are cut to its minimum with `FREE_LIMIT=0.99`), and `SPACE_LIMIT` is honoured while its condition is met. **Pins a limitation:** the unmet `SPACE_LIMIT` branch is not reachable in this VM, and the last assertion says so on purpose |
 
 ```bash
 ./sim/vm/run.sh --probe     # report the capabilities this level needs
-./sim/vm/run.sh             # boot the VM and run 46, 47, 48
+./sim/vm/run.sh             # boot the VM and run 60, 61, 62
 SIM_VM_LOG=/tmp/vm-sim.log  # the transcript (the default)
 ./sim/vm/run.sh --keep      # keep the guest disk for a manual look
 ```
@@ -353,7 +353,7 @@ the container level, because an installed system has to come from somewhere.
   space condition on the *exclusive* usage of the qgroup it creates, and btrfs
   reports a parent qgroup's exclusive usage as zero however much its child
   subvolumes hold - so even 700 MiB of snapshot-only data against a 600 MiB
-  limit leaves the condition met. Scenario 48 asserts today's behaviour and says
+  limit leaves the condition met. Scenario  62 asserts today's behaviour and says
   so; it goes red the day the branch becomes reachable, and that is when the
   assertion must be inverted. `FREE_LIMIT`'s unmet branch *is* reachable and is
   proven. Neither covers a filesystem under weeks of real growth, and snapper's

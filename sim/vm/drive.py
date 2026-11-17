@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serial-console driver for the Phase 5 VM scenarios (46, 47, 48).
+"""Serial-console driver for the Phase 5 VM scenarios (60, 61, 62).
 
 The guest cannot reach the host filesystem, so each stage is a shell script
 served by `run.sh` over qemu's user network. The driver boots the ISO with an
@@ -120,7 +120,7 @@ def boot_artifacts(disk, scratch, kernel, initrd):
     installed bootloader: GRUB 2.16 in this environment lands on its own prompt
     instead of loading its config, and a harness that hangs at `grub>` proves
     nothing. The bootloader is still installed and its config asserted by
-    scenario 46; what the VM proves here is the kernel, the initramfs and the
+    scenario 60; what the VM proves here is the kernel, the initramfs and the
     root subvolume, which is where a rollback takes effect.
     """
     raw = raw_image(disk, scratch)
@@ -353,7 +353,7 @@ def main():
     console.connect()
     login(console, "archiso")
     network(console, "archiso")
-    run_stage(console, "46-base-install.sh")
+    run_stage(console, "60-base-install.sh")
     stop_vm(console, proc, "the ISO phase")
 
     # --- phase 2: the installed system --------------------------------------
@@ -369,7 +369,7 @@ def main():
             "-initrd", initramfs,
             # No rootflags/subvol: the kernel mounts the default subvolume, so
             # the boot after `snapper rollback` uses the snapshot it made
-            # default. That is the property scenarios 47 and 48 turn on.
+            # default. That is the property scenarios 61 and 62 turn on.
             "-append", f"root={root_device} rw console=ttyS0,115200",
         ],
         SOCK,
@@ -378,12 +378,12 @@ def main():
     console.connect()
     login(console, "aepm-vm")
     network(console, "aepm-vm")
-    run_stage(console, "47-rollback-boot.sh")
+    run_stage(console, "61-rollback-boot.sh")
     # The stage ends with `snapper rollback`, which only takes effect on reboot.
     console.send("systemctl reboot")
     login(console, "aepm-vm")
     network(console, "aepm-vm")
-    run_stage(console, "48-snapper-limits.sh")
+    run_stage(console, "62-snapper-limits.sh")
     stop_vm(console, proc, "the installed system")
     log.close()
     print("drive: all three stages passed")

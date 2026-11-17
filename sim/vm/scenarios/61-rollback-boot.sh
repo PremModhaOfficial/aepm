@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Scenario 47 — VM: snapshot, a broken install, and `snapper rollback`.
+# Scenario 61 — VM: snapshot, a broken install, and `snapper rollback`.
 #
-# Runs in the installed system (stage 46). It publishes a package that destroys
+# Runs in the installed system (stage 60). It publishes a package that destroys
 # the boot artifact on purpose, installs it through the real CLI, and then rolls
-# back to the snapshot taken first. The driver reboots afterwards; scenario 48
+# back to the snapshot taken first. The driver reboots afterwards; scenario 62
 # proves the reboot really landed on the rolled-back system.
 BASE=${VM_BASE_URL:?VM_BASE_URL is not set}
 curl -fsS "$BASE/sim/lib.sh" -o /tmp/sim-lib.sh || { echo "cannot reach $BASE" >&2; exit 1; }
 source /tmp/sim-lib.sh
 
-echo "scenario 47: snapshot, broken install, rollback"
+echo "scenario 61: snapshot, broken install, rollback"
 
 running=$(uname -r)
 assert_true "the installed system is up on the disk's kernel $running" \
@@ -54,7 +54,7 @@ EOF
 pkgname = simapp
 pkgbase = simapp
 pkgver = 3.0.0-1
-pkgdesc = Breaks the boot on purpose (aepm VM scenario 47)
+pkgdesc = Breaks the boot on purpose (aepm VM scenario 61)
 url = https://example.invalid/aepm/sim
 builddate = $(date -u +%s)
 packager = aepm vm harness
@@ -111,7 +111,7 @@ assert_contains "$(cat /root/rollback.log)" "Setting default subvolume to snapsh
     "snapper made the rolled-back snapshot the default subvolume"
 
 # The rollback only takes effect on reboot: the running system still has the
-# broken /usr. Scenario 48 is what proves the reboot.
+# broken /usr. Scenario 62 is what proves the reboot.
 assert_false "the running system is still broken until the reboot" \
     test -d "/usr/lib/modules/$running"
 

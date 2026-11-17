@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scenario 46 — VM: base install on btrfs, snapper config, prefetch, install.
+# Scenario 60 — VM: base install on btrfs, snapper config, prefetch, install.
 #
 # Runs inside the live Arch ISO with /mnt as the target disk. This is the setup
 # the other two VM scenarios need, and it proves the CLI works on a real
@@ -12,7 +12,7 @@ DISK=${VM_DISK:-/dev/vda}
 curl -fsS "$BASE/sim/lib.sh" -o /tmp/sim-lib.sh || { echo "cannot reach $BASE" >&2; exit 1; }
 source /tmp/sim-lib.sh
 
-echo "scenario 46: btrfs base install, snapper config, real prefetch and install"
+echo "scenario 60: btrfs base install, snapper config, real prefetch and install"
 
 # Every step is logged, and a failed assertion prints the tail of the log that
 # explains it. A silent `>/dev/null` here would turn a broken install into a
@@ -24,7 +24,7 @@ show_log() { sed -e 's/^/    /' "$1" 2>/dev/null | tail -15; }
 # would swallow the rest of the disk and could not be rolled back. /boot is a
 # plain ext4 partition, so GRUB only has to read a filesystem it has never
 # failed at; the kernel therefore survives a rollback untouched, which is what
-# scenario 47 needs - the break has to be in /usr, not in GRUB's own path.
+# scenario 61 needs - the break has to be in /usr, not in GRUB's own path.
 wipefs -af "$DISK" >/dev/null
 # 2048 sectors = 1MiB: the gap below the first partition is where a BIOS
 # grub-install embeds core.img, and without it grub exits 0 having written no
@@ -126,7 +126,7 @@ assert_contains "$(grep -o 'console=ttyS0[^ ]*' /mnt/boot/grub/grub.cfg 2>/dev/n
 # `snapper create-config` insists on creating .snapshots itself, so it is left
 # to do that and the subvolume is then promoted to a sibling of @. A nested
 # .snapshots would be swallowed by a rollback of /, which is the one thing
-# scenario 48 needs from this layout.
+# scenario 62 needs from this layout.
 cfg=/mnt/etc/snapper/configs/root
 if [[ -f $cfg ]]; then
     pass "snapper created the root config"
