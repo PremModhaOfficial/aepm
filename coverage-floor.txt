@@ -8,9 +8,10 @@
 #       --lcov --output-path target/lcov.info
 #
 # Measured on 70a0a17 + this gate commit, before the floor existed:
+#   16176 / 18422 lines = 87.8077%, reported as 87.81%, re-measured on main ec6b726.
 #   16127 / 18373 lines = 87.7767%, reported as 87.78%.
 # Log: /tmp/aepm-coverage-measure-main.log
 #
 # Raise it when coverage rises. The gate fails the moment it falls below, so a
 # change that deletes a test is a red build, not a quiet slide.
-floor=87.78
+floor=87.81
