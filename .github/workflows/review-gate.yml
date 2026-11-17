@@ -82,11 +82,11 @@ jobs:
           BASE: ${{ steps.target.outputs.base }}
         run: |
           if ! scripts/review-state.sh --help | grep -q -- '--gate'; then
-            # Before the gate lands on the base branch there is no trusted copy
-            # to run, and the PR's copy is not one. Neutral states that: it is
-            # not a pass, and the annotation says why. From the merge on, the
-            # base always has the script and this branch is dead.
-            echo "::notice::Review Gate is not on $BASE yet; the check is neutral until it lands"
-            exit 78
+            # Reachable only if the gate script is missing from a merged base:
+            # before this workflow exists on the default branch it cannot run at
+            # all, and it never runs a PR's copy. A neutral result would be
+            # counted as a pass, so this fails.
+            echo "::error::$BASE has no review-state.sh --gate; refusing to report a pass"
+            exit 1
           fi
           exec scripts/review-state.sh "$PR" --gate
