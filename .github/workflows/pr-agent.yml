@@ -44,6 +44,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # The gate finds its PR from the review run, and a `/review` run reports
+      # the default branch instead of the PR, so the run states its own target.
+      - name: Announce the target
+        env:
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          echo "pr-agent-target: pr=$PR"
       - name: pr-agent
         # pragent/pr-agent:0.50.0-github_action, pinned by manifest digest.
         # 0.50.0 adds the run-details section (model, tokens in/out, duration,

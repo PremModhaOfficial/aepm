@@ -8,6 +8,10 @@ name: Review Gate
 # The review run is the trigger, not the review comment: the bot posts with
 # `GITHUB_TOKEN`, and GitHub does not start workflows for events that token
 # creates, so an `issue_comment` trigger would never fire for it.
+#
+# A `/review` run reports the default branch as its head and carries no
+# `pull_requests` entry, so it cannot name its PR. `pr-agent.yml` prints the
+# target it resolved, and the gate reads that line back from the run.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -18,11 +22,14 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # Reading the target line out of another workflow's log.
+  actions: read
 
 concurrency:
-  # Keyed on the head commit: two `/review` runs for different PRs both report
-  # the base branch as their `head_branch`, and would cancel each other.
-  group: review-gate-${{ github.event.workflow_run.head_sha || github.event.pull_request.number }}
+  # Keyed on the run, not the head: every `/review` run reports the default
+  # branch as its head, so a head key made runs for different PRs cancel each
+  # other.
+  group: review-gate-${{ github.event.workflow_run.id || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -39,10 +46,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Resolve which PR to gate. A review run started by `/review` has no
-      # `pull_requests` entry and reports the base branch as its `head_branch`,
-      # so the commit is the only reliable key.
-      - name: Resolve the PR and the base ref
+      # Resolve which PR to gate, and take its head and base from the PR rather
+      # than from the event: on a `/review` run both event fields describe the
+      # default branch.
+      - name: Resolve the PR, its head, and the base ref
         id: target
         env:
           # This runs before checkout, so there is no git remote for gh to infer
@@ -50,16 +57,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           pr="${PR:-}"
-          if [[ -z "$pr" && -n "${SHA:-}" ]]; then
-            pr="$(gh api "repos/$GH_REPO/commits/$SHA/pulls" \
-              --jq '[.[] | select(.state == "open")][0].number // empty')"
+          if [[ -z "$pr" && -n "${RUN_ID:-}" ]]; then
+            pr="$(gh run view "$RUN_ID" --log 2>/dev/null \
+              | grep -m1 -o 'pr-agent-target: pr=[0-9]\+' | cut -d= -f2 || true)"
           fi
-          [[ -n "$pr" ]] || { echo "::error::no open PR contains this commit; the gate cannot evaluate"; exit 1; }
+          [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          echo "base=$(gh pr view "$pr" --json baseRefName --jq .baseRefName)" >> "$GITHUB_OUTPUT"
+          gh pr view "$pr" --json headRefOid,baseRefName \
+            --jq '"head=" + .headRefOid, "base=" + .baseRefName' >> "$GITHUB_OUTPUT"
       # The gate runs the script from the base branch, not the PR head: a PR
       # must not be able to loosen the check it is judged by.
       - name: Check out the trusted base
@@ -73,7 +81,7 @@ jobs:
           PR: ${{ steps.target.outputs.pr }}
           BASE: ${{ steps.target.outputs.base }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ steps.target.outputs.head }}
         run: |
           if scripts/review-state.sh --help | grep -q -- '--gate'; then
             exec scripts/review-state.sh "$PR" --gate
