@@ -332,6 +332,33 @@ the container level, because an installed system has to come from somewhere.
 - The installed system autologins root on `ttyS0`: the harness has no keyboard
   and this is a throwaway VM. That is why the VM half never runs on the host.
 
+### Traps this level cost hours on
+
+Each of these failed silently or looked like something else first. They are
+written down so the next change starts here instead of re-deriving them.
+
+- `qemu-img dd` in this qemu has **no `skip=`**: slice a disk with
+  `qemu-img convert -U -O raw -S 4k <qcow2> <raw>` and then plain `dd`.
+  (`--sparse` also takes a size here, not a bare flag.)
+- A second qemu on the same qcow2 dies with `Failed to get "write" lock`. Copy
+  the image (`cp --reflink=auto`) before inspecting it by hand.
+- `-nodefaults` guests do not stop on ACPI poweroff: the driver quits them
+  through the monitor socket, and `cache=writeback` keeps that safe.
+- `mkfs.ext4` prompts when it finds a leftover signature, and a prompt on a
+  serial console is a silent hang. Force it (`-F`) and close stdin.
+- `sfdisk`'s first field is the **start sector**: `1,512M,c` starts at sector 1
+  and leaves no MBR gap, so `grub-install` exits 0 having written no boot
+  sector at all. Scenario 46 asserts the boot sector is non-empty.
+- `snapper create-config` refuses to run when `/.snapshots` already exists; let
+  it create the subvolume, then promote it to a sibling of `@`.
+- pacman runs **`post_upgrade`**, not `post_install`, on an upgrade — a break in
+  the wrong hook does nothing at all.
+- `snapper cleanup number` ignores snapshots younger than `NUMBER_MIN_AGE`
+  (1800 s by default) and does it silently.
+- Values written into `/etc/snapper/configs/root` with `sed` are not what
+  snapper acts on in a chroot-created config. Use `snapper set-config` and read
+  back with `get-config`; the assertions compare the effective values.
+
 ### What the VM level cannot prove
 
 - **It is not the hardware.** A KVM guest proves the kernel, the bootloader and
