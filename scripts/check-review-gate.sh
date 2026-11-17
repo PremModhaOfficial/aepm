@@ -17,6 +17,10 @@ cat > "$TMP/bin/gh" <<'GH'
 set -u
 sub="${1:-} ${2:-}"
 if [[ "$sub" == "pr checks" ]]; then
+  if [[ "${FAKE_CHECKS_FAIL:-0}" == 1 ]]; then
+    echo "HTTP 403: Resource not accessible by integration" >&2
+    exit 1
+  fi
   printf '%s\n' "${FAKE_CHECKS:-[]}"
   exit 0
 fi
@@ -111,4 +115,11 @@ run forged 1 'from the bot'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(typed_body "$HEAD")" "mallory")]"
 run forged-newer 1 'older than the PR head'
 
-printf 'review gate: 10/10\n'
+# `--gate` decides on the review alone, so it must not need the Checks API: a
+# workflow can grant `pull-requests: read` and nothing else.
+export FAKE_CHECKS_FAIL=1
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
+run no-checks-api 0 'gate: pass'
+unset FAKE_CHECKS_FAIL
+
+printf 'review gate: 11/11\n'

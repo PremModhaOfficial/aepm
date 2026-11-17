@@ -103,21 +103,26 @@ head="$(jq -r '.headRefOid[0:7]' <<<"$meta")"
 head_full="$(jq -r '.headRefOid' <<<"$meta")"
 url="$(jq -r '.url' <<<"$meta")"
 
-checks="$(gh pr checks "$pr" --json name,state 2>"$GERR")"
-if [[ -z "$checks" ]]; then
-  if grep -qi "no checks reported" "$GERR"; then
-    checks='[]'
-  else
-    err "gh pr checks failed: $(head -1 "$GERR")" "run \`gh auth status\`"
+# Checks are read for the full report only. `--gate` decides on the review alone,
+# so it needs no Checks API permission: a workflow can grant it
+# `pull-requests: read` and nothing else.
+if [[ "$gate" == 0 ]]; then
+  checks="$(gh pr checks "$pr" --json name,state 2>"$GERR")"
+  if [[ -z "$checks" ]]; then
+    if grep -qi "no checks reported" "$GERR"; then
+      checks='[]'
+    else
+      err "gh pr checks failed: $(head -1 "$GERR")" "run \`gh auth status\`"
+    fi
   fi
-fi
-jq -e . >/dev/null 2>&1 <<<"$checks" || err "gh pr checks returned invalid JSON" "rerun the command"
+  jq -e . >/dev/null 2>&1 <<<"$checks" || err "gh pr checks returned invalid JSON" "rerun the command"
 
-total="$(jq 'length' <<<"$checks")"
-passed="$(jq '[.[] | select(.state == "SUCCESS")] | length' <<<"$checks")"
-failed="$(jq '[.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ERROR" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")] | length' <<<"$checks")"
-pending="$(jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING" or .state == "REQUESTED" or .state == "EXPECTED")] | length' <<<"$checks")"
-skipped="$(jq '[.[] | select(.state == "SKIPPED" or .state == "NEUTRAL")] | length' <<<"$checks")"
+  total="$(jq 'length' <<<"$checks")"
+  passed="$(jq '[.[] | select(.state == "SUCCESS")] | length' <<<"$checks")"
+  failed="$(jq '[.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ERROR" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")] | length' <<<"$checks")"
+  pending="$(jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING" or .state == "REQUESTED" or .state == "EXPECTED")] | length' <<<"$checks")"
+  skipped="$(jq '[.[] | select(.state == "SKIPPED" or .state == "NEUTRAL")] | length' <<<"$checks")"
+fi
 
 # The marker text is forgeable: any commenter can paste a typed block carrying
 # the current head SHA, and `last` would then pick the forgery over the bot's
