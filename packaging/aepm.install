@@ -1,0 +1,13 @@
+# Runs on `pacman -U` and `yay -S aepm`. A package cannot enable a user unit
+# for the account that will own the timer, so this prints the two commands
+# instead of pretending the timer is armed.
+post_install() {
+  printf '%s\n' \
+    'aepm: the daily fetch timer is installed but not enabled. To turn it on:' \
+    '  systemctl --user daemon-reload' \
+    '  systemctl --user enable --now aepm.timer'
+}
+
+post_upgrade() {
+  post_install
+}

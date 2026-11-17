@@ -21,7 +21,7 @@ FROM archlinux:base-devel
 # Phase 2: a non-root user with exactly one NOPASSWD command. No blanket sudo,
 # no wildcards. The visudo check makes a malformed rule fail the build, not a
 # scenario.
-RUN pacman -Syu --noconfirm --needed sudo pacman-contrib \
+RUN pacman -Syu --noconfirm --needed sudo pacman-contrib rust git \
     && useradd --create-home --shell /bin/bash builder \
     && printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' > /etc/sudoers.d/sim \
     && chmod 0440 /etc/sudoers.d/sim \
@@ -65,5 +65,20 @@ RUN chmod 755 /usr/local/bin/yay /usr/local/bin/make-repo.sh \
     && /usr/local/bin/make-repo.sh
 
 COPY --from=builder /src/target/release/aepm /usr/local/bin/aepm
+
+# The packaging scenario runs a real `makepkg` against the checkout this image
+# was built from. pkg-src is what the PKGBUILD's git source would clone;
+# pkg-repo is an AUR checkout, PKGBUILD plus the .install it names and no
+# Cargo.toml in the parse directory. Scenarios have no network: the scenario
+# makes pkg-src a local git repo, points the github URL at it, and the builder
+# stage's crate registry lets `cargo build --locked` run offline.
+COPY Cargo.toml Cargo.lock LICENSE-MIT LICENSE-APACHE README.md \
+    /usr/local/lib/sim/pkg-src/
+COPY packaging/ /usr/local/lib/sim/pkg-src/packaging/
+COPY --from=builder /src/src/ /usr/local/lib/sim/pkg-src/src/
+COPY PKGBUILD /usr/local/lib/sim/pkg-repo/
+COPY packaging/aepm.install /usr/local/lib/sim/pkg-repo/packaging/
+COPY --from=builder /root/.cargo/registry/ /home/builder/.cargo/registry/
+RUN chown -R builder:builder /home/builder/.cargo
 
 WORKDIR /root
