@@ -565,6 +565,26 @@ pub struct LiveView {
 pub const SPINNER_STEPS: usize = 4;
 pub const SPINNER_STEP: Duration = Duration::from_millis(100);
 
+// One drawn frame must build the live view once. `FramePlan` measures the
+// window from a `LiveView` and `draw_with` draws that same view, so a second
+// build is the duplicate this counter exists to catch. `build` delegates to
+// `build_at`, so counting there counts every construction exactly once.
+#[cfg(test)]
+thread_local! {
+    static LIVE_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_live_build() {
+    LIVE_BUILDS.with(|builds| builds.set(builds.get().saturating_add(1)));
+}
+
+/// How many live views this thread has built so far.
+#[cfg(test)]
+pub fn live_builds() -> u64 {
+    LIVE_BUILDS.with(std::cell::Cell::get)
+}
+
 /// The spinner cell, or 0 when nothing is running.
 ///
 /// A frame with no running row must not change on the clock alone: a quiet
@@ -587,6 +607,8 @@ impl LiveView {
     }
 
     pub fn build_at(tree: &Tree, run: &LiveRun, at: SystemTime) -> Self {
+        #[cfg(test)]
+        note_live_build();
         let mut rows = BTreeMap::new();
         let mut builds = GroupCounts::default();
         let mut downloads = GroupCounts::default();

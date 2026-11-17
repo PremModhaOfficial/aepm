@@ -44,8 +44,8 @@ Test names, commit messages and issues use these words, not synonyms.
 | **display-only leaf** | A dependency shown with `?` because it is outside the pending set. Shown, never counted. |
 | **frontier** | The set of packages whose dependencies are already satisfied, so work may start. |
 | **readiness** | Whether a package's requirements are met. Computed once, in `frontier`. |
-| **frame model** | The rows and the budget for one screen. Built only in `plan_frame`. |
-| **`plan_frame`** | The single owner of body layout arithmetic. Nothing else may compute a row budget. |
+| **frame model** | The rows, the budget for one screen, and the forest and live view they were measured against. Built only in `plan_frame`. |
+| **`plan_frame`** | The single owner of body layout arithmetic and of the forest that arithmetic names. Nothing else may compute a row budget or build a second forest per frame. |
 
 ## Reporting
 

@@ -743,43 +743,19 @@ pub struct FramePlan {
     pub body_height: u16,
     /// The footer rows, measured once against the same width.
     pub footer: Vec<Line<'static>>,
+    /// The forest these slots were measured against. Owned here so the renderer
+    /// draws the tree the slots name instead of building a second one.
+    pub tree: Option<Result<Tree, TreeError>>,
+    /// The live view built from that forest, carried for the same reason.
+    pub live: Option<LiveView>,
 }
 
-#[allow(clippy::too_many_arguments)] // the frame carries the full view state
-pub fn plan_frame(
-    snapshot: &Snapshot,
-    run: Option<&LiveRun>,
-    footer: Footer<'_>,
-    width: u16,
-    height: u16,
-    ascii: bool,
-    color: bool,
-    gates: Option<&[Gate]>,
-) -> FramePlan {
-    if width < MIN_WIDTH || height < MIN_HEIGHT {
-        return FramePlan {
-            split: super::live::BodySplit {
-                gate_rows: 0,
-                tree_rows: 0,
-            },
-            slots: Vec::new(),
-            window: None,
-            body_height: 0,
-            footer: Vec::new(),
-        };
-    }
-
-    let footer = footer_lines(footer, width as usize, ascii, color);
-    let footer_height = (footer.len() as u16).max(2);
-    // header(2) + body + footer, exactly as `draw_with` lays it out.
-    let body_height = height.saturating_sub(2).saturating_sub(footer_height);
-    let gate_count = gates.map_or(0, <[Gate]>::len);
-    let mut split = super::live::BodySplit::of(body_height, gate_count);
-
-    if snapshot.fatal.is_some() {
-        // `body_lines` returns only the error line on a fatal snapshot, so a
-        // planned tree would name rows the error frame never draws.
-        return FramePlan {
+impl FramePlan {
+    /// A plan that draws no body: too small a terminal, or a fatal snapshot.
+    /// `body_height` and `footer` are still the frame's own, because the caller
+    /// renders the footer regardless.
+    fn empty(body_height: u16, footer: Vec<Line<'static>>) -> Self {
+        Self {
             split: super::live::BodySplit {
                 gate_rows: 0,
                 tree_rows: 0,
@@ -788,59 +764,56 @@ pub fn plan_frame(
             window: None,
             body_height,
             footer,
-        };
+            tree: None,
+            live: None,
+        }
     }
+}
 
-    let tree = snapshot
-        .prefetch
-        .data()
-        .map(|report| Tree::build(&report.packages));
-    let live = match (run, tree.as_ref()) {
-        (Some(run), Some(Ok(tree))) => Some(LiveView::build(tree, run)),
-        _ => None,
-    };
-    let notes = snapshot
-        .prefetch
-        .data()
-        .map_or(0, |report| report.notes.len());
-    // An empty package list still draws one `system current` row.
-    let empty_row = usize::from(
-        snapshot
-            .prefetch
-            .data()
-            .is_some_and(|report| report.packages.is_empty()),
-    );
-    // A tree that fails to build draws one error line in place of the tree
-    // rows. It is a row like any other, so the plan reserves it or the body
-    // overruns by one when notes fill the rest of the block.
-    let error_row = usize::from(matches!(tree, Some(Err(_))));
-    // `BodySplit` already set the summary row aside (`after_summary`), and the
-    // prefetch block draws that summary itself; only the notes, the
-    // `system current` row and a possible tree-error line come out of the
-    // tree rows. Reserving the summary here as well cost one row on every
-    // frame, and forcing a minimum of one row when they had spent the block
-    // planned a row the frame had to clip.
-    let reserved = notes + empty_row + error_row;
+/// Give the gate block rows back when the tree block's non-optional rows need
+/// more than its share: the notes, the empty `system current` row and a possible
+/// tree-error line. Returns the rows left for the forest itself.
+///
+/// Those rows are not optional. A body that overruns is what cut the gate
+/// block's own overflow row and let the frame claim every gate had run.
+fn fit_tree_rows(split: &mut super::live::BodySplit, reserved: usize, body_height: u16) -> usize {
     if reserved > split.tree_rows {
-        // The summary, notes and `system current` are not optional. When they
-        // need more than the tree share, the gate block gives up rows; a body
-        // that overruns is what cut the gate block's own overflow row and let
-        // the frame claim every gate had run.
         let after = usize::from(body_height).saturating_sub(1);
         split.gate_rows = split.gate_rows.min(after.saturating_sub(reserved));
         split.tree_rows = after.saturating_sub(split.gate_rows);
     }
-    let tree_rows = split.tree_rows.saturating_sub(reserved);
+    // `BodySplit::of` sets the summary row aside, so neither branch may plan
+    // more rows than the body chunk can hold.
+    debug_assert!(
+        split.gate_rows + split.tree_rows <= usize::from(body_height),
+        "the split describes rows the body cannot hold"
+    );
+    split.tree_rows.saturating_sub(reserved)
+}
 
-    let (window, slots) = match (&live, &tree) {
+/// The visible slots and the viewport counts, measured against the forest the
+/// plan already built.
+///
+/// The static forest is windowed as well, so the header must name the roots
+/// actually on screen rather than claiming all of them.
+fn plan_slots(
+    live: Option<&LiveView>,
+    tree: Option<&Result<Tree, TreeError>>,
+    tree_rows: usize,
+) -> (Option<Window>, Vec<WindowSlot>) {
+    // `plan_frame` builds a live view only from a forest that exists, so a live
+    // view without one is the state this adapter may not paper over.
+    debug_assert!(
+        live.is_none() || matches!(tree, Some(Ok(_))),
+        "a live view implies a forest that built"
+    );
+    match (live, tree) {
         (Some(live), Some(Ok(tree))) => {
             let window = live.window(tree, tree_rows);
             let slots = window.slots.clone();
             (Some(window), slots)
         }
         (None, Some(Ok(tree))) => {
-            // The static forest is windowed as well, so the header must name
-            // the roots actually on screen rather than claiming all of them.
             let slots = super::live::static_slots(tree, tree_rows);
             let shown_roots = tree
                 .roots
@@ -863,14 +836,81 @@ pub fn plan_frame(
             };
             (Some(window), slots)
         }
-        _ => (None, Vec::new()),
+        // A live view is only built from a forest that exists, so these four
+        // cases are the total remainder rather than an impossible state.
+        (Some(_), Some(Err(_))) | (Some(_), None) | (None, None) | (None, Some(Err(_))) => {
+            (None, Vec::new())
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // the frame carries the full view state
+pub fn plan_frame(
+    snapshot: &Snapshot,
+    run: Option<&LiveRun>,
+    footer: Footer<'_>,
+    width: u16,
+    height: u16,
+    ascii: bool,
+    color: bool,
+    gates: Option<&[Gate]>,
+) -> FramePlan {
+    if width < MIN_WIDTH || height < MIN_HEIGHT {
+        return FramePlan::empty(0, Vec::new());
+    }
+
+    let footer = footer_lines(footer, width as usize, ascii, color);
+    let footer_height = (footer.len() as u16).max(2);
+    // header(2) + body + footer, exactly as `draw_with` lays it out.
+    let body_height = height.saturating_sub(2).saturating_sub(footer_height);
+    let gate_count = gates.map_or(0, <[Gate]>::len);
+    let mut split = super::live::BodySplit::of(body_height, gate_count);
+
+    if snapshot.fatal.is_some() {
+        // `body_lines` returns only the error line on a fatal snapshot, so a
+        // planned tree would name rows the error frame never draws.
+        return FramePlan::empty(body_height, footer);
+    }
+
+    let tree = snapshot
+        .prefetch
+        .data()
+        .map(|report| Tree::build(&report.packages));
+    let live = match (run, tree.as_ref()) {
+        (Some(run), Some(Ok(tree))) => Some(LiveView::build(tree, run)),
+        // Every other pair has no live view to show: no run, no forest, or a
+        // forest the cycle detector refused.
+        (Some(_), Some(Err(_))) | (Some(_), None) | (None, Some(_)) | (None, None) => None,
     };
+    let notes = snapshot
+        .prefetch
+        .data()
+        .map_or(0, |report| report.notes.len());
+    // An empty package list still draws one `system current` row.
+    let empty_row = usize::from(
+        snapshot
+            .prefetch
+            .data()
+            .is_some_and(|report| report.packages.is_empty()),
+    );
+    // A tree that fails to build draws one error line in place of the tree
+    // rows. It is a row like any other, so the plan reserves it or the body
+    // overruns by one when notes fill the rest of the block.
+    let error_row = usize::from(matches!(tree, Some(Err(_))));
+    // `BodySplit` already set the summary row aside (`after_summary`), and the
+    // prefetch block draws that summary itself; only the notes, the
+    // `system current` row and a possible tree-error line come out of the tree
+    // rows. Reserving the summary here as well cost one row on every frame.
+    let tree_rows = fit_tree_rows(&mut split, notes + empty_row + error_row, body_height);
+    let (window, slots) = plan_slots(live.as_ref(), tree.as_ref(), tree_rows);
     FramePlan {
         split,
         slots,
         window,
         body_height,
         footer,
+        tree,
+        live,
     }
 }
 
@@ -923,20 +963,17 @@ fn draw_with(
         ])
         .split(area);
 
-    let tree = snapshot
-        .prefetch
-        .data()
-        .map(|report| Tree::build(&report.packages));
-    let live = match (run, tree.as_ref()) {
-        (Some(run), Some(Ok(tree))) => Some(LiveView::build(tree, run)),
-        _ => None,
-    };
+    // The plan owns the forest and the live view it measured. Building them
+    // again here put two of each on every drawn frame; the seam is that the
+    // planner owns what it computed, not that the renderer recomputes it.
+    let tree = plan.tree.as_ref();
+    let live = plan.live.as_ref();
     let window = plan.window.as_ref();
 
     let header = header_lines(
         snapshot,
-        tree.as_ref(),
-        live.as_ref(),
+        tree,
+        live,
         window,
         chunks[0].width as usize,
         ascii,
@@ -947,8 +984,8 @@ fn draw_with(
 
     let body = body_lines(
         snapshot,
-        tree.as_ref(),
-        live.as_ref(),
+        tree,
+        live,
         ascii,
         chunks[1].width as usize,
         color,
@@ -3101,6 +3138,58 @@ mod tests {
         assert!(
             !frame.contains("0 pending"),
             "no pending count is invented from uncollected sections:\n{frame}"
+        );
+    }
+
+    #[test]
+    fn one_drawn_frame_builds_one_forest_and_one_live_view() {
+        // `plan_frame` measures the window from the forest and the live view;
+        // `draw_with` then built both a second time to draw them, so every
+        // drawn frame built 2 forests and 2 live views. The plan owns what it
+        // built now, and this count is the proof that the duplicate is gone.
+        let snapshot = showcase_snapshot();
+        let run = showcase_run();
+        let forests_before = crate::tui::tree::tree_builds();
+        let views_before = crate::tui::live::live_builds();
+        let frame = render_live_frame_status(
+            &snapshot,
+            &run,
+            Footer::default(),
+            80,
+            24,
+            false,
+            false,
+            false,
+            false,
+            None,
+            Selection::none(),
+        );
+        let forests = crate::tui::tree::tree_builds() - forests_before;
+        let views = crate::tui::live::live_builds() - views_before;
+        assert!(!frame.is_empty(), "the frame drew nothing");
+        assert_eq!(
+            (forests, views),
+            (1, 1),
+            "one frame built {forests} forests and {views} live views, not 1 of each"
+        );
+    }
+
+    #[test]
+    fn a_static_frame_builds_no_live_view() {
+        // The negative space: with no run there is no live view to build, so a
+        // static frame is one forest and zero views. A counter that reported 1
+        // for both would pass the live test without measuring anything.
+        let snapshot = showcase_snapshot();
+        let forests_before = crate::tui::tree::tree_builds();
+        let views_before = crate::tui::live::live_builds();
+        let frame = super::render_frame(&snapshot, 80, 24, false, false, false);
+        let forests = crate::tui::tree::tree_builds() - forests_before;
+        let views = crate::tui::live::live_builds() - views_before;
+        assert!(!frame.is_empty(), "the frame drew nothing");
+        assert_eq!(
+            (forests, views),
+            (1, 0),
+            "one static frame built {forests} forests and {views} live views, not 1 and 0"
         );
     }
 
