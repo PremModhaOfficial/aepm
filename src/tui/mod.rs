@@ -154,54 +154,41 @@ fn run_interactive(
         if dirty {
             terminal
                 .draw(|frame| {
-                    match (session.as_ref(), notice.as_ref()) {
-                        (Some(live), _) => render::draw_live_status(
+                    let (footer, gates, body) =
+                        frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
+                    // Enforced again at the consumer: the body that was chosen
+                    // is the one whose gate list reaches the renderer.
+                    debug_assert!(
+                        gates.is_some() != matches!(body, BodyKind::Static),
+                        "the drawn body and its gate list must agree"
+                    );
+                    match body {
+                        BodyKind::Live => render::draw_live_status(
                             frame,
                             &snapshot,
-                            live.live(),
-                            live.footer(ascii),
+                            session
+                                .as_ref()
+                                .expect("BodyKind::Live is only returned with a session")
+                                .live(),
+                            footer,
                             ascii,
                             color,
                             help,
                             ledger,
-                            Some(live.gates()),
+                            gates,
                             selection.clone(),
                         ),
-                        (None, Some(notice)) => render::draw_status(
+                        BodyKind::Notice | BodyKind::Static => render::draw_status(
                             frame,
                             &snapshot,
-                            render::Footer {
-                                status: Some(&notice.status),
-                                keys: Some(notice.keys(ascii)),
-                                failed: notice.failure,
-                                repair: None,
-                            },
+                            footer,
                             ascii,
                             color,
                             help,
                             ledger,
-                            Some(&notice.gates),
+                            gates,
                             selection.clone(),
                         ),
-                        (None, None) => {
-                            let keys = static_keys(ascii, ledger);
-                            render::draw_status(
-                                frame,
-                                &snapshot,
-                                render::Footer {
-                                    status: None,
-                                    keys: Some(keys),
-                                    failed: false,
-                                    repair: None,
-                                },
-                                ascii,
-                                color,
-                                help,
-                                ledger,
-                                None,
-                                selection.clone(),
-                            )
-                        }
                     }
                     if log_open {
                         if let Some(live) = session.as_ref() {
@@ -386,20 +373,14 @@ fn run_interactive(
                                 // status/keys, not an empty footer. Passing
                                 // `&[]` here planned 9 rows while the frame
                                 // drew 3.
-                                let (footer, gates): (render::Footer<'_>, &[Gate]) =
-                                    match (session.as_ref(), notice.as_ref()) {
-                                        (Some(live), _) => (live.footer(ascii), live.gates()),
-                                        (None, Some(notice)) => (
-                                            render::Footer {
-                                                status: Some(&notice.status),
-                                                keys: Some(notice.keys(ascii)),
-                                                failed: notice.failure,
-                                                repair: None,
-                                            },
-                                            notice.gates.as_slice(),
-                                        ),
-                                        (None, None) => (render::Footer::default(), &[]),
-                                    };
+                                let (footer, gates, body) =
+                                    frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
+                                // The plan must be built from exactly what the
+                                // frame draws: the same body, the same gates.
+                                debug_assert!(
+                                    gates.is_some() != matches!(body, BodyKind::Static),
+                                    "the planned body and its gate list must agree"
+                                );
                                 let plan = render::plan_frame(
                                     &snapshot,
                                     session.as_ref().map(FetchSession::live),
@@ -408,7 +389,7 @@ fn run_interactive(
                                     height,
                                     ascii,
                                     color,
-                                    Some(gates),
+                                    gates,
                                 );
                                 let delta = if action == Action::Down { 1 } else { -1 };
                                 selection = selection.moved(&tree, &plan.slots, delta);
@@ -621,6 +602,78 @@ fn install_notice_keys(ascii: bool) -> &'static str {
     }
 }
 
+/// Which body is on screen. [`frame_parts`] returns exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyKind {
+    Live,
+    Notice,
+    Static,
+}
+
+/// The one owner of "which body is on screen", and of the footer and gate list
+/// that body draws with.
+///
+/// This decision used to live twice: in the draw closure and again in the
+/// `j`/`k` arm, where the event loop re-derived it to plan a cursor move. The
+/// second copy had already drifted (it planned a `Footer::default()` and no
+/// gates where the draw closure drew real keys and the notice's gate rows), so
+/// the planned frame disagreed with the drawn one. One function owns it now;
+/// both callers pass the result straight through and cannot disagree again.
+///
+/// `ledger` is a parameter because the static body builds its key line from
+/// [`static_keys`], and the gate list is an `Option` because the static body
+/// owns no gates while the live and notice bodies each own their own list.
+fn frame_parts<'a>(
+    session: Option<&'a FetchSession>,
+    notice: Option<&'a Notice>,
+    ascii: bool,
+    ledger: bool,
+) -> (render::Footer<'a>, Option<&'a [Gate]>, BodyKind) {
+    let (footer, gates, body) = match (session, notice) {
+        (Some(live), _) => (live.footer(ascii), Some(live.gates()), BodyKind::Live),
+        (None, Some(notice)) => (
+            render::Footer {
+                status: Some(&notice.status),
+                keys: Some(notice.keys(ascii)),
+                failed: notice.failure,
+                repair: None,
+            },
+            Some(notice.gates.as_slice()),
+            BodyKind::Notice,
+        ),
+        (None, None) => (
+            render::Footer {
+                status: None,
+                keys: Some(static_keys(ascii, ledger)),
+                failed: false,
+                repair: None,
+            },
+            None,
+            BodyKind::Static,
+        ),
+    };
+    // The positive invariant: a session is the live body, and only a session is.
+    debug_assert!(
+        session.is_some() == matches!(body, BodyKind::Live),
+        "only a session becomes the live body"
+    );
+    // The negative space: a notice never falls through to the static body.
+    debug_assert!(
+        !matches!((body, notice.is_some()), (BodyKind::Static, true)),
+        "a held notice is never the static body"
+    );
+    // The static body is the only gateless one; every other body reports gates.
+    debug_assert!(
+        !matches!(body, BodyKind::Static) || gates.is_none(),
+        "the static body owns no gate list"
+    );
+    debug_assert!(
+        matches!(body, BodyKind::Static) || gates.is_some(),
+        "a body that owns gates must report them"
+    );
+    (footer, gates, body)
+}
+
 /// The static tree's own key line. `--render-once` uses `render_frame`
 /// directly, so its frozen frame is unchanged.
 fn static_keys(ascii: bool, ledger: bool) -> &'static str {
@@ -664,7 +717,10 @@ fn collect_snapshot(config: &Config, now: SystemTime) -> Result<Snapshot, Error>
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{Context, Keymap, ensure_interactive, resolve, use_color};
+    use super::{
+        BodyKind, Context, Keymap, Notice, ensure_interactive, frame_parts, resolve, static_keys,
+        use_color,
+    };
     use crate::keymap::Action;
 
     fn press(code: KeyCode) -> KeyEvent {
@@ -765,5 +821,21 @@ mod tests {
         assert!(ensure_interactive(true, true, Some("dumb")).is_err());
         assert!(ensure_interactive(true, true, Some("xterm-256color")).is_ok());
         assert!(ensure_interactive(true, true, None).is_ok());
+    }
+
+    // The precedence is the one decision `frame_parts` owns; the live arm needs
+    // a real session, so the two arms a test can build are pinned here.
+    #[test]
+    fn the_static_body_is_gateless_and_a_notice_owns_its_gates() {
+        let (footer, gates, body) = frame_parts(None, None, false, true);
+        assert_eq!(body, BodyKind::Static);
+        assert!(gates.is_none(), "the static body owns no gates");
+        assert_eq!(footer.keys, Some(static_keys(false, true)));
+
+        let notice = Notice::install(Ok(0));
+        let (footer, gates, body) = frame_parts(None, Some(&notice), false, false);
+        assert_eq!(body, BodyKind::Notice);
+        assert!(gates.is_some(), "a notice reports its own gate list");
+        assert_eq!(footer.status, Some(notice.status.as_str()));
     }
 }

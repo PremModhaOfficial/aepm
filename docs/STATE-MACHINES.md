@@ -53,12 +53,14 @@ stack.** `run_interactive` holds the whole state:
 | finished | `session` at `Phase::Finished { unproven }` | a zero command exit |
 | notice | `session = None` and `notice = Some` | a gate refusal, or a finished install |
 
-**Precedence, owned by the draw closure:** `session` first, then `notice`, then
-the static tree. The body is chosen by
-[`match (session.as_ref(), notice.as_ref())`](#anchors), so a session always
-shadows a notice. Consequence: an install started while a finished fetch is on
-screen leaves that notice invisible until the session is dismissed, because
-`Esc` clears the session and keeps the notice. Shadowed, never lost.
+**Precedence, owned by `frame_parts` in `src/tui/mod.rs`:** `session` first, then
+`notice`, then the static tree. The body is chosen by
+[`frame_parts`](#anchors), and both the draw closure and the `j`/`k` cursor
+planner consume its result, so a session always shadows a notice and the planned
+frame cannot disagree with the drawn one. Consequence: an install started while
+a finished fetch is on screen leaves that notice invisible until the session is
+dismissed, because `Esc` clears the session and keeps the notice. Shadowed,
+never lost.
 
 ### Overlay stack
 
@@ -358,14 +360,14 @@ purpose, so this table cannot quietly describe an older tree.
 
 | Claim | Anchor | The line says |
 |---|---|---|
-| the body precedence, and its order | `src/tui/mod.rs:157` | `match (session.as_ref(), notice.as_ref()) {` |
-| the receipt rank, above the gate | `src/tui/mod.rs:244` | `if post_install.is_some() {` |
-| the gate rank, above the main match | `src/tui/mod.rs:256` | `if install_gate.is_some() {` |
+| the body precedence, and its order | `src/tui/mod.rs:632` | `let (footer, gates, body) = match (session, notice) {` |
+| the receipt rank, above the gate | `src/tui/mod.rs:231` | `if post_install.is_some() {` |
+| the gate rank, above the main match | `src/tui/mod.rs:243` | `if install_gate.is_some() {` |
 | the log-flag invariant | `src/tui/mod.rs:139` | `assert!(` |
-| the `Esc` ladder | `src/tui/mod.rs:346` | `Some(Action::Back) => {` |
-| the arming predicate | `src/tui/mod.rs:261` | `let armed = news_attested` |
-| the attestation reset | `src/tui/mod.rs:311` | `news_attested = false;` |
-| the modal action allow-list | `src/tui/mod.rs:515` | `fn accepts(context: Context, action: Action) -> bool {` |
+| the `Esc` ladder | `src/tui/mod.rs:333` | `Some(Action::Back) => {` |
+| the arming predicate | `src/tui/mod.rs:248` | `let armed = news_attested` |
+| the attestation reset | `src/tui/mod.rs:298` | `news_attested = false;` |
+| the modal action allow-list | `src/tui/mod.rs:496` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:60` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:339` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:102` | `pub fn plan_observed(` |
