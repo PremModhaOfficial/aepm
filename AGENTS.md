@@ -150,8 +150,12 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment.
-- **Authority:** the bot advises. `CI` and `Sim` are the gates. A merge verdict
-  is input to a human decision, not permission to merge.
+- **Gate:** the `Review Gate` check fails when the review comment is missing or
+  older than the PR head. It makes no model call, so it spends no credits, and
+  it runs the script from the base branch. Findings stay advisory.
+- **Authority:** the bot advises. `CI` and `Sim` are the behaviour gates;
+  `Review Gate` is the coverage gate. A merge verdict is input to a human
+  decision, not permission to merge.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite

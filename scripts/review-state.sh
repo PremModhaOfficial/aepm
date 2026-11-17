@@ -3,7 +3,7 @@
 # schema, pre-computed aggregates, definitive empty state, structured errors.
 set -uo pipefail
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 case "$BIN" in "$HOME"/*) BIN="~${BIN#"$HOME"}" ;; esac
@@ -14,13 +14,14 @@ bin: $BIN
 description: Compact PR review state for agents
 
 usage:
-  scripts/review-state.sh [<pr>] [--findings] [--full]
+  scripts/review-state.sh [<pr>] [--findings] [--full] [--gate]
   scripts/review-state.sh --help
   scripts/review-state.sh --version
 
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
+  --gate      exit 1 when the review is missing or older than the PR head
   --help      this reference
   --version   print the version only
 
@@ -29,6 +30,7 @@ examples:
   scripts/review-state.sh 20
   scripts/review-state.sh 20 --findings
   scripts/review-state.sh 20 --full
+  scripts/review-state.sh 20 --gate
 EOF
 }
 
@@ -40,6 +42,7 @@ err() {
 pr=""
 full=0
 show_findings=0
+gate=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -47,7 +50,8 @@ for arg in "$@"; do
     --version|-v|-V) printf '%s\n' "$VERSION"; exit 0 ;;
     --full) full=1 ;;
     --findings) show_findings=1 ;;
-    -*) err "unknown flag $arg" "valid flags: --findings, --full, --help, --version" 2 ;;
+    --gate) gate=1 ;;
+    -*) err "unknown flag $arg" "valid flags: --findings, --full, --gate, --help, --version" 2 ;;
     *)
       [[ -z "$pr" ]] || err "unexpected argument $arg" "pass one PR number" 2
       pr="$arg"
@@ -66,6 +70,10 @@ if [[ -z "$pr" ]]; then
   if [[ -z "$pr" ]]; then
     if grep -qi "no pull requests found" "$GERR"; then
       branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+      if [[ "$gate" -eq 1 ]]; then
+        printf 'gate: fail\npr: 0\nreason: no open pull request for branch %s\nhelp: open a PR and run `/review`\n' "$branch"
+        exit 1
+      fi
       printf 'pr: 0 open pull requests for branch %s\n' "$branch"
       printf 'help[1]: push the branch and open a PR to get a review\n'
       exit 0
@@ -152,6 +160,23 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 [[ -n "$risk" ]] || risk="unknown"
 [[ -n "$verdict" ]] || verdict="unknown"
 [[ -n "$review_body" ]] && present="true" || present="false"
+
+if [[ "$gate" -eq 1 ]]; then
+  if [[ "$present" != "true" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
+    exit 1
+  fi
+  if [[ "$stale" != "false" ]]; then
+    if [[ "$stale" == "true" ]]; then
+      printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review is older than the PR head\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
+    else
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
+    fi
+    exit 1
+  fi
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\n' "$number" "$head"
+  exit 0
+fi
 
 printf 'bin: %s\n' "$BIN"
 printf 'description: Compact PR review state for agents\n'

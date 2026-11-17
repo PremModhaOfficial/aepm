@@ -46,7 +46,8 @@ repository secret, `.pr_agent.toml` policy.
 | D25 | Large PRs | `enable_large_pr_chunking = true`, `max_number_of_calls = 3` | Chunk instead of skip or truncate. Chunks beyond the cap land in `remaining_files_list`, and the coverage footer lists them; the footer stays enabled so a partial review is never silent | `[VERIFIED: configuration.toml lines 216-217; pr_processing.py _pack_pr_multi_diffs; pr_reviewer.py coverage footer]` |
 | D26 | AX contract | `AGENTS.md` section "Agent review surface" | An agent entering the repo learns triggers, commands, output fields, authority, and failure semantics without reading the workflow | `[VERIFIED: AGENTS.md]` |
 | D27 | Output trim | `require_estimate_effort_to_review = false`, `require_ticket_analysis_review = false`, `enable_intro_text = false` | Drop rows that only help human triage; keep findings, tests, security, risk, and verdict | `[VERIFIED: configuration.toml lines 176, 181, 211]` |
-| D28 | Agent state CLI | `scripts/review-state.sh` | Reads the `pr-agent-review-state:v1` typed block: head staleness, coverage, finding counts, `path:line`; TOON-ish output, exit codes, `--help`, `--version` | `[VERIFIED: review comment state block; script tests]` |
+| D28 | Agent state CLI | `scripts/review-state.sh` | Reads the `pr-agent-review-state:v1` typed block: head staleness, coverage, finding counts, `path:line`; TOON-ish output, exit codes, `--help`, `--version` | `[VERIFIED: review comment state block; scripts/check-review-gate.sh]` |
+| D29 | Coverage gate | `.github/workflows/review-gate.yml` + `review-state.sh --gate` | 3 of 12 sampled merged PRs had no review comment (#92, #83, #82, all force-pushed); the review bot has no `synchronize` trigger. The gate fails on a missing or stale review, runs the script from the base branch, and makes no model call, so it spends no credits. Findings stay advisory. | `[MEASURED: 100 pr-agent runs, 55 success; 3/12 merged PRs with zero comments, 2026-11-17]` |
 
 ## Not-done ledger
 
@@ -56,7 +57,7 @@ repository secret, `.pr_agent.toml` policy.
 | N2 | Local proxy or tunnel | Prohibited by the user; also unnecessary once the official Provider API exists | `[VERIFIED: user instruction; Provider API docs]` |
 | N3 | Fork PR review | `pull_request` gives no secrets; `pull_request_target` with PR code is a pwn-request risk | `[VERIFIED: GitHub Docs secrets note; repo ci.yml comment F15]` |
 | N4 | `/update_changelog`, `/add_docs`, committable suggestions | Would need `contents: write`; out of the requested scope | `[VERIFIED: permission surface above]` |
-| N5 | Branch protection requiring `Review` | Repo setting, not a workflow change; requires a maintainer decision | `[VERIFIED: GitHub branch protection docs]` |
+| N5 | Branch protection requiring `Review Gate` | The workflow and `--gate` mode are landed; adding the check to the ruleset is a one-time repository setting, not a workflow change | `[VERIFIED: GitHub branch protection docs]` |
 | N6 | Ollama or another local model | Needs an always-on host; user chose Command Code | `[VERIFIED: user directive]` |
 | N7 | Auto-merge or auto-approve | Review is advisory; approval stays human | `[VERIFIED: enable_auto_approval default false]` |
 | N8 | `workflow_run` CI-conclusion trigger | Doubles runs; the chosen trigger set matches the user's "describe + review on open" choice | `[VERIFIED: github_action_runner.py workflow_run branch]` |

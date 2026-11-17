@@ -264,7 +264,8 @@ Every PR gets an automated review from a self-hosted
 CodeRabbit. It runs from
 [`.github/workflows/pr-agent.yml`](.github/workflows/pr-agent.yml) on PR
 open/reopen/ready-for-review and on `/` commands in PR comments. `CI` and `Sim`
-remain the merge gate; this is the review layer on top.
+remain the behaviour gates; `Review Gate` checks that a review exists for the
+head.
 
 - Policy lives in [`.pr_agent.toml`](.pr_agent.toml). The reviewer reads
   `AGENTS.md`, `NEXT.md`, and `context.md` from `main`, so the safety and honesty
@@ -278,6 +279,9 @@ remain the merge gate; this is the review layer on top.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
+- The `Review Gate` check fails when the review is missing or older than the
+  PR head. It makes no model call, so it is free; make it a required check so a
+  force push cannot merge ahead of the review. Findings stay advisory.
 - A review that cannot run fails the check. It never reports green.
 - Fork PRs are skipped because GitHub does not expose secrets to them.
 
