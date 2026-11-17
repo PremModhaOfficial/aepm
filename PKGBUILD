@@ -10,7 +10,8 @@
 # rule and points the unit at a $HOME binary instead.
 
 pkgname=aepm
-pkgver=0.1.0
+pkgver=0.1.0_pre1
+_tag=v0.1.0-pre1
 pkgrel=1
 pkgdesc='Split Arch updates: download in the background, install in the foreground'
 arch=('x86_64' 'aarch64')
@@ -25,7 +26,7 @@ optdepends=(
 # The tag must exist before this PKGBUILD is pushed to the AUR; makepkg pins
 # the commit it resolves. SKIP is the AUR norm for a git source, which has no
 # reusable tarball checksum.
-source=("git+$url.git#tag=v$pkgver")
+source=("git+$url.git#tag=$_tag")
 sha256sums=('SKIP')
 
 build() {

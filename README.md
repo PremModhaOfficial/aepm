@@ -15,11 +15,9 @@ while implementing, and `sim/` is where behaviour gets proven.
 
 ## Install
 
-From the AUR:
-
-```bash
-yay -S aepm
-```
+Not on the AUR yet: `aepm` returns `resultcount: 0` from the AUR RPC, so
+`yay -S aepm` fails. The `PKGBUILD` here is the package that will be uploaded
+once the release gate (#23) is green; until then, build from source.
 
 With cargo, if you would rather have the binary in `~/.cargo/bin`:
 
