@@ -135,6 +135,9 @@ Today the sim runs everything as root, so the real privilege path is untested.
       run each other's binary; `run.sh --no-cache` rebuilds a changed binary.
       `sim/check-image-tag.sh` proves the derived tag and the override, and
       `./ci.sh` runs it.
+- [x] `ci.sh` fails when two scenarios share a number (#61). Numbers stay
+      hand-assigned: deriving them from an issue number would renumber every
+      existing file.
 
 Note: pacman 7.1 sets `DownloadUser = alpm`. Cache directories must be
 accessible to that user, or downloads fail. Test a moved CacheDir explicitly.
