@@ -552,7 +552,7 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
       markers, a light `├─`/`└─` tree, and a one-line `done · running · waiting ·
       failed` footer; ASCII uses `[ ]`/`[|]`/`[v]`/`[x]` and keeps the meaning.
 - [x] Help overlay lists every key the shell handles and sizes to its content;
-      a test reads the `KeyCode` arms under `src/tui/` so it cannot drift.
+      a test reads the key table so it cannot drift.
 - [x] The log screen belongs to its session: `esc` on a finished session, and a
       `F` that a gate refuses, close the log with it, so no open-log flag is
       left with no screen to toggle it.
@@ -570,8 +570,12 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
       (it was 3.0 to 4.4 s debug and 0.44 to 0.50 s release). The burst budget is
       asserted in `src/frontier.rs` and the frame and ingest costs in the
       2,000-package test in `src/tui/tree.rs`.
-- [ ] Keymap overrides for the v1 keys.
-- [ ] No mouse, themes, or `tui.conf` in v1.
+- [x] Keymap overrides for the v1 keys: one table in `src/keymap.rs`, the
+      `[keys]` section of `tui.conf` (`AEPM_TUI_CONFIG`), and a load error that
+      names the file, the line and the action. Sim 40 proves a rebound key acts
+      and the old one stops.
+- [ ] No mouse or themes in v1. `tui.conf` exists, but `[keys]` is the only
+      section it reads.
 
 Done when the frame budget in `TUI.md` holds and ASCII preserves meaning.
 Measured with `cargo test --release --test perf -- --nocapture` on 2,000 rows

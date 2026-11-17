@@ -2355,8 +2355,9 @@ fn age_label(at: Option<SystemTime>, now: SystemTime) -> Option<String> {
     })
 }
 
-/// The help overlay's rows. The drift test compares this table against every
-/// `KeyCode` arm under `src/tui/`, so a handled key cannot lack a row.
+/// The help overlay's rows, for the default bindings. The drift test compares
+/// this table against `keymap::DEFAULTS`, so a bound key cannot lack a row and a
+/// row cannot name a key nothing binds. A rebound key is not advertised here.
 const HELP_ROWS: &[(&str, &str)] = &[
     ("q", "quit"),
     ("?", "toggle help"),
@@ -5967,102 +5968,39 @@ mod tests {
         assert!(frame.contains("ctrl-z  suspend"));
     }
 
-    /// Every `KeyCode` arm in the shell has a help row. The test reads the
-    /// shell's own sources, so a key added there fails here without a second
-    /// hand-kept list to drift.
+    /// Every default binding has a help row, and every help row is a binding.
+    /// The keymap is the one table, so the overlay cannot drift from the
+    /// handler it documents.
     #[test]
-    fn every_handled_key_has_a_help_row() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tui");
-        let mut sources: Vec<_> = std::fs::read_dir(dir)
-            .expect("the tui sources")
-            .map(|entry| entry.expect("a directory entry").path())
-            .filter(|path| path.extension().is_some_and(|kind| kind == "rs"))
+    fn every_bound_key_has_a_help_row() {
+        let bound: Vec<String> = crate::keymap::DEFAULTS
+            .iter()
+            .map(|(_, _, key)| key.to_string())
             .collect();
-        sources.sort();
-        let mut handled = Vec::new();
-        for path in &sources {
-            handled.extend(handled_keys(
-                &std::fs::read_to_string(path).expect("a tui source"),
-            ));
-        }
         for known in [
             "q", "esc", "j", "k", "space", "enter", "F", "ctrl-c", "ctrl-z",
         ] {
             assert!(
-                handled.contains(&known.to_string()),
-                "missing {known}: {handled:?}"
+                bound.contains(&known.to_string()),
+                "missing {known}: {bound:?}"
             );
         }
         let labels: Vec<&str> = super::HELP_ROWS
             .iter()
             .flat_map(|(keys, _)| keys.split_whitespace())
             .collect();
-        for key in &handled {
+        for key in &bound {
             assert!(
                 labels.contains(&key.as_str()),
-                "`{key}` is handled by the shell but has no help row: {handled:?}"
+                "`{key}` is bound but has no help row: {bound:?}"
             );
         }
-    }
-
-    /// The shell's own `KeyCode` arms, without its tests or commented-out keys.
-    fn handled_keys(source: &str) -> Vec<String> {
-        let live = source.split("#[cfg(test)]").next().unwrap_or_default();
-        let code: String = live
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut keys: Vec<String> = Vec::new();
-        // An arm runs from its first `KeyCode` to the `=>` closing its guard,
-        // so a modifier on a wrapped guard belongs to that arm alone.
-        for arm in code.split("=>") {
-            let head = match arm.find("KeyCode::") {
-                Some(at) => &arm[at..],
-                None => continue,
-            };
-            let control = head.contains("KeyModifiers::CONTROL");
-            let mut rest = head;
-            while let Some(at) = rest.find("KeyCode::") {
-                rest = &rest[at + "KeyCode::".len()..];
-                let code = match rest.strip_prefix("Char(") {
-                    Some(tail) => match tail.trim_start_matches('\'').chars().next() {
-                        Some(' ') => "space".to_string(),
-                        Some(ch) => ch.to_string(),
-                        None => continue,
-                    },
-                    None => rest
-                        .chars()
-                        .take_while(|ch| ch.is_alphanumeric())
-                        .collect::<String>()
-                        .to_lowercase(),
-                };
-                if code.is_empty() {
-                    continue;
-                }
-                let key = if control {
-                    format!("ctrl-{code}")
-                } else {
-                    code
-                };
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
+        for label in &labels {
+            assert!(
+                bound.iter().any(|key| key == label),
+                "help row `{label}` names a key nothing binds: {bound:?}"
+            );
         }
-        keys
-    }
-
-    #[test]
-    fn the_help_key_scanner_is_arm_scoped() {
-        let source = "KeyCode::Char('c')\n    if key.modifiers.contains(KeyModifiers::CONTROL) => quit,\nKeyCode::Esc => close,\nKeyCode::Char('x') => x,";
-        assert_eq!(handled_keys(source), vec!["ctrl-c", "esc", "x"]);
-    }
-
-    #[test]
-    fn the_help_key_scanner_skips_tests_and_comments() {
-        let source = "// KeyCode::Char('z')\nKeyCode::Esc => close,\n#[cfg(test)]\nmod tests {\n    KeyEvent::new(KeyCode::Char('x'), m);\n}";
-        assert_eq!(handled_keys(source), vec!["esc"]);
     }
 
     #[test]

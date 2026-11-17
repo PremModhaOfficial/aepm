@@ -51,10 +51,11 @@ src/frontier.rs	31,33,34,35,36	the readiness reducer behind the tree
 src/post_install.rs	36	the read-only post-install receipt
 
 # --- TUI -------------------------------------------------------------------
-src/tui/mod.rs	31,32,33,34,35,36,47,49	the shell, keys and terminal guard entry
+src/tui/mod.rs	31,32,33,34,35,36,40,47,49	the shell, keys and terminal guard entry
 src/tui/guard.rs	31,36	raw mode on enter and off on exit, panic, signal
 src/tui/live.rs	33,34,35	the live view over the forest and the frontier
 src/tui/render.rs	31,32,33,34,35,36,47,49	the frames, glyphs, palette and goldens
 src/tui/tree.rs	31,33,34,35	the bottom-up forest model
 src/tui/sanitize.rs	31,32,34,35	child output into a cell
 src/tui/fetch_session.rs	32,34,35,36,47,49	the streamed fetch and the attached install
+src/keymap.rs	40	the key table, the tui.conf parser and the modal action sets

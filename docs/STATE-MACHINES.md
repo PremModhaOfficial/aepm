@@ -69,10 +69,18 @@ screen leaves that notice invisible until the session is dismissed, because
 | 3 | log | `log_open` and `session.is_some()` | after the body |
 | 4 (bottom) | body | always | first |
 
-**Precedence, owned by the event loop:** the same order decides which keys are
-live. `if post_install.is_some()`, then `if install_gate.is_some()`, then the
-main key match, each ending its branch with `continue`. A key that reaches a
-lower rank is a key the higher rank does not handle, not a key it declined.
+**Precedence, owned by `accepts` in `src/tui/mod.rs`:** the same order decides
+which actions are live. `resolve` turns a press into the action the keymap binds
+and `accepts` refuses any action the open modal does not list, so the receipt and
+the gate each get their own small set and no global binding can fire under a
+modal. The loop keeps the rank order `if post_install.is_some()`, then `if
+install_gate.is_some()`, then the main match, each ending its branch with
+`continue`. A key that reaches a lower rank is a key the higher rank does not
+accept, not a key it declined.
+
+The tables below name the v1 default binding for each row. `[keys]` in
+`tui.conf` rebinds the action without changing the rank: every row is an action,
+and `src/keymap.rs` is the one place a key is attached to it.
 
 `help` is drawn by the body renderer, so an open help stays visible under a
 modal that opened afterwards; `?` cannot toggle it while a modal has the keys.
@@ -350,13 +358,14 @@ purpose, so this table cannot quietly describe an older tree.
 
 | Claim | Anchor | The line says |
 |---|---|---|
-| the body precedence, and its order | `src/tui/mod.rs:147` | `match (session.as_ref(), notice.as_ref()) {` |
-| the receipt rank, above the gate | `src/tui/mod.rs:234` | `if post_install.is_some() {` |
-| the gate rank, above the main match | `src/tui/mod.rs:248` | `if install_gate.is_some() {` |
-| the log-flag invariant | `src/tui/mod.rs:129` | `assert!(` |
-| the `Esc` ladder | `src/tui/mod.rs:340` | `KeyCode::Esc => {` |
-| the arming predicate | `src/tui/mod.rs:253` | `let armed = news_attested` |
-| the attestation reset | `src/tui/mod.rs:303` | `news_attested = false;` |
+| the body precedence, and its order | `src/tui/mod.rs:157` | `match (session.as_ref(), notice.as_ref()) {` |
+| the receipt rank, above the gate | `src/tui/mod.rs:244` | `if post_install.is_some() {` |
+| the gate rank, above the main match | `src/tui/mod.rs:256` | `if install_gate.is_some() {` |
+| the log-flag invariant | `src/tui/mod.rs:139` | `assert!(` |
+| the `Esc` ladder | `src/tui/mod.rs:346` | `Some(Action::Back) => {` |
+| the arming predicate | `src/tui/mod.rs:261` | `let armed = news_attested` |
+| the attestation reset | `src/tui/mod.rs:311` | `news_attested = false;` |
+| the modal action allow-list | `src/tui/mod.rs:515` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:60` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:339` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:102` | `pub fn plan_observed(` |

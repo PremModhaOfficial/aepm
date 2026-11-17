@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::Error;
+use crate::keymap::Keymap;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_MIN_FREE_BYTES: u64 = 2 * GIB;
@@ -22,6 +23,8 @@ pub struct Config {
     pub aurbuild_dir: PathBuf,
     pub archbuild_dir: PathBuf,
     pub user_unit_dir: Option<PathBuf>,
+    /// The optional key-override file. `None` when no config home exists.
+    pub tui_config: Option<PathBuf>,
     pub state_file: PathBuf,
     pub min_free_bytes: u64,
 }
@@ -73,9 +76,25 @@ impl Config {
                         .ok()
                         .map(|dir| dir.join("systemd").join("user"))
                 }),
+            tui_config: non_empty(&lookup, "AEPM_TUI_CONFIG")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    default_config_dir(&lookup)
+                        .ok()
+                        .map(|dir| dir.join("aepm").join("tui.conf"))
+                }),
             state_file,
             min_free_bytes,
         })
+    }
+
+    /// The user's key overrides, or the defaults when there is no file. Only
+    /// the TUI reads this, so a bad `tui.conf` cannot fail a background fetch.
+    pub fn keymap(&self) -> Result<Keymap, Error> {
+        match &self.tui_config {
+            Some(path) => Keymap::load(path),
+            None => Ok(Keymap::default()),
+        }
     }
 }
 
@@ -141,9 +160,13 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs;
     use std::path::PathBuf;
 
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use super::{Config, GIB};
+    use crate::keymap::Action;
 
     fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
@@ -187,6 +210,10 @@ mod tests {
             Some(PathBuf::from("/home/user/.config/systemd/user"))
         );
         assert_eq!(
+            config.tui_config,
+            Some(PathBuf::from("/home/user/.config/aepm/tui.conf"))
+        );
+        assert_eq!(
             config.state_file,
             PathBuf::from("/home/user/.local/state/aepm/state.json")
         );
@@ -211,6 +238,7 @@ mod tests {
             ("AEPM_ARCHBUILD_DIR", "/tmp/archbuild"),
             ("AEPM_SUDOERS", "/tmp/sudoers"),
             ("AEPM_USER_UNIT_DIR", "/tmp/user-units"),
+            ("AEPM_TUI_CONFIG", "/tmp/tui.conf"),
             ("AEPM_STATE", "/tmp/state.json"),
             ("AEPM_MIN_FREE_BYTES", "1048576"),
         ]))
@@ -230,6 +258,7 @@ mod tests {
         assert_eq!(config.aurbuild_dir, PathBuf::from("/tmp/aurbuild"));
         assert_eq!(config.archbuild_dir, PathBuf::from("/tmp/archbuild"));
         assert_eq!(config.user_unit_dir, Some(PathBuf::from("/tmp/user-units")));
+        assert_eq!(config.tui_config, Some(PathBuf::from("/tmp/tui.conf")));
         assert_eq!(config.state_file, PathBuf::from("/tmp/state.json"));
         assert_eq!(config.min_free_bytes, 1_048_576);
     }
@@ -272,5 +301,64 @@ mod tests {
     #[test]
     fn no_home_and_no_xdg_is_an_error() {
         assert!(Config::from_lookup(lookup(&[])).is_err());
+    }
+
+    fn config_with_file(text: &str) -> (Config, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "aepm-keymap-config-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("tui.conf");
+        fs::write(&path, text).expect("write tui.conf");
+        let config = Config::from_lookup(lookup(&[
+            ("HOME", "/home/user"),
+            ("AEPM_TUI_CONFIG", path.to_str().expect("utf-8 path")),
+        ]))
+        .expect("config");
+        (config, dir)
+    }
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_custom_binding_from_the_config_file_dispatches_that_action() {
+        let (config, dir) = config_with_file("[keys]\nquit = x\n");
+        let keymap = config.keymap().expect("keymap");
+
+        assert_eq!(
+            keymap.action_for(&press(KeyCode::Char('x'))),
+            Some(Action::Quit)
+        );
+        assert_eq!(keymap.action_for(&press(KeyCode::Char('q'))), None);
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn an_unknown_action_name_fails_loudly_at_load() {
+        let (config, dir) = config_with_file("[keys]\nquits = x\n");
+        let error = config.keymap().expect_err("unknown action");
+
+        assert!(
+            error.to_string().contains("unknown action `quits`"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("tui.conf"), "{error}");
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn no_config_file_means_the_defaults() {
+        let path = "/nonexistent/aepm/tui.conf";
+        let config =
+            Config::from_lookup(lookup(&[("HOME", "/home/user"), ("AEPM_TUI_CONFIG", path)]))
+                .expect("config");
+
+        assert_eq!(config.keymap().expect("keymap"), super::Keymap::default());
     }
 }

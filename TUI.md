@@ -89,7 +89,7 @@ header context. Siblings use nom's `┌─`/`├─`/`│` branches with the ASC
 | Live fetch tree | Caches panel |
 | Install gate overlay | Doctor panel |
 | Post-install receipt | Activity, Settings, Palette |
-| Help, refresh, quit | Mouse, themes, `tui.conf` |
+| Help, refresh, quit, `[keys]` overrides | Mouse, themes, the rest of `tui.conf` |
 
 The CLI keeps `check`, `doctor`, `clean` and `init`. The TUI is the update flow:
 see the gap, fetch, install, confirm the result.
@@ -761,9 +761,12 @@ bound to two actions in the same resolved context.
 | palette | `C` | copy cache path |
 | post-install | `p` | run `sudo pacdiff` attached |
 
-All keys come from the keymap; every one is rebindable in `tui.conf`. The footer
-shows only keys valid in the current context, in priority order, and truncates
-at the right edge rather than wrapping.
+All keys come from the keymap; every one is rebindable in `tui.conf`. The v1
+action names, in `src/keymap.rs`, are `quit`, `interrupt`, `suspend`, `help`,
+`back`, `ledger`, `down`, `up`, `log`, `install`, `refresh`, `fetch`, `confirm`
+and `attest`. The footer shows only keys valid in the current context, in
+priority order, and truncates at the right edge rather than wrapping. It still
+prints the defaults: a rebound key is dispatched but not advertised.
 
 Raw mode means Ctrl-C and Ctrl-Z arrive as key events, not signals. The app
 handles both and restores the terminal before exiting or suspending. No action
@@ -1114,21 +1117,16 @@ like the state file. No TOML dependency.
 
 ```ini
 # comments start with #
-theme        = ansi
-glyphs       = unicode
-refresh_fast = 60
-refresh_slow = 300
-mouse        = off
-
 [keys]
 quit    = q
 install = i
 refresh = r
 ```
 
-Precedence: flags > environment > file > defaults. Unknown keys produce a
-warning in Settings, never a failure. The TUI never writes this file; the user
-creates it. Missing file is normal.
+Precedence: flags > environment > file > defaults. Only `[keys]` is read in
+v1; a line outside it, an unknown action name, or a key that cannot be parsed
+is an error at load, and the TUI does not start with a keymap it cannot apply.
+A missing file is normal, and the TUI never writes this one.
 
 ### Not extensible
 
@@ -1283,8 +1281,10 @@ terminal) pass.
 ### T4. Polish
 
 - [x] `--no-motion`, ASCII, 2,000-package performance pass.
-- [ ] Keymap overrides for the v1 keys.
-- [ ] No mouse, themes, or `tui.conf` in v1.
+- [x] Keymap overrides for the v1 keys: one table in `src/keymap.rs`, the
+      `[keys]` section of `tui.conf`, a loud load error, sim 40.
+- [ ] No mouse or themes in v1. `tui.conf` exists, but `[keys]` is the only
+      section it reads.
 
 Done when: the frame budget below holds and ASCII preserves meaning. Measured
 with `cargo test --release --test perf -- --nocapture`: 2,000 rows, key to frame
