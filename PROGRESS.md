@@ -316,8 +316,9 @@ data and adds `?`. A `yay` list failure is `unavailable (yay not found)`, never
 
 Three known gaps, all shown in the UI:
 
-1. `held` requires parsing `IgnorePkg`/`IgnoreGroup`; the current code does not.
-   Until it does, `hold` is `unknown`/`none`, never a guessed `held`.
+1. `held` requires parsing `IgnorePkg`/`IgnoreGroup` (plus per-repo
+   overrides), which no code does, so `Counts` has no `held` field at all
+   rather than one that is always `None`.
 2. Signature **presence** is detectable from `.sig`; validity needs
    `pacman-key`/gpg. Show `present`, `missing` or `unknown`, never "valid".
 3. AUR edges before a build are unknown. The tree shows `?`; no inferred edges.
@@ -330,7 +331,7 @@ The top line is generated, not typed:
 
 ```text
 ready 4 = 3 cached + 1 built · stale 1 · missing 1 · build-pending 1
-partial 0 · unknown 1 · held 0
+partial 0 · unknown 1
 ```
 
 - `ready` = official `cached` + AUR `built` (install will not download/build).
@@ -339,7 +340,6 @@ partial 0 · unknown 1 · held 0
 - `build-pending` = AUR, no built artifact; install will build.
 - `partial` = `.part` or clearly truncated; not usable.
 - `unknown` = cache/repo unreadable or metadata missing.
-- `held` = ignored; only if parsed, otherwise absent.
 
 `up-to-date` and `orphan cache` are context counts in the inspector; they are
 not part of the action count.

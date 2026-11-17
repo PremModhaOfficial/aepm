@@ -103,16 +103,12 @@ pub enum Repo {
     Other(String),
 }
 
-/// Whether a package file was in the cache when the scan ran.
-///
-/// `Yes` and `No` are declared and never produced: every writer writes
-/// `Unknown` (`docs/STATE-MACHINES.md` M5, issue 66). Do not branch on them as
-/// if they were live.
+/// What `pacman -Qu` says about the artifact. Only `Unknown` exists: no
+/// producer can observe the cache through this type, and the real
+/// observation is `ArtifactState` (`docs/STATE-MACHINES.md` M5, issue 66).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cached {
-    Yes,
-    No,
     Unknown,
 }
 
@@ -176,8 +172,6 @@ pub struct Counts {
     pub missing: usize,
     pub build_pending: usize,
     pub unknown: usize,
-    /// `None` until IgnorePkg/IgnoreGroup is parsed; never a guessed zero.
-    pub held: Option<usize>,
 }
 
 impl Counts {
@@ -435,4 +429,32 @@ fn unix_seconds<S: serde::Serializer>(time: &SystemTime, serializer: S) -> Resul
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     serializer.serialize_u64(seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cached, Counts};
+
+    /// Every variant must be producible by real code. `Yes`/`No` never were,
+    /// so they are gone; a new variant breaks this match until a producer
+    /// exists and is named here.
+    #[test]
+    fn every_cached_variant_has_a_producer() {
+        let produced = match Cached::Unknown {
+            Cached::Unknown => "unknown",
+        };
+        assert_eq!(produced, "unknown");
+    }
+
+    /// `Counts` carries only fields the tree can set. `held` could never be
+    /// set: nothing parsed `IgnorePkg`/`IgnoreGroup`, so it serialized as
+    /// `null` forever.
+    #[test]
+    fn counts_carries_no_field_the_tree_cannot_set() {
+        let json = serde_json::to_string(&Counts::default()).expect("Counts serializes");
+        assert!(
+            !json.contains("held"),
+            "a field nothing sets is a lie: {json}"
+        );
+    }
 }

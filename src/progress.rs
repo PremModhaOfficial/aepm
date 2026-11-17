@@ -714,7 +714,6 @@ Download Size   : 827.00 B
         assert_eq!(counts.missing, 1);
         assert_eq!(counts.build_pending, 1);
         assert_eq!(counts.unknown, 1);
-        assert_eq!(counts.held, None);
     }
 
     fn package(name: &str, artifact: ArtifactState) -> crate::report::PackageView {

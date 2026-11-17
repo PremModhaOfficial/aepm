@@ -338,7 +338,7 @@ until its issue closes it; none is a bug in a transition.
 
 | declaration | why it is unreachable | issue |
 |---|---|---|
-| `Cached::Yes`, `Cached::No` | every writer writes `Cached::Unknown` | 66 |
+| `Cached` | only `Unknown` exists; `Yes`/`No` deleted, no producer could set them | 66 |
 | `Counts.held` | no IgnorePkg or IgnoreGroup parser | 67 |
 | partial-upgrade transitions | declared, transitions unimplemented | 41 |
 
