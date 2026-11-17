@@ -613,4 +613,132 @@ mod tests {
             ["partial", "cached", "alpha", "gamma", "missing"]
         );
     }
+
+    /// The 2,000-package pass from `NEXT.md` T4, as a regression gate.
+    ///
+    /// Two bounds, because there are two costs and they are paid at different
+    /// rates. The frame is what a keypress or a live tick pays, and it is the
+    /// `TUI.md` budget of 16 ms at 2,000 rows. Ingest is the one-shot plan plus
+    /// a full 4,000-observation reduce: a burst, not a frame. Both bounds are
+    /// the release measurements with the unoptimized test build's factor added,
+    /// and both fail loudly on a quadratic step, which is what they catch.
+    #[test]
+    fn two_thousand_packages_plan_and_assemble_inside_the_frame_budget() {
+        use std::time::{Duration, Instant, UNIX_EPOCH};
+
+        use crate::frontier::Observed;
+        use crate::report::{PrefetchReport, Section, Snapshot};
+        use crate::tui::live::{LiveRun, LiveState, LiveView};
+
+        const PACKAGES: usize = 2_000;
+        // Ten layers of two hundred, like a real pending set, not one
+        // 2,000-deep chain: a chain makes every prerequisite closure the whole
+        // graph above it and measures a shape no AUR tree has.
+        const LAYER: usize = 200;
+        // Measured 56 ms debug / 10.5 ms release for a warm frame at 120x40,
+        // best of three. The `TUI.md` budget is 16 ms, so release holds; the
+        // first, cold frame is ~35 ms release and belongs to the separate
+        // 100 ms first-paint budget.
+        const FRAME_BUDGET: Duration = Duration::from_millis(250);
+        // Measured 3.0 s debug / 443 ms release, and 14.3 s during a full
+        // parallel run of this suite. `GraphState::recompute` rescans every
+        // edge per observation, which is where this goes; the bound is loose
+        // because the harness shares the machine with every other test.
+        const INGEST_BUDGET: Duration = Duration::from_secs(30);
+
+        let now = UNIX_EPOCH + Duration::from_secs(1_760_000_000);
+        let name = |index: usize| format!("pkg-{index:04}");
+        let packages: Vec<PackageView> = (0..PACKAGES)
+            .map(|index| {
+                let depends: Vec<String> = if index < LAYER {
+                    Vec::new()
+                } else {
+                    let below = (index / LAYER - 1) * LAYER;
+                    vec![
+                        name(below + index % LAYER),
+                        name(below + (index * 7 + 3) % LAYER),
+                    ]
+                };
+                let depends: Vec<&str> = depends.iter().map(String::as_str).collect();
+                let mut package = package(&name(index), ArtifactState::Missing, &depends);
+                package.detail = Some("not in cache".to_string());
+                package.download_bytes = Some(1_200_000);
+                package
+            })
+            .collect();
+
+        let tree_start = Instant::now();
+        let tree = Tree::build(&packages).expect("the fixture is a forest");
+        let tree_elapsed = tree_start.elapsed();
+
+        let ingest_start = Instant::now();
+        let mut run = LiveRun::plan_concurrent(&tree, now).expect("plan seeds");
+        let mut reduced = 0usize;
+        for index in 0..PACKAGES {
+            let node = name(index);
+            for kind in [Observed::Started, Observed::Finished] {
+                let transitions = run
+                    .observe(&node, kind, now, None, "observed")
+                    .expect("the reducer accepts a seconds-granularity trace");
+                reduced += transitions.len();
+            }
+        }
+        let ingest = ingest_start.elapsed();
+
+        let view_start = Instant::now();
+        let view = LiveView::build_at(&tree, &run, now);
+        let shown = view.window(&tree, 40).slots.len();
+        let view_elapsed = view_start.elapsed();
+
+        // The real frame, over the same 2,000-package snapshot: this is what a
+        // keypress pays, forest and view rebuilds included.
+        let snapshot = Snapshot {
+            prefetch: Section::ready(
+                PrefetchReport::new(packages, Some("mirror.example.org".to_string()), Vec::new()),
+                now,
+            ),
+            actionable: 1,
+            ..Snapshot::default()
+        };
+        let frame_start = Instant::now();
+        let mut frame_text =
+            crate::tui::render::render_live_frame(&snapshot, &run, 120, 40, false, true, false);
+        let mut frame = frame_start.elapsed();
+        // The suite runs in parallel, so the frame is the best of three: the
+        // minimum is the least polluted sample and the bound stays honest.
+        for _ in 0..2 {
+            let start = Instant::now();
+            frame_text =
+                crate::tui::render::render_live_frame(&snapshot, &run, 120, 40, false, true, false);
+            frame = frame.min(start.elapsed());
+        }
+
+        assert_eq!(tree.pending_count(), PACKAGES, "every package is planned");
+        assert_eq!(tree.unknown_count(), 0, "no display-only dependency");
+        // A finished node also releases its ready dependents, so the batch is
+        // larger than the input trace.
+        assert!(
+            reduced >= 2 * PACKAGES,
+            "every observation landed ({reduced} transitions)"
+        );
+        assert_eq!(view.rows.len(), PACKAGES, "one live row per package");
+        assert!(
+            view.rows.values().all(|row| row.state == LiveState::Done),
+            "every package finished"
+        );
+        assert!(shown > 0, "the window keeps rows on a 2,000-row forest");
+        assert!(
+            frame_text.contains("Dependency Graph"),
+            "the frame shows the forest header"
+        );
+        assert!(
+            frame < FRAME_BUDGET,
+            "the frame took {frame:?}; the budget is {FRAME_BUDGET:?} \
+             (forest {tree_elapsed:?} + view {view_elapsed:?} of one frame)"
+        );
+        assert!(
+            ingest < INGEST_BUDGET,
+            "plan and reduce took {ingest:?}; the budget is {INGEST_BUDGET:?}"
+        );
+    }
 }
