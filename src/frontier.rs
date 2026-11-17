@@ -13,6 +13,27 @@ use std::time::SystemTime;
 
 pub type NodeId = String;
 
+// Settle walks, counted for tests that must state the work they demand instead
+// of timing it. One walk is one `recompute` call: the unit a rescan-until-
+// fixpoint bug inflates. It deliberately does not count the edge comparisons
+// inside a single walk. A test reads a delta around its own call, so the count
+// is deterministic under any machine load.
+#[cfg(test)]
+thread_local! {
+    static SETTLE_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_settle_walk() {
+    SETTLE_WALKS.with(|walks| walks.set(walks.get().saturating_add(1)));
+}
+
+/// How many settle walks the reducer has started on this thread so far.
+#[cfg(test)]
+fn settle_walks() -> u64 {
+    SETTLE_WALKS.with(std::cell::Cell::get)
+}
+
 /// Why `dependent` needs `dependency`. The reducer only gates on `required`;
 /// the kind is for the tree and the inspector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,6 +493,8 @@ impl GraphState {
     /// byte heartbeat (``moved = None``) changes no prerequisite, so it settles
     /// nothing. The graph is acyclic, so each node is visited once.
     fn recompute(&mut self, seq: u64, moved: Option<&NodeId>, transitions: &mut Vec<Transition>) {
+        #[cfg(test)]
+        note_settle_walk();
         let mut queue: VecDeque<NodeId> = VecDeque::new();
         let mut queued: BTreeSet<NodeId> = BTreeSet::new();
         if let Some(moved) = moved {
@@ -673,7 +696,7 @@ mod tests {
 
     use super::{
         Edge, EdgeKind, ExecutionMode, FrontierError, GraphState, NodeState, Observation, Observed,
-        Trace,
+        Trace, settle_walks,
     };
 
     fn edge(dependency: &str, dependent: &str) -> Edge {
@@ -772,17 +795,21 @@ mod tests {
         for index in 0..count - 1 {
             edges.push(edge(&names[index], &names[index + 1]));
         }
-        let start = std::time::Instant::now();
+        let before = settle_walks();
         let state = GraphState::seed(names.clone(), edges).expect("seed");
+        // The work, not the clock: seeding must start at most two walks per
+        // node. A settle loop that restarts the walk per node is quadratic in
+        // walks and cannot fit; a wall-clock budget passed or failed on load.
+        let walks = settle_walks() - before;
         assert_eq!(
             state.nodes.get(&names[0]),
             Some(&NodeState::Ready),
             "the chain root is ready"
         );
         assert!(
-            start.elapsed() < std::time::Duration::from_secs(2),
-            "seeding 2,000 nodes took {:?}",
-            start.elapsed()
+            walks <= 2 * count as u64,
+            "seeding {count} nodes started {walks} settle walks; a per-node rescan is {}",
+            count as u64 * count as u64
         );
     }
 
