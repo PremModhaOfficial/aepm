@@ -361,40 +361,39 @@ fn run_interactive(
                         // During a fetch that is the live window; otherwise it
                         // is the static forest, whose display order the
                         // renderer uses when there is no window.
-                        if let Some(report) = snapshot.prefetch.data() {
-                            if let Ok(tree) = Tree::build(&report.packages) {
-                                // Ask the renderer to plan the frame it will
-                                // draw, with the same footer and the same
-                                // gates. Anything computed here independently
-                                // has been wrong twice.
-                                let (width, height) = terminal::size().unwrap_or((80, 24));
-                                // Mirror what `draw_with` actually draws: a
-                                // notice frame shows `notice.gates` and its
-                                // status/keys, not an empty footer. Passing
-                                // `&[]` here planned 9 rows while the frame
-                                // drew 3.
-                                let (footer, gates, body) =
-                                    frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
-                                // The plan must be built from exactly what the
-                                // frame draws: the same body, the same gates.
-                                debug_assert!(
-                                    gates.is_some() != matches!(body, BodyKind::Static),
-                                    "the planned body and its gate list must agree"
-                                );
-                                let plan = render::plan_frame(
-                                    &snapshot,
-                                    session.as_ref().map(FetchSession::live),
-                                    footer,
-                                    width,
-                                    height,
-                                    ascii,
-                                    color,
-                                    gates,
-                                );
-                                let delta = if action == Action::Down { 1 } else { -1 };
-                                selection = selection.moved(&tree, &plan.slots, delta);
-                                dirty = true;
-                            }
+                        // Ask the renderer to plan the frame it will draw, with
+                        // the same footer and the same gates. Anything computed
+                        // here independently has been wrong twice.
+                        let (width, height) = terminal::size().unwrap_or((80, 24));
+                        // Mirror what `draw_with` actually draws: a notice frame
+                        // shows `notice.gates` and its status/keys, not an empty
+                        // footer. Passing `&[]` here planned 9 rows while the
+                        // frame drew 3.
+                        let (footer, gates, body) =
+                            frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
+                        // The plan must be built from exactly what the frame
+                        // draws: the same body, the same gates.
+                        debug_assert!(
+                            gates.is_some() != matches!(body, BodyKind::Static),
+                            "the planned body and its gate list must agree"
+                        );
+                        let plan = render::plan_frame(
+                            &snapshot,
+                            session.as_ref().map(FetchSession::live),
+                            footer,
+                            width,
+                            height,
+                            ascii,
+                            color,
+                            gates,
+                        );
+                        // The forest the cursor walks is the one the plan
+                        // measured. A second build here was the duplicate the
+                        // plan exists to remove, and it had no type saying so.
+                        if let Some(Ok(tree)) = plan.tree.as_ref() {
+                            let delta = if action == Action::Down { 1 } else { -1 };
+                            selection = selection.moved(tree, &plan.slots, delta);
+                            dirty = true;
                         }
                     }
                     Some(Action::Log) => {

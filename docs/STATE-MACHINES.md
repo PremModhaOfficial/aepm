@@ -360,14 +360,14 @@ purpose, so this table cannot quietly describe an older tree.
 
 | Claim | Anchor | The line says |
 |---|---|---|
-| the body precedence, and its order | `src/tui/mod.rs:632` | `let (footer, gates, body) = match (session, notice) {` |
+| the body precedence, and its order | `src/tui/mod.rs:631` | `let (footer, gates, body) = match (session, notice) {` |
 | the receipt rank, above the gate | `src/tui/mod.rs:231` | `if post_install.is_some() {` |
 | the gate rank, above the main match | `src/tui/mod.rs:243` | `if install_gate.is_some() {` |
 | the log-flag invariant | `src/tui/mod.rs:139` | `assert!(` |
 | the `Esc` ladder | `src/tui/mod.rs:333` | `Some(Action::Back) => {` |
 | the arming predicate | `src/tui/mod.rs:248` | `let armed = news_attested` |
 | the attestation reset | `src/tui/mod.rs:298` | `news_attested = false;` |
-| the modal action allow-list | `src/tui/mod.rs:496` | `fn accepts(context: Context, action: Action) -> bool {` |
+| the modal action allow-list | `src/tui/mod.rs:495` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:60` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:339` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:102` | `pub fn plan_observed(` |

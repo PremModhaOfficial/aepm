@@ -23,6 +23,26 @@ use crate::report::{ArtifactState, PackageView, Repo};
 
 pub type RowId = usize;
 
+// One drawn frame must build the forest once. `FramePlan` measures the window
+// from a `Tree` and `draw_with` draws that same tree, so a second build is the
+// duplicate this counter exists to catch. Thread-local and read as a delta
+// around the caller's own frame, so the count is deterministic under any load.
+#[cfg(test)]
+thread_local! {
+    static TREE_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_tree_build() {
+    TREE_BUILDS.with(|builds| builds.set(builds.get().saturating_add(1)));
+}
+
+/// How many forests this thread has built so far.
+#[cfg(test)]
+pub fn tree_builds() -> u64 {
+    TREE_BUILDS.with(std::cell::Cell::get)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeRowKind {
     Package,
@@ -93,6 +113,8 @@ impl Tree {
     /// Any pending package left without a root is a cycle component; the
     /// build fails instead of attaching it to an invented node.
     pub fn build(packages: &[PackageView]) -> Result<Self, TreeError> {
+        #[cfg(test)]
+        note_tree_build();
         let mut rows = Vec::with_capacity(packages.len());
         let mut unique: Vec<&PackageView> = Vec::with_capacity(packages.len());
         let mut index: BTreeMap<&str, usize> = BTreeMap::new();
