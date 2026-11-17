@@ -62,11 +62,11 @@ repository secret, `.pr_agent.toml` policy.
 | N6 | Ollama or another local model | Needs an always-on host; user chose Command Code | `[VERIFIED: user directive]` |
 | N7 | Auto-merge or auto-approve | Review is advisory; approval stays human | `[VERIFIED: enable_auto_approval default false]` |
 | N8 | `workflow_run` CI-conclusion trigger | Doubles runs; the chosen trigger set matches the user's "describe + review on open" choice | `[VERIFIED: github_action_runner.py workflow_run branch]` |
-| N9 | Checks API, to anchor the gate on the PR head after a `/review` refresh | Would need `checks: write` in the job that can run the head copy of the gate script during bootstrap, so a PR could forge its own verdict; the push run already anchors the check on the head | `[MEASURED: workflow_run anchoring on #99, 2026-11-17]` |
 | N9 | Review on every push (`synchronize`) | User: per-PR review is enough | `[VERIFIED: user instruction]` |
 | N10 | Path filters for `target/**`, `Cargo.lock` | User: those paths are reviewed too | `[VERIFIED: user instruction]` |
 | N11 | Per-directory `.pr_agent.toml` rules | Not requested; one global policy is enough | `[VERIFIED: user instruction]` |
 | N12 | TOON for the bot's own PR comment | The comment format is pr-agent's; the state command emits the compact form instead | `[VERIFIED: pr_reviewer prompts and renderer]` |
+| N13 | Checks API, to anchor the gate on the PR head after a `/review` refresh | Would need `checks: write` in the job that can run the head copy of the gate script during bootstrap, so a PR could forge its own verdict; the push run already anchors the check on the head | `[MEASURED: workflow_run anchoring on #99, 2026-11-17]` |
 
 ## Coverage
 
