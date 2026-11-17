@@ -9,8 +9,9 @@ covers where things stand and the first move. Do not re-plan.
 - Repo: `PremModhaOfficial/aepm`, branch `main`.
 - All six subcommands (`init`, `check`, `fetch`, `install`, `clean`, `doctor`)
   are implemented and have sim scenarios.
-- Phase 1-4 in `NEXT.md` are ticked, and Phase 6 (packaging) is closed by
-  `24286ef`. Phase 5 (VM) is open and still blocks a release.
+- Phase 1-6 in `NEXT.md` are closed: Phase 4 (chaos) by `4ecbba3`, Phase 5
+  (the VM level, `sim/vm/`) by this branch, Phase 6 (packaging) by `24286ef`.
+  No phase still blocks a release.
 - Phase 7 T0 (the shared report layer) is landed: `src/report.rs`, collect and
   render splits for `check`/`fetch`/`clean`, the system cache paths in
   `Config`, and frozen `check` text. The full CI and all 54 sim scenarios pass.
@@ -120,6 +121,18 @@ covers where things stand and the first move. Do not re-plan.
   diff render cap.
 - `NEXT.md` Phase 7 is the TUI order of work. T1, T2 and T3 are closed. T4
   polish is next.
+
+- Phase 5 (VM) is landed: `sim/vm/run.sh` boots an Arch ISO under qemu/KVM,
+  installs onto a btrfs root, and drives `sim/vm/scenarios/46`-`48` over the
+  serial console through `sim/vm/drive.py`. Green on 2026-11-17 with 64
+  assertions, 0 failures (`/tmp/vm-sim.log`). The host needs no loop device and
+  no snapper; the guest owns the btrfs work and the boot. Two things it does
+  **not** prove, both written up in `sim/README.md`: the bootloader menu (the
+  guest boots its kernel directly from `/boot`, because GRUB 2.16-1 here lands
+  on its own prompt) and the unmet `SPACE_LIMIT` branch (btrfs reports a parent
+  qgroup's exclusive usage as zero, so scenario 48 pins that gap and goes red
+  when it closes). `FREE_LIMIT` is proven both ways. `NEXT.md` Phase 5 keeps
+  the third box unticked on purpose.
 
 ## Do this first: T4
 

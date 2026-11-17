@@ -292,12 +292,19 @@ excluded from `./sim/run.sh`.
 
 ## Phase 5: VM level
 
-A container cannot test snapshots or boot.
+A container cannot test snapshots or boot. `sim/vm/run.sh` runs scenarios 46-48
+in a qemu/KVM guest; `sim/README.md` says what each proves and what it cannot.
 
-- [ ] Scripted btrfs VM: base install, snapper config, prefetch, install.
-- [ ] Snapshot, force a broken install, roll back, verify it boots and
-      `uname -r` matches `/usr/lib/modules/`.
-- [ ] Verify `SPACE_LIMIT` and `FREE_LIMIT` behave as configured.
+- [x] Scripted btrfs VM: base install, snapper config, prefetch, install.
+- [x] Snapshot, force a broken install, roll back, verify it boots and
+      `uname -r` matches `/usr/lib/modules/`. The guest boots its kernel
+      directly from `/boot`; GRUB is installed and its config asserted, but the
+      bootloader menu is not part of the proven path.
+- [ ] Verify `SPACE_LIMIT` and `FREE_LIMIT` behave as configured. `FREE_LIMIT`
+      is proven through `snapper cleanup number`. `SPACE_LIMIT` is only proven
+      while its condition is met: btrfs reports a parent qgroup's exclusive
+      usage as zero, so the unmet branch cannot be produced in the VM. Scenario
+      48 pins that gap and goes red when it closes.
 
 ---
 

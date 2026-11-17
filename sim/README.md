@@ -269,15 +269,136 @@ blob of `SIZE_BYTES` zero bytes into the sim repo, because the two `simapp`
 versions are too small to interrupt. A `ulimit -f` in the invoking shell then
 kills pacman mid-extraction (scenario 42).
 
+## VM level: btrfs, snapper, rollback, boot
+
+A container has no snapshots and cannot reboot, so the Phase 5 items need a real
+kernel. `sim/vm/run.sh` boots an Arch ISO under qemu/KVM, installs onto a btrfs
+disk, and drives three scenarios over the serial console:
+
+| Script | Proves |
+|---|---|
+| `sim/vm/scenarios/60-base-install.sh` | a btrfs root with `/` as subvolume `@`, `/.snapshots` on its own subvolume, an ext4 `/boot`, `GRUB` installed with a boot sector actually written, `snapper create-config` on that root, then a real `aepm fetch` and `aepm install --yes` as an unprivileged user: the prefetch downloads and changes nothing installed, the install upgrades through the helper, nothing builds from the AUR |
+| `sim/vm/scenarios/61-rollback-boot.sh` | a snapshot before an install, a package whose `post_upgrade` wipes `/usr/lib/modules` and leaves modules for a kernel that does not exist, `aepm install` reporting success anyway (nothing can know a package is hostile), then `snapper --ambit classic rollback` to the snapshot |
+| `sim/vm/scenarios/62-snapper-limits.sh` | after the reboot the machine runs the restored kernel, `uname -r` is the only directory in `/usr/lib/modules`, the bogus modules are gone and the package is back to the pre-install version; then `FREE_LIMIT` decides how far `snapper cleanup number` deletes (the same six snapshots stop at `NUMBER_LIMIT`'s maximum with `FREE_LIMIT=0.0` and are cut to its minimum with `FREE_LIMIT=0.99`), and `SPACE_LIMIT` is honoured while its condition is met. **Pins a limitation:** the unmet `SPACE_LIMIT` branch is not reachable in this VM, and the last assertion says so on purpose |
+
+```bash
+./sim/vm/run.sh --probe     # report the capabilities this level needs
+./sim/vm/run.sh             # boot the VM and run 60, 61, 62
+SIM_VM_LOG=/tmp/vm-sim.log  # the transcript (the default)
+./sim/vm/run.sh --keep      # keep the guest disk for a manual look
+```
+
+What it needs, and refuses to run without: `qemu-system-x86_64` with a writable
+`/dev/kvm` (TCG makes `pacstrap` take hours), `python3`, `curl`, `bsdtar`,
+`debugfs` (e2fsprogs), a `cargo` build of the binary, and 14 GiB free in
+`$SIM_VM_CACHE` (`~/.cache/aepm-vm`) for the ISO and the guest disk. **The host needs no loop
+device and no snapper**: the guest owns the btrfs work and the boot, which is
+the whole reason this level is a VM. A missing capability is a hard exit with
+the capability named, never a skipped stage that still prints `PASS`.
+
+The first run downloads the Arch ISO once (the only step that needs the
+network) and keeps it in the cache. Inside the guest, `pacstrap` uses the real
+mirrors over qemu's user-mode network: this level is not `--network none` like
+the container level, because an installed system has to come from somewhere.
+
+### Deliberate setup choices
+
+- The **kernel command line carries no `rootflags=`/`subvol=`**, so `/` comes
+  from the *default* btrfs subvolume. `snapper rollback` works by making a
+  snapshot the default subvolume, so a pinned subvolume would keep booting the
+  broken system and the scenario would pass for the wrong reason. `openSUSE`
+  gets the same effect from its GRUB plugin; this harness uses the
+  default-subvolume route so the harness stays plain Arch.
+- `snapper --ambit classic rollback` is used for the first rollback, because
+  snapper's automatic ambit only recognises a default subvolume that is already
+  one of its own snapshots, and on a fresh system the default is the root
+  subvolume itself. `classic` is the documented path: it snapshots the current
+  system, makes a writable copy of the target, and sets that copy as the
+  default.
+- **`/boot` is a plain ext4 partition and the harness boots the guest kernel
+  directly from it** (`-kernel`/`-initrd`, `root=/dev/vda2`). GRUB is installed
+  and its generated config is asserted (`console=ttyS0`, no pinned subvolume),
+  but GRUB 2.16-1 in this environment lands on its own `grub>` prompt instead of
+  loading its config, and a harness that hangs at `grub>` proves nothing. What
+  the boot therefore exercises is the kernel, the initramfs and the root
+  subvolume - which is exactly where a rollback takes effect - and **the
+  bootloader menu itself is not covered**.
+- `/.snapshots` is a separate subvolume, which snapper's rollback ambit
+  detection needs.
+- Config values go in through `snapper set-config` and are read back through
+  `get-config`: the effective value is what the assertions compare, because a
+  file that says one thing while snapper uses another is the bug this level
+  exists to catch.
+- The installed system autologins root on `ttyS0`: the harness has no keyboard
+  and this is a throwaway VM. That is why the VM half never runs on the host.
+
+### Traps this level cost hours on
+
+Each of these failed silently or looked like something else first. They are
+written down so the next change starts here instead of re-deriving them.
+
+- `qemu-img dd` in this qemu has **no `skip=`**: slice a disk with
+  `qemu-img convert -U -O raw -S 4k <qcow2> <raw>` and then plain `dd`.
+  (`--sparse` also takes a size here, not a bare flag.)
+- A second qemu on the same qcow2 dies with `Failed to get "write" lock`. Copy
+  the image (`cp --reflink=auto`) before inspecting it by hand.
+- `-nodefaults` guests do not stop on ACPI poweroff: the driver quits them
+  through the monitor socket, and `cache=writeback` keeps that safe.
+- `mkfs.ext4` prompts when it finds a leftover signature, and a prompt on a
+  serial console is a silent hang. Force it (`-F`) and close stdin.
+- `sfdisk`'s first field is the **start sector**: `1,512M,c` starts at sector 1
+  and leaves no MBR gap, so `grub-install` exits 0 having written no boot
+  sector at all. Scenario 46 asserts the boot sector is non-empty.
+- `snapper create-config` refuses to run when `/.snapshots` already exists; let
+  it create the subvolume, then promote it to a sibling of `@`.
+- pacman runs **`post_upgrade`**, not `post_install`, on an upgrade — a break in
+  the wrong hook does nothing at all.
+- `snapper cleanup number` ignores snapshots younger than `NUMBER_MIN_AGE`
+  (1800 s by default) and does it silently.
+- Values written into `/etc/snapper/configs/root` with `sed` are not what
+  snapper acts on in a chroot-created config. Use `snapper set-config` and read
+  back with `get-config`; the assertions compare the effective values.
+
+### What the VM level cannot prove
+
+- **It is not the hardware.** A KVM guest proves the kernel, the bootloader and
+  btrfs behave; it says nothing about a specific laptop's NVMe, suspend, or
+  firmware. Rollback on a machine that needs a firmware update is still a human
+  test.
+- **The AUR helper is the harness fake** (`sim/yay` plus `sim-upgrade`), the
+  same one the container level uses, so this level proves the snapshot and the
+  boot, not that a real `yay` build survives a rollback. There is no `makepkg`
+  and no AUR build in the guest.
+- **The broken package is deliberate.** It removes the kernel and installs
+  modules for a kernel that never existed. A real broken upgrade fails in more
+  interesting ways: a half-written file, a dependency that vanished, `pacnew`
+  files left in `/etc`. Only rollback and boot are covered.
+- **The bootloader menu.** See above: the guest boots its kernel directly from
+  `/boot`. A machine whose GRUB cannot read its own config after a rollback is
+  not covered here.
+- **The unmet `SPACE_LIMIT` branch, deliberately pinned.** Snapper evaluates the
+  space condition on the *exclusive* usage of the qgroup it creates, and btrfs
+  reports a parent qgroup's exclusive usage as zero however much its child
+  subvolumes hold - so even 700 MiB of snapshot-only data against a 600 MiB
+  limit leaves the condition met. Scenario  62 asserts today's behaviour and says
+  so; it goes red the day the branch becomes reachable, and that is when the
+  assertion must be inverted. `FREE_LIMIT`'s unmet branch *is* reachable and is
+  proven. Neither covers a filesystem under weeks of real growth, and snapper's
+  own documentation warns that cleanup runs asynchronously.
+- **One disk, one layout.** No `@home`/`@var` split, no encryption, no swapfile,
+  no RAID, no Secure Boot. Each of those changes what a rollback does.
+
 ## Limits
 
 This is a real pacman with a synthetic repo. It does not simulate:
 
 - systemd timers, journald, or linger
 - aurto's own repository and build chroots
-- btrfs/snapper behaviour (a container has no snapshots)
+- btrfs/snapper behaviour in a container (see the VM level above for that)
 
-Those need the VM level from `context.md`. The container level catches the
+Those still need a real install on real hardware. The VM level above covers
+btrfs, snapper and boot; it deliberately does not cover the AUR build path.
+The container level catches the
 expensive mistakes: accidentally installing during prefetch, running `yay` as
 root, deleting a lock while pacman runs, and treating a read-only command as
 safe when it is not.
