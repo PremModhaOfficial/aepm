@@ -9,11 +9,11 @@ covers where things stand and the first move. Do not re-plan.
 - Repo: `PremModhaOfficial/aepm`, branch `main`.
 - All six subcommands (`init`, `check`, `fetch`, `install`, `clean`, `doctor`)
   are implemented and have sim scenarios.
-- Phase 1-3 in `NEXT.md` are ticked. Phase 4 (chaos), Phase 5 (VM) and Phase 6
-  (packaging) are open and still block a release.
+- Phase 1-4 in `NEXT.md` are ticked, and Phase 6 (packaging) is closed by
+  `24286ef`. Phase 5 (VM) is open and still blocks a release.
 - Phase 7 T0 (the shared report layer) is landed: `src/report.rs`, collect and
   render splits for `check`/`fetch`/`clean`, the system cache paths in
-  `Config`, and frozen `check` text. The full CI and all 31 sim scenarios pass.
+  `Config`, and frozen `check` text. The full CI and all 54 sim scenarios pass.
 - Phase 7 T1's shell is landed: `aepm tui`, `--render-once`, `--ascii`,
   `NO_COLOR`, the Drop guard, the panic hook, the static tree frame, the
   sanitizer, and sim `31-tui-readonly.sh`. The pty checks prove a normal quit,

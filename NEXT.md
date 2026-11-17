@@ -261,21 +261,34 @@ Requires fault injection in the sim: the control file `/etc/sim/xfer-fault`
 takes `kill`, `fill`, `corrupt` or `http500`, and fires once (see
 `sim/README.md`).
 
+Every box carries the scenario that drives the fault, because a scenario that
+asserts the tool *cannot* see the fault passes while the behaviour is missing.
+The three detection boxes below spent time in a `sim/gaps/` holding pen for
+exactly that reason; they are in the default suite now, and no scenario is
+excluded from `./sim/run.sh`.
+
 - [x] Kill pacman mid-download, verify cache is retryable and lists are new.
+      Sim 46.
 - [x] Fill the CacheDir tmpfs mid-download, verify exit 2 (D6: an execution
-      error) and no `/usr` write.
+      error) and no `/usr` write. Sim 41.
 - [x] Kill pacman mid-install, verify `pacman -Qkk` detects damage and `Qk`
-      does not.
-- [x] Delete `db.lck` while pacman runs, verify `doctor` catches it.
+      does not. Sim 42.
+- [x] Delete `db.lck` while pacman runs, verify `doctor` catches it. Sim 43:
+      `doctor::report_lock` reads the process list and the file together, so a
+      live transaction with no file is `Blocked` and exits 1 (`dd9e8e6`).
 - [x] Install a single package between fetch and install, verify `check`
-      reports a partial upgrade.
-- [x] Stale aurto repo, verify `install` reports a foreground build risk.
+      reports a partial upgrade. Sim 44: `check::detect_partial_upgrade` fills
+      `report::PartialUpgrade` from pacman's log, `Detected` when an install
+      follows the last fetch with updates still pending (`d04d1ad`).
+- [x] Stale aurto repo, verify `install` reports a foreground build risk. Sim
+      45: `install` prints the shared `AURTO_STALE` sentence the TUI already
+      carried, before `yay -Syuu` (`dd9e8e6`).
 - [x] A mirror that answers 500 for the package transfer, verify the lists it
       already received survive, the cache and local DB stay unchanged, `check`
-      and `doctor` write nothing, and the retry completes.
+      and `doctor` write nothing, and the retry completes. Sim 50.
 - [x] A corrupt package on the wire and a corrupt artifact already in the
       cache, verify pacman refuses both, nothing is installed from either, and
-      a corrupt cache never becomes an AUR rebuild.
+      a corrupt cache never becomes an AUR rebuild. Sims 51 and 52.
 
 ## Phase 5: VM level
 
