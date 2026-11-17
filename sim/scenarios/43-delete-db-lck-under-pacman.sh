@@ -9,11 +9,9 @@
 # both read-only commands what they see.
 #
 # `check` is honest: its gate is the process list, so it reports the live pacman
-# with no lock file present, and `fetch` still refuses. `doctor` never looks at
-# the lock at all: it has no lock check, so it reports a healthy configured
-# system while a transaction is running with no lock file. That last assertion
-# is the deliverable of this scenario, and it fails on purpose until `doctor`
-# grows a lock check.
+# with no lock file present, and `fetch` still refuses. `doctor` reads the same
+# lock, so it names the running transaction and the missing file instead of
+# calling the system healthy.
 source /usr/local/lib/sim/lib.sh
 
 echo "scenario: delete db.lck under a running pacman, and ask doctor to notice"
@@ -88,18 +86,18 @@ assert_contains "$(cat "$fetch_log")" "pacman is running" \
     "the refusal names the process, not the missing lock file"
 assert_eq "$(sudo_log)" "" "the refused fetch escalated nothing"
 
-# 3. `doctor` has no lock check, so it cannot report this state at all. On the
-#    configured system above it calls the system healthy while a pacman runs
-#    with no lock file. This is the gap: it needs the same lock section `check`
-#    already prints. src/ owns that change; this scenario states the claim.
+# 3. `doctor` reads the same lock file and the same process list, so it names
+#    the transaction that is running and catches the file that went missing
+#    rather than calling the configured system healthy.
 doctor_log=$(mktemp)
 aepm doctor >"$doctor_log" 2>&1
+status=$?
 
-# GAP: doctor has no lock check. This asserts the gap is still open; when
-# doctor gains the lock section, this line goes red on purpose — invert it and
-# delete this comment in the same commit.
-assert_false "doctor still does not name a lock it never checks" \
-    grep -q "db.lck" "$doctor_log"
+assert_eq "$status" "1" "doctor exits 1 (a transaction runs with no lock file)"
+assert_contains "$(cat "$doctor_log")" "doctor: lock: " \
+    "doctor names the lock file"
+assert_contains "$(cat "$doctor_log")" "is missing while pacman runs" \
+    "doctor catches the deleted lock under a live transaction"
 
 # 4. Let the transaction finish: the download was never the fault, and the
 #    abandoned lock file is not silently recreated.

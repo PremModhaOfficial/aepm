@@ -260,13 +260,14 @@ file.
 Requires fault injection in the sim.
 
 - [ ] Kill pacman mid-download, verify cache is retryable and lists are new.
-- [ ] Fill the CacheDir tmpfs mid-download, verify exit 1 and no `/usr` write.
+- [ ] Fill the CacheDir tmpfs mid-download, verify exit 2 (D6: an execution
+      error) and no `/usr` write.
 - [ ] Kill pacman mid-install, verify `pacman -Qkk` detects damage and `Qk`
       does not.
-- [ ] Delete `db.lck` while pacman runs, verify `doctor` catches it.
+- [x] Delete `db.lck` while pacman runs, verify `doctor` catches it.
 - [x] Install a single package between fetch and install, verify `check`
       reports a partial upgrade.
-- [ ] Stale aurto repo, verify `install` reports a foreground build risk.
+- [x] Stale aurto repo, verify `install` reports a foreground build risk.
 
 ## Phase 5: VM level
 

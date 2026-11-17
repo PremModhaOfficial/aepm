@@ -21,6 +21,10 @@ pub struct Options {
 pub const NEWS_URL: &str = "https://archlinux.org/news/";
 pub const INSTALL_COMMAND: &str = "yay -Syuu";
 
+/// The foreground-build warning, shared by the CLI and the TUI overlay so the
+/// two never drift apart.
+pub const AURTO_STALE: &str = "If an AUR package builds now, aurto is stale: read the PKGBUILD.";
+
 /// Read-only install-gate facts for the TUI.
 ///
 /// It uses the same helpers as [`run_with`], runs no transaction, and never
@@ -188,6 +192,9 @@ pub fn run_with_status(
     );
     for line in official.iter().chain(aur.iter()) {
         println!("  {line}");
+    }
+    if !aur.is_empty() {
+        println!("install: warning: {AURTO_STALE}");
     }
     let mut state = State::load(&config.state_file)?;
     println!(

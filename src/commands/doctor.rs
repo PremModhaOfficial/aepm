@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::commands::fetch;
 use crate::config::Config;
 use crate::error::Error;
+use crate::lock;
 use crate::report::{Check, DoctorReport, Verdict, attention};
 use crate::runner::{CommandRunner, SystemRunner};
 use crate::util::{human_bytes, path_str, resolve_cache_dir};
@@ -92,7 +93,53 @@ fn collect(
     if cache_dir != PathBuf::from("/") {
         *problems += report_disk(runner, Path::new("/"), need, report)?;
     }
+    *problems += report_lock(config, runner, report)?;
     Ok(())
+}
+
+/// The lock is a marker the process list cannot replace: pacman writes it at the
+/// start of a transaction and removes it at the end. A transaction with no file,
+/// or a file with no transaction, is a state the next command must not walk into.
+fn report_lock(
+    config: &Config,
+    runner: &dyn CommandRunner,
+    report: &mut DoctorReport,
+) -> Result<u32, Error> {
+    let lock = config.pacman_lock.display();
+    let running = lock::running(runner)?;
+    match (running.as_deref(), config.pacman_lock.exists()) {
+        (Some(name), true) => {
+            record(report, "lock", Verdict::Ok, format!("held by {name}"));
+            Ok(0)
+        }
+        (Some(name), false) => {
+            record(
+                report,
+                "lock",
+                Verdict::Blocked,
+                format!("{lock} is missing while {name} runs"),
+            );
+            Ok(1)
+        }
+        (None, true) => {
+            record(
+                report,
+                "lock",
+                Verdict::Blocked,
+                format!("stale {lock}: no pacman, yay, makepkg or aurto process holds it"),
+            );
+            Ok(1)
+        }
+        (None, false) => {
+            record(
+                report,
+                "lock",
+                Verdict::Ok,
+                format!("no transaction or build running ({lock})"),
+            );
+            Ok(0)
+        }
+    }
 }
 
 fn record(report: &mut DoctorReport, id: &'static str, verdict: Verdict, detail: String) {
@@ -995,6 +1042,13 @@ mod tests {
         }
     }
 
+    /// `pgrep -x` exits 1 when nothing matches: no transaction or build.
+    fn no_running() -> CommandOutput {
+        let mut output = ok("");
+        output.code = 1;
+        output
+    }
+
     #[test]
     fn a_missing_setup_blocks() {
         let dir = temp_dir();
@@ -1008,11 +1062,47 @@ mod tests {
         runner.push_output(not_installed);
         runner.push_output(ok(""));
         runner.push_output(ok("10737418240\n"));
-        runner.push_output(ok("10737418240\n"));
+        runner.push_output(no_running());
 
         let result = run_with(&config, &runner);
 
         assert!(matches!(result, Err(Error::Blocked(_))));
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_transaction_with_no_lock_file_blocks_and_names_it() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let runner = FakeRunner::new();
+        runner.push_output(ok("4321 pacman\n"));
+
+        let mut report = DoctorReport::default();
+        let problems = super::report_lock(&config, &runner, &mut report).expect("lock check");
+
+        assert_eq!(problems, 1, "a live transaction with no file is a problem");
+        let text = render_text(&report);
+        assert!(text.contains("doctor: lock: "), "{text}");
+        assert!(text.contains("db.lck"), "{text}");
+        assert!(text.contains("is missing while pacman runs"), "{text}");
+
+        fs::remove_dir_all(&dir).expect("clean test dir");
+    }
+
+    #[test]
+    fn a_lock_file_nobody_holds_blocks_as_stale() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.pacman_lock, "").expect("lock file");
+        let runner = FakeRunner::new();
+        runner.push_output(no_running());
+
+        let mut report = DoctorReport::default();
+        let problems = super::report_lock(&config, &runner, &mut report).expect("lock check");
+
+        assert_eq!(problems, 1, "a stale lock blocks the next transaction");
+        assert!(render_text(&report).contains("stale"), "{:?}", report);
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }
@@ -1062,6 +1152,7 @@ mod tests {
         runner.push_output(pending);
         runner.push_output(ok(available));
         runner.push_output(ok(available));
+        runner.push_output(no_running());
     }
 
     #[test]
@@ -1148,7 +1239,9 @@ mod tests {
 
         assert!(text.contains("need 1.0 MiB"), "{text}");
         assert!(text.ends_with("doctor: ok\n"), "{text}");
-        assert_eq!(runner.calls().len(), 9, "no extra query");
+        // One more than the pending probe alone: the lock check reads the
+        // process list once and adds no second pacman query.
+        assert_eq!(runner.calls().len(), 10, "no extra query");
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }
@@ -1188,6 +1281,8 @@ mod tests {
         runner.push_output(ok(""));
         runner.push_output(ok("10737418240\n"));
         runner.push_output(ok("10737418240\n"));
+
+        runner.push_output(no_running());
 
         let result = run_with(&config, &runner);
 
@@ -1266,6 +1361,8 @@ mod tests {
         runner.push_output(ok("10737418240\n"));
         runner.push_output(ok("10737418240\n"));
 
+        runner.push_output(no_running());
+
         let result = run_with(&config, &runner);
 
         assert!(matches!(result, Err(Error::Blocked(_))));
@@ -1292,6 +1389,8 @@ mod tests {
         runner.push_output(ok("10737418240\n"));
         runner.push_output(ok("10737418240\n"));
 
+        runner.push_output(no_running());
+
         let result = run_with(&config, &runner);
 
         assert!(matches!(result, Err(Error::Blocked(_))));
@@ -1316,6 +1415,7 @@ mod tests {
         runner.push_output(not_installed);
         runner.push_output(ok(""));
         runner.push_output(ok("1000\n"));
+        runner.push_output(no_running());
 
         let result = run_with(&config, &runner);
 
@@ -1350,6 +1450,7 @@ mod tests {
         runner.push_output(ok(""));
         runner.push_output(ok("10737418240\n"));
         runner.push_output(ok("10737418240\n"));
+        runner.push_output(no_running());
 
         let result = run_with(&config, &runner);
 
@@ -1599,6 +1700,7 @@ doctor: journald: a size cap is set
 doctor: snapper: not installed
 doctor: disk DIR/cache: 10.0 GiB free, need 1.0 MiB
 doctor: disk /: 10.0 GiB free, need 1.0 MiB
+doctor: lock: no transaction or build running (DIR/db.lck)
 doctor: ok
 "
         );
@@ -1618,7 +1720,7 @@ doctor: ok
         runner.push_output(not_installed);
         runner.push_output(ok(""));
         runner.push_output(ok("10737418240\n"));
-        runner.push_output(ok("10737418240\n"));
+        runner.push_output(no_running());
 
         assert_eq!(
             doctor_text(&config, &runner, &dir),
@@ -1631,6 +1733,7 @@ doctor: cache: DIR/cache is missing
 doctor: journald: DIR/journald.conf is missing
 doctor: snapper: not installed
 doctor: disk /: 10.0 GiB free, need 1.0 MiB
+doctor: lock: no transaction or build running (DIR/db.lck)
 doctor: action needed (6 problem(s))
 "
         );
