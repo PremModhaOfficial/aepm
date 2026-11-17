@@ -16,8 +16,8 @@ pkgname=aepm
 # one typed release number, and scripts/gate-pkgbuild-version.sh fails CI when
 # these two drift. Arch forbids a hyphen in pkgver, so the semver pre-release
 # separator is `_`; the git tag keeps the hyphen.
-pkgver=0.1.0_pre1
-_tag=v0.1.0-pre1
+pkgver=0.1.0
+_tag=v0.1.0
 pkgrel=1
 install=packaging/aepm.install
 pkgdesc='Split Arch updates: download in the background, install in the foreground'

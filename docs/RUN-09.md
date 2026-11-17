@@ -94,9 +94,8 @@ exit 1.
 
 ## Handoff: what a human must run
 
-The PKGBUILD sources the `v0.1.0` git tag, which does not exist yet. On a
-machine with the tag pushed, in a disposable Arch container (never the dev
-host):
+The PKGBUILD sources the `v0.1.0` git tag, which exists as of the release
+commit. In a disposable Arch container (never the dev host):
 
 ```bash
 tag=v0.1.0
