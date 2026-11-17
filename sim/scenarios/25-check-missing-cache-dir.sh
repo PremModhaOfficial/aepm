@@ -8,7 +8,7 @@ log=$(mktemp)
 before_usr=$(usr_state)
 
 runuser -l builder -c \
-    'AUR_PREFETCH_PACMAN_CONF=/usr/local/lib/sim/fixtures/pacman-moved-cache.conf aur-prefetch check' \
+    'AEPM_PACMAN_CONF=/usr/local/lib/sim/fixtures/pacman-moved-cache.conf aepm check' \
     >"$log" 2>&1
 status=$?
 

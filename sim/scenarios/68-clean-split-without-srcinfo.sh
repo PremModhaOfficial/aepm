@@ -80,7 +80,7 @@ before_usr=$(tree_state /usr/share/splitpkg-cli /usr/share/splitpkg-docs)
 yay_cache=$build
 
 dry_log=$(mktemp)
-AUR_PREFETCH_YAY_CACHE_DIR=$yay_cache aur-prefetch clean >"$dry_log" 2>&1
+AEPM_YAY_CACHE_DIR=$yay_cache aepm clean >"$dry_log" 2>&1
 assert_eq "$?" "0" "the dry run exited 0"
 assert_contains "$(cat "$dry_log")" "splitpkg: would remove" \
     "the dry run would remove the installed split build"
@@ -92,7 +92,7 @@ assert_true "the dry run deleted nothing" \
     test -d "$build/$pkgbase"
 
 apply_log=$(mktemp)
-AUR_PREFETCH_YAY_CACHE_DIR=$yay_cache aur-prefetch clean --apply >"$apply_log" 2>&1
+AEPM_YAY_CACHE_DIR=$yay_cache aepm clean --apply >"$apply_log" 2>&1
 assert_eq "$?" "0" "apply exited 0"
 assert_false "the installed split build did not survive" \
     test -d "$build/$pkgbase"

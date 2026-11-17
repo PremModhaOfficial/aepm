@@ -86,8 +86,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-lock-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-lock-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -96,8 +95,8 @@ mod tests {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
             ("HOME", dir.join("home")),
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_LOCK", dir.join("db.lck")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_LOCK", dir.join("db.lck")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }

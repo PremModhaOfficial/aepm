@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds prototype/web/aur-prefetch.html from the app's own captured frames.
+// Builds prototype/web/aepm.html from the app's own captured frames.
 // Source of truth: tests/golden/*.txt, the same fixtures src/tui/render.rs
 // asserts byte for byte. A frame is embedded verbatim, never redrawn.
 // The behaviour lives in app.js; this file only inlines it and the frames.
@@ -59,7 +59,7 @@ const SHELL = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>aur-prefetch · TUI demo</title>
+<title>aepm · TUI demo</title>
 <style>
   :root {
     --fg: #c8c8c8; --bg: #101010; --muted: #6b6b6b; --accent: #3fb7c9;
@@ -101,7 +101,7 @@ const SHELL = `<!doctype html>
 </head>
 <body>
 <div id="chrome">
-  <b>aur-prefetch</b>
+  <b>aepm</b>
   <span id="where"></span>
   <span id="size"></span>
   <select id="pick" title="jump to any captured screen"></select>
@@ -132,7 +132,7 @@ __APP__
 `;
 
 const html = SHELL.replace('__APP__', () => app.replaceAll('__FRAMES__', () => JSON.stringify(frames)));
-writeFileSync(join(here, 'aur-prefetch.html'), html);
+writeFileSync(join(here, 'aepm.html'), html);
 const scenes = Object.keys(frames).sort();
-console.log(`frames: ${count} in ${scenes.length} scenes -> ${join(here, 'aur-prefetch.html')}`);
+console.log(`frames: ${count} in ${scenes.length} scenes -> ${join(here, 'aepm.html')}`);
 console.log(scenes.map((s) => `${s}(${Object.keys(frames[s]).join('/')})`).join(' '));

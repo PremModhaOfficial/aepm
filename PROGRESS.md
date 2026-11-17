@@ -17,15 +17,15 @@ readiness, parallel fronts), [`NEXT.md`](NEXT.md) (order of work),
 This file covers one screen: the progress view. It is not a new TUI and not a
 second command layer.
 
-Visual tour: [`prototype/tui-walkthrough.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/tui-walkthrough.html).
+Visual tour: [`prototype/tui-walkthrough.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/tui-walkthrough.html).
 The Markdown files remain the contract; the HTML shows the frames and the
 terminal limits together. The HTML studies are archived on the
 `archive/prototype-studies` branch so the review diff stays renderable.
 
 Capture study: [`docs/NOM.md`](docs/NOM.md) compares a real `nh home switch` run
 with the current prefetch frame and orders the T2 adoption. The playable visual
-is [`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/nom-study.html); the still is
-[`prototype/shots/nom-study.png`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/shots/nom-study.png).
+is [`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/nom-study.html); the still is
+[`prototype/shots/nom-study.png`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/shots/nom-study.png).
 
 Reference: [`nix-output-monitor`](https://github.com/maralorn/nix-output-monitor).
 Its dependency graph, phase glyphs and summary counters are the model. This
@@ -129,7 +129,7 @@ repo; a live build tree needs a separate captured `build` action that owns
 runs, and redraws the tree below it. That works because the build's output is
 machine-readable and the filter owns the screen.
 
-`aur-prefetch install` is deliberately different. `NEXT.md` D3 says:
+`aepm install` is deliberately different. `NEXT.md` D3 says:
 
 - Never pass `--noconfirm` to `yay`.
 - PKGBUILD review is the point.
@@ -269,7 +269,7 @@ and fallback to local known/stale plus `?`. It never runs by default and never
 writes state. AUR RPC is reconsidered only after amending the no-network/no-AUR
 decisions, not smuggled in.
 
-### P5. One full-screen view inside `aur-prefetch tui`
+### P5. One full-screen view inside `aepm tui`
 
 The tree is a panel in the TUI, not a nom-style pipe filter. A pipe filter
 cannot see the completed prefetch, the cache state, or the install plan; those
@@ -351,7 +351,7 @@ not part of the action count.
 Default state: prefetch complete, install future.
 
 ```text
-┌ aur-prefetch ───────────────────── Progress · 3 pending · prefetched 2 · built 0 ┐
+┌ aepm ───────────────────── Progress · 3 pending · prefetched 2 · built 0 ┐
 │ Dependency Graph:                        install 3 packages · static prefetch · ghost │
 ├──────────────────────────────────────────────────────────────────────────────────┤
 │  ┌─ ? go                              unknown                                  │
@@ -393,7 +393,7 @@ the measured grammar.
 ### Live fetch
 
 ```text
-┌ aur-prefetch ─────────────────────── Fetch · 3 packages · live · 00:42 ────┐
+┌ aepm ─────────────────────── Fetch · 3 packages · live · 00:42 ────┐
 │ Dependency Graph:                                          captured · live │
 ├────────────────────────────────────────────────────────────────────────────┤
 │  ✔ bash 5.2.037-2                   ✔ done             1.2 MiB · 2s        │
@@ -667,7 +667,7 @@ implementation (30–32 are reserved for the main TUI in TUI.md).
 
 ## Non-goals
 
-- No pipe filter / `aur-prefetch watch`.
+- No pipe filter / `aepm watch`.
 - No live animation of the attached `yay -Syuu` install.
 - No attempt to beat nom's live tree; the tree is borrowed.
 - No AUR RPC or new HTTP client in v1.

@@ -477,10 +477,8 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "aur-prefetch-fetch-source-{}-{id}",
-                std::process::id()
-            ));
+            let root =
+                std::env::temp_dir().join(format!("aepm-fetch-source-{}-{id}", std::process::id()));
             let cache = root.join("cache");
             fs::create_dir_all(&cache).expect("create cache");
             Self { root, cache }

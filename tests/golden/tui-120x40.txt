@@ -1,4 +1,4 @@
-aur-prefetch · 3 pending · 2 action(s)
+aepm · 3 pending · 2 action(s)
 
 install 3 packages
   ├── bash 5.2.037-1 -> 5.2.037-2

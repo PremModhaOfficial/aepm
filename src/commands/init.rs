@@ -21,7 +21,7 @@ pub fn run(apply: bool) -> Result<(), Error> {
         let euid = SystemRunner.run("id", &["-u"])?;
         if euid.stdout.trim() == "0" && std::env::var("SUDO_USER").is_ok() {
             return Err(Error::blocked(
-                "run `aur-prefetch init --apply` as your user, not with sudo; it prompts for sudo only to install the sudoers rule",
+                "run `aepm init --apply` as your user, not with sudo; it prompts for sudo only to install the sudoers rule",
             ));
         }
     }
@@ -113,8 +113,8 @@ pub fn run_with(
         .user_unit_dir
         .as_deref()
         .ok_or_else(|| Error::failed("HOME is not set; cannot locate the user unit directory"))?;
-    let service_path = unit_dir.join("aur-prefetch.service");
-    let timer_path = unit_dir.join("aur-prefetch.timer");
+    let service_path = unit_dir.join("aepm.service");
+    let timer_path = unit_dir.join("aepm.timer");
     let service = render_service(setup.exe)?;
     let timer = render_timer();
     let sudoers = render_sudoers(config, setup.user);
@@ -143,10 +143,7 @@ pub fn run_with(
             reload.stderr.trim()
         )));
     }
-    let enable = runner.run(
-        "systemctl",
-        &["--user", "enable", "--now", "aur-prefetch.timer"],
-    )?;
+    let enable = runner.run("systemctl", &["--user", "enable", "--now", "aepm.timer"])?;
     if enable.code != 0 {
         return Err(Error::failed(format!(
             "cannot enable the timer: {}",
@@ -225,7 +222,7 @@ fn install_sudoers(
     }
 
     let staged = parent.join(format!(
-        ".aur-prefetch-sudoers-{}-{}",
+        ".aepm-sudoers-{}-{}",
         std::process::id(),
         now_nanos()
     ));
@@ -338,7 +335,7 @@ fn install_sudoers_with_sudo_in(
     }
 
     let temp = TempFile::new(temp_dir.join(format!(
-        "aur-prefetch-sudoers-{}-{}",
+        "aepm-sudoers-{}-{}",
         std::process::id(),
         now_nanos()
     )));
@@ -350,12 +347,12 @@ fn install_sudoers_with_sudo_in(
     let check = runner.run_interactive("sudo", &["visudo", "-cf", path_str(temp.path())?])?;
     if check != 0 {
         return Err(Error::failed(format!(
-            "sudo visudo rejected the sudoers rule (exit {check}); run `sudo visudo -f /etc/sudoers.d/aur-prefetch` manually"
+            "sudo visudo rejected the sudoers rule (exit {check}); run `sudo visudo -f /etc/sudoers.d/aepm` manually"
         )));
     }
 
     let staged = parent.join(format!(
-        ".aur-prefetch-sudoers-install-{}-{}",
+        ".aepm-sudoers-install-{}-{}",
         std::process::id(),
         now_nanos()
     ));
@@ -372,7 +369,7 @@ fn install_sudoers_with_sudo_in(
     if code != 0 {
         let _ = runner.run_interactive("sudo", &["rm", "-f", path_str(&staged)?]);
         return Err(Error::failed(
-            "sudo could not stage the sudoers rule; run `sudo visudo -f /etc/sudoers.d/aur-prefetch` manually",
+            "sudo could not stage the sudoers rule; run `sudo visudo -f /etc/sudoers.d/aepm` manually",
         ));
     }
 
@@ -380,7 +377,7 @@ fn install_sudoers_with_sudo_in(
     if code != 0 {
         let _ = runner.run_interactive("sudo", &["rm", "-f", path_str(&staged)?]);
         return Err(Error::failed(
-            "sudo could not move the sudoers rule into place; run `sudo visudo -f /etc/sudoers.d/aur-prefetch` manually",
+            "sudo could not move the sudoers rule into place; run `sudo visudo -f /etc/sudoers.d/aepm` manually",
         ));
     }
     Ok(())
@@ -406,8 +403,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-init-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-init-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -420,14 +416,14 @@ mod tests {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
             ("HOME", dir.join("home")),
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_SUDOERS", dir.join("sudoers.d/aur-prefetch")),
-            ("AUR_PREFETCH_USER_UNIT_DIR", dir.join("units")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_SUDOERS", dir.join("sudoers.d/aepm")),
+            ("AEPM_USER_UNIT_DIR", dir.join("units")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }
         if let Some(pacman) = pacman {
-            map.insert("AUR_PREFETCH_PACMAN".to_string(), pacman.to_string());
+            map.insert("AEPM_PACMAN".to_string(), pacman.to_string());
         }
         Config::from_lookup(move |name| map.get(name).cloned()).expect("config")
     }
@@ -443,7 +439,7 @@ mod tests {
     fn setup(apply: bool) -> Setup<'static> {
         Setup {
             apply,
-            exe: Path::new("/usr/local/bin/aur-prefetch"),
+            exe: Path::new("/usr/local/bin/aepm"),
             user: "alice",
         }
     }
@@ -499,10 +495,10 @@ mod tests {
         run_with(&config, &runner, setup(true)).expect("init");
 
         let units = config.user_unit_dir.as_ref().expect("unit dir");
-        let service = fs::read_to_string(units.join("aur-prefetch.service")).expect("service file");
-        assert!(service.contains("ExecStart=\"/usr/local/bin/aur-prefetch\" fetch"));
+        let service = fs::read_to_string(units.join("aepm.service")).expect("service file");
+        assert!(service.contains("ExecStart=\"/usr/local/bin/aepm\" fetch"));
 
-        let timer = fs::read_to_string(units.join("aur-prefetch.timer")).expect("timer file");
+        let timer = fs::read_to_string(units.join("aepm.timer")).expect("timer file");
         assert!(timer.contains("OnCalendar=daily"));
         assert!(timer.contains("Persistent=true"));
         assert_eq!(
@@ -544,7 +540,7 @@ mod tests {
                 entry
                     .file_name()
                     .to_string_lossy()
-                    .starts_with(".aur-prefetch-sudoers")
+                    .starts_with(".aepm-sudoers")
             })
             .collect();
         assert!(
@@ -569,7 +565,7 @@ mod tests {
                 .user_unit_dir
                 .as_ref()
                 .expect("unit dir")
-                .join("aur-prefetch.service")
+                .join("aepm.service")
                 .exists()
         );
         assert!(runner.calls().is_empty(), "a dry run runs no commands");
@@ -602,7 +598,7 @@ mod tests {
         let runner = FakeRunner::new();
         let bad = Setup {
             apply: true,
-            exe: Path::new("/usr/local/bin/aur-prefetch"),
+            exe: Path::new("/usr/local/bin/aepm"),
             user: "bad\nname",
         };
 
@@ -643,7 +639,7 @@ mod tests {
         fs::create_dir_all(&readonly).expect("readonly parent");
         fs::set_permissions(&readonly, fs::Permissions::from_mode(0o555)).expect("chmod");
         let mut config = test_config(&dir);
-        config.sudoers_file = readonly.join("sudoers.d/aur-prefetch");
+        config.sudoers_file = readonly.join("sudoers.d/aepm");
         let runner = FakeRunner::new();
 
         install_sudoers(
@@ -688,11 +684,11 @@ mod tests {
 
     #[test]
     fn exec_start_quotes_paths_and_escapes_specifiers() {
-        let service = render_service(Path::new("/home/alice/My Projects/aur-prefetch%20$HOME"))
-            .expect("service");
+        let service =
+            render_service(Path::new("/home/alice/My Projects/aepm%20$HOME")).expect("service");
 
         assert!(
-            service.contains("ExecStart=\"/home/alice/My Projects/aur-prefetch%%20$$HOME\" fetch"),
+            service.contains("ExecStart=\"/home/alice/My Projects/aepm%%20$$HOME\" fetch"),
             "spaces must be quoted and % and $ escaped: {service}"
         );
     }
@@ -725,7 +721,7 @@ mod tests {
         assert!(
             Path::new(&visudo[2])
                 .file_name()
-                .map(|name| name.to_string_lossy().starts_with("aur-prefetch-sudoers-"))
+                .map(|name| name.to_string_lossy().starts_with("aepm-sudoers-"))
                 .unwrap_or(false),
             "visudo validates the private temp file: {}",
             visudo[2]
@@ -736,13 +732,13 @@ mod tests {
         let temp = Path::new(&install[3]);
         assert!(
             temp.file_name()
-                .map(|name| name.to_string_lossy().starts_with("aur-prefetch-sudoers-"))
+                .map(|name| name.to_string_lossy().starts_with("aepm-sudoers-"))
                 .unwrap_or(false),
             "the validated copy comes from a private temp file: {}",
             temp.display()
         );
         let staged = &install[4];
-        let staged_prefix = format!("{}/.aur-prefetch-sudoers-install-", sudoers_dir.display());
+        let staged_prefix = format!("{}/.aepm-sudoers-install-", sudoers_dir.display());
         assert!(
             staged.starts_with(&staged_prefix),
             "the rule is staged in the same directory: {staged}"
@@ -770,7 +766,7 @@ mod tests {
         fs::create_dir_all(&temp).expect("temp dir");
         let parent = dir.join("sudoers.d");
         fs::create_dir_all(&parent).expect("sudoers dir");
-        let target = parent.join("aur-prefetch");
+        let target = parent.join("aepm");
 
         let result = install_sudoers_with_sudo_in(
             &ErrorRunner,
@@ -797,7 +793,7 @@ mod tests {
         fs::create_dir_all(&temp).expect("temp dir");
         let parent = dir.join("sudoers.d");
         fs::create_dir_all(&parent).expect("sudoers dir");
-        let target = parent.join("aur-prefetch");
+        let target = parent.join("aepm");
 
         let runner = FakeRunner::new();
         runner.push_interactive(1);
@@ -853,7 +849,7 @@ mod tests {
         fs::create_dir_all(&temp).expect("temp dir");
         let parent = dir.join("sudoers.d");
         fs::create_dir_all(&parent).expect("sudoers dir");
-        let target = parent.join("aur-prefetch");
+        let target = parent.join("aepm");
         let runner = FakeRunner::new();
         runner.push_interactive(0); // visudo accepts
         runner.push_interactive(1); // install fails
@@ -877,10 +873,7 @@ mod tests {
         assert_eq!(calls[2].0, "sudo");
         assert_eq!(&calls[2].1[..2], ["rm", "-f"]);
         assert!(
-            calls[2].1[2].starts_with(&format!(
-                "{}/.aur-prefetch-sudoers-install-",
-                parent.display()
-            )),
+            calls[2].1[2].starts_with(&format!("{}/.aepm-sudoers-install-", parent.display())),
             "the hidden staged rule is removed: {:?}",
             calls[2]
         );
@@ -891,7 +884,7 @@ mod tests {
     #[test]
     fn a_failed_unit_rename_leaves_no_partial_file() {
         let dir = temp_dir();
-        let target = dir.join("aur-prefetch.service");
+        let target = dir.join("aepm.service");
         fs::create_dir_all(&target).expect("make the target a directory");
 
         let result = write_atomic(&target, "[Service]\n");
@@ -904,7 +897,7 @@ mod tests {
             .collect();
         assert_eq!(
             entries,
-            vec![std::ffi::OsString::from("aur-prefetch.service")],
+            vec![std::ffi::OsString::from("aepm.service")],
             "a failed rename must leave neither a temp file nor a partial unit"
         );
 
@@ -913,15 +906,12 @@ mod tests {
     #[test]
     fn the_packaged_units_match_what_init_renders() {
         // A packaged install ships these files under /usr/lib/systemd/user.
-        // They must stay exactly what `init` writes for /usr/bin/aur-prefetch,
+        // They must stay exactly what `init` writes for /usr/bin/aepm,
         // or a packaged user and an init user would run different units.
+        assert_eq!(include_str!("../../packaging/aepm.timer"), render_timer());
         assert_eq!(
-            include_str!("../../packaging/aur-prefetch.timer"),
-            render_timer()
-        );
-        assert_eq!(
-            include_str!("../../packaging/aur-prefetch.service"),
-            render_service(Path::new("/usr/bin/aur-prefetch")).expect("service")
+            include_str!("../../packaging/aepm.service"),
+            render_service(Path::new("/usr/bin/aepm")).expect("service")
         );
     }
 }

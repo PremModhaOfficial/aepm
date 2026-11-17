@@ -20,7 +20,7 @@ This file is edge-case reference, not a plan.
 - Disk: `df -h /` + `df -i /` (slots fill separately).
 - Lock: the same shared gate (`src/lock.rs:14`); never delete `/var/lib/pacman/db.lck` while pacman, yay, makepkg or aurto runs.
 - Caches: 4 locations (downloads, yay builds, aurto repo, chroots).
-- Timer: `systemctl --user list-timers`, `journalctl --user -u aur-prefetch.service`.
+- Timer: `systemctl --user list-timers`, `journalctl --user -u aepm.service`.
 - Partial-upgrade detection: `grep "installed\|upgraded" /var/log/pacman.log` after last `-Syuw`.
 
 ### install
@@ -42,7 +42,7 @@ This file is edge-case reference, not a plan.
 - Temp: `/var/tmp/extra-*` orphans, `systemd-tmpfiles --clean` age-based only.
 
 ### doctor
-- Timer enabled: `systemctl --user list-timers | grep aur-prefetch`.
+- Timer enabled: `systemctl --user list-timers | grep aepm`.
 - Paccache timer: `systemctl list-timers | grep paccache`.
 - Snapper timers: `snapper-timeline.timer`, `snapper-cleanup.timer`.
 - journald: `Storage=persistent` in `[Journal]`, `SystemMaxUse=500M`.
@@ -57,7 +57,7 @@ This file is edge-case reference, not a plan.
 - `aurto add $(pacman -Qqm)` fails on zero args. Per-package only.
 - Linger: `loginctl enable-linger $USER`.
 - Paccache timer: daily drop-in with `OnCalendar=` reset first.
-- Sudoers: `/etc/sudoers.d/aur-prefetch`, exact command only, no wildcards.
+- Sudoers: `/etc/sudoers.d/aepm`, exact command only, no wildcards.
 - Timer: two files (service=job, timer=clock), `Persistent=true`.
 
 ## Edge cases (web-verified)

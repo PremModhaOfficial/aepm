@@ -7,7 +7,7 @@ echo "scenario: fetch refuses below the free-space floor"
 
 log=$(mktemp)
 
-runuser -l builder -c 'AUR_PREFETCH_MIN_FREE_BYTES=1099511627776 aur-prefetch fetch' \
+runuser -l builder -c 'AEPM_MIN_FREE_BYTES=1099511627776 aepm fetch' \
     >"$log" 2>&1
 status=$?
 

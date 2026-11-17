@@ -27,7 +27,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# F16 — Linux-only is INTENTIONAL: aur-prefetch is Arch-targeted (pacman,
+# F16 — Linux-only is INTENTIONAL: aepm is Arch-targeted (pacman,
 # /etc/aurto/trusted-users, systemd timers). There is no pacman on
 # Windows/macOS, so a cross-platform matrix would only test that the binary
 # doesn't start there. Revisit if the tool ever becomes cross-platform.

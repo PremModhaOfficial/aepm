@@ -10,17 +10,17 @@ mkdir -p /etc/aurto
 # pacman 7 downloads as alpm; the configured cache must be writable by it.
 chown alpm:alpm /var/cache/pacman/pkg
 chmod 0755 /var/cache/pacman/pkg
-printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aur-prefetch
-chmod 0440 /etc/sudoers.d/aur-prefetch
+printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aepm
+chmod 0440 /etc/sudoers.d/aepm
 printf 'maintainer\n' >/etc/aurto/trusted-users
 printf 'Include = /etc/pacman.d/aurto\n' >>/etc/pacman.conf
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=500M\n' >/etc/systemd/journald.conf
-printf 'Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n' >/etc/sim/systemctl.out
+printf 'Tue 2026-11-11 00:00:00 UTC  aepm.timer\n' >/etc/sim/systemctl.out
 
 log=$(mktemp)
 before_usr=$(usr_state)
 
-aur-prefetch doctor >"$log" 2>&1
+aepm doctor >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "doctor exited 0"
@@ -29,9 +29,9 @@ assert_eq "$(usr_state)" "$before_usr" "doctor left /usr unchanged"
 
 # The product runs as the user, and a correct 0440 root-owned rule is
 # unreadable. Doctor must verify it through sudo -l and still pass.
-printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aur-prefetch
-chmod 0440 /etc/sudoers.d/aur-prefetch
-runuser -l builder -c 'aur-prefetch doctor' >"$log" 2>&1
+printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aepm
+chmod 0440 /etc/sudoers.d/aepm
+runuser -l builder -c 'aepm doctor' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "doctor as builder exited 0"

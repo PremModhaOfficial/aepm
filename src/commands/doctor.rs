@@ -58,7 +58,7 @@ fn collect(
     problems: &mut u32,
 ) -> Result<(), Error> {
     let timers = runner.run("systemctl", &["--user", "list-timers"])?;
-    if timers.code == 0 && timer_is_scheduled(&timers.stdout, "aur-prefetch.timer") {
+    if timers.code == 0 && timer_is_scheduled(&timers.stdout, "aepm.timer") {
         record(report, "timer", Verdict::Ok, "scheduled".to_string());
     } else {
         record(
@@ -962,8 +962,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-doctor-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-doctor-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -971,22 +970,19 @@ mod tests {
     fn test_config(dir: &Path) -> Config {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_LOCK", dir.join("db.lck")),
-            ("AUR_PREFETCH_PACMAN_LOG", dir.join("pacman.log")),
-            ("AUR_PREFETCH_PACMAN_CONF", dir.join("pacman.conf")),
-            ("AUR_PREFETCH_YAY_CACHE_DIR", dir.join("yay")),
-            ("AUR_PREFETCH_TRUSTED_USERS", dir.join("trusted-users")),
-            ("AUR_PREFETCH_SUDOERS", dir.join("sudoers")),
-            ("AUR_PREFETCH_JOURNALD_CONF", dir.join("journald.conf")),
-            ("AUR_PREFETCH_SNAPPER_CONFIG_DIR", dir.join("snapper")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_LOCK", dir.join("db.lck")),
+            ("AEPM_PACMAN_LOG", dir.join("pacman.log")),
+            ("AEPM_PACMAN_CONF", dir.join("pacman.conf")),
+            ("AEPM_YAY_CACHE_DIR", dir.join("yay")),
+            ("AEPM_TRUSTED_USERS", dir.join("trusted-users")),
+            ("AEPM_SUDOERS", dir.join("sudoers")),
+            ("AEPM_JOURNALD_CONF", dir.join("journald.conf")),
+            ("AEPM_SNAPPER_CONFIG_DIR", dir.join("snapper")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }
-        map.insert(
-            "AUR_PREFETCH_MIN_FREE_BYTES".to_string(),
-            "1048576".to_string(),
-        );
+        map.insert("AEPM_MIN_FREE_BYTES".to_string(), "1048576".to_string());
 
         Config::from_lookup(move |name| map.get(name).cloned()).expect("config")
     }
@@ -1054,7 +1050,7 @@ mod tests {
         available: &str,
         pending: CommandOutput,
     ) {
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok(&format!("{user}\n")));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         let meta = fs::metadata(dir.join("cache")).expect("cache metadata");
@@ -1181,7 +1177,7 @@ mod tests {
         complete_setup(&config, &dir);
 
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok("alice\n"));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         let meta = fs::metadata(dir.join("cache")).expect("cache metadata");
@@ -1260,7 +1256,7 @@ mod tests {
         fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).expect("chmod cache");
 
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok("alice\n"));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         let mut not_installed = ok("");
@@ -1284,7 +1280,7 @@ mod tests {
         complete_setup(&config, &dir);
 
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok("alice\n"));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         runner.push_output(ok("999999\n"));
@@ -1312,7 +1308,7 @@ mod tests {
         fs::remove_dir_all(&cache).expect("remove cache dir");
 
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok("alice\n"));
         runner.push_output(ok(&format!("{}\n", cache.to_string_lossy())));
         let mut not_installed = ok("");
@@ -1342,7 +1338,7 @@ mod tests {
         complete_setup(&config, &dir);
 
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok("alice\n"));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         let mut no_alpm = ok("");
@@ -1451,12 +1447,12 @@ mod tests {
     #[test]
     fn inactive_timers_are_not_scheduled() {
         assert!(timer_is_scheduled(
-            "Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer",
-            "aur-prefetch.timer"
+            "Tue 2026-11-11 00:00:00 UTC  aepm.timer",
+            "aepm.timer"
         ));
         assert!(!timer_is_scheduled(
-            "n/a                n/a       aur-prefetch.timer",
-            "aur-prefetch.timer"
+            "n/a                n/a       aepm.timer",
+            "aepm.timer"
         ));
     }
 
@@ -1542,10 +1538,8 @@ mod tests {
         // /tmp is world-traversable, so only the symlink target's parent can
         // deny alpm; the scratch temp dir may sit under a private ancestor.
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = PathBuf::from("/tmp").join(format!(
-            "aur-prefetch-doctor-symlink-{}-{id}",
-            std::process::id()
-        ));
+        let dir =
+            PathBuf::from("/tmp").join(format!("aepm-doctor-symlink-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("test dir");
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("open test dir");
         let real = dir.join("real");
@@ -1652,7 +1646,7 @@ doctor: action needed (6 problem(s))
         let config = test_config(&dir);
         fs::create_dir_all(config.snapper_config_dir.join("root")).expect("root dir");
         let runner = FakeRunner::new();
-        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n"));
+        runner.push_output(ok("Tue 2026-11-11 00:00:00 UTC  aepm.timer\n"));
         runner.push_output(ok(&format!("{}\n", dir.join("cache").to_string_lossy())));
         runner.push_output(ok("snapper 0.10\n"));
         runner.push_output(ok(

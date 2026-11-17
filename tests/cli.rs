@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn binary() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_aur-prefetch"))
+    Command::new(env!("CARGO_BIN_EXE_aepm"))
 }
 
 #[test]

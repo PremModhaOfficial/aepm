@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Turing check for prototype/web/aur-prefetch.html.
+// Turing check for prototype/web/aepm.html.
 //  1. Every capture renders with DOM text byte-equal to its golden fixture.
 //  2. Key paths follow src/tui/mod.rs, including modal screens and refusals.
 //  3. Colour classes follow the palette constants in src/tui/render.rs.
@@ -15,9 +15,9 @@ import { execFileSync } from 'node:child_process';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
 const golden = join(root, 'tests', 'golden');
-const page = join(here, 'aur-prefetch.html');
+const page = join(here, 'aepm.html');
 const chrome = process.env.CHROMIUM || 'chromium';
-const profile = mkdtempSync(join(tmpdir(), 'aur-prefetch-verify-'));
+const profile = mkdtempSync(join(tmpdir(), 'aepm-verify-'));
 
 // A stale generated file must not pass: rebuild from app.js and tests/golden
 // first, then prove the build consumed every fixture.

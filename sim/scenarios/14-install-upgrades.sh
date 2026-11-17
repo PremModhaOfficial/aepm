@@ -11,7 +11,7 @@ chmod 0666 /var/log/sim-yay.log
 log=$(mktemp)
 before_usr=$(usr_state)
 
-runuser -l installer -c 'aur-prefetch install --yes' >"$log" 2>&1
+runuser -l installer -c 'aepm install --yes' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "install exited 0"

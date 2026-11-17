@@ -98,7 +98,7 @@ Private helpers with contract weight:
   `<user> ALL=(root) NOPASSWD: <pacman> -Syuw --noconfirm`, validated with
   `visudo -cf` before it is moved into place
   [init.rs:render_sudoers] [init.rs:validate_and_rename].
-- `init --apply` enables `aur-prefetch.timer` with
+- `init --apply` enables `aepm.timer` with
   `systemctl --user enable --now` after `systemctl --user daemon-reload`
   [init.rs:run_with].
 
@@ -123,7 +123,7 @@ Private helpers with contract weight:
 - `init --apply`: writes the user unit and timer into `user_unit_dir`, writes
   and validates the sudoers file (staging a temp file first, then escalating to
   install it), and runs `systemctl --user daemon-reload` and
-  `systemctl --user enable --now aur-prefetch.timer` [init.rs:run_with]
+  `systemctl --user enable --now aepm.timer` [init.rs:run_with]
   [init.rs:install_sudoers].
 - No module here opens a network connection of its own; every remote fact comes
   from an external program's stdout. `NEWS_URL` is printed for the user to read,

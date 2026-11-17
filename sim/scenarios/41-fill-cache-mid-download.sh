@@ -30,7 +30,7 @@ before_pkgs=$(pkg_state)
 before_local=$(local_db_state)
 
 log=$(mktemp)
-runuser -l builder -c "AUR_PREFETCH_MIN_FREE_BYTES=$floor aur-prefetch fetch" >"$log" 2>&1
+runuser -l builder -c "AEPM_MIN_FREE_BYTES=$floor aepm fetch" >"$log" 2>&1
 status=$?
 
 # 1. The failure is an execution error, not a green run and not a silent skip.
@@ -65,7 +65,7 @@ assert_eq "$(local_db_state)" "$before_local" "the local package DB is untouched
 #    failure was a full disk, not a broken cache.
 rm -f "$cache"/*.part "$cache"/*.filler
 retry=$(mktemp)
-runuser -l builder -c "AUR_PREFETCH_MIN_FREE_BYTES=$floor aur-prefetch fetch" >"$retry" 2>&1
+runuser -l builder -c "AEPM_MIN_FREE_BYTES=$floor aepm fetch" >"$retry" 2>&1
 status=$?
 
 assert_eq "$status" "0" "the retry after freeing space succeeds"

@@ -44,8 +44,8 @@ are filled in. Change them here first, then implement.
 
 ### D4. State
 
-- Own state file at `$XDG_STATE_HOME/aur-prefetch/state.json`, default
-  `~/.local/state/aur-prefetch/state.json`.
+- Own state file at `$XDG_STATE_HOME/aepm/state.json`, default
+  `~/.local/state/aepm/state.json`.
 - Records last successful fetch time, last install time, package counts.
 - `/var/log/pacman.log` is a fallback for first run and for drift detection.
 - Never write state from `check` or `doctor`.
@@ -80,7 +80,7 @@ v1 answers; change them here before implementing different behaviour.
   palette; auto-detect is a T4 experiment.
 - The last panel is not persisted. Every start opens the dashboard.
 - Mouse is not in v1. The app is keyboard-first; click and wheel are T4.
-- Bare `aur-prefetch` still prints help. The TUI is `aur-prefetch tui`.
+- Bare `aepm` still prints help. The TUI is `aepm tui`.
 
 ---
 
@@ -92,12 +92,12 @@ v1 answers; change them here before implementing different behaviour.
       external input. `expect` only for invariants proven above it.
 - [x] `src/config.rs`: paths with env overrides so tests can redirect, all
       prefixed to avoid clobbering system variables:
-      `AUR_PREFETCH_PACMAN`, `AUR_PREFETCH_PACMAN_CONF`,
-      `AUR_PREFETCH_PACMAN_CACHE_DIR`, `AUR_PREFETCH_PACMAN_LOCK`,
-      `AUR_PREFETCH_PACMAN_LOG`, `AUR_PREFETCH_YAY_CACHE_DIR`,
-      `AUR_PREFETCH_TRUSTED_USERS`, `AUR_PREFETCH_SUDOERS`,
-      `AUR_PREFETCH_USER_UNIT_DIR`, `AUR_PREFETCH_STATE`,
-      `AUR_PREFETCH_MIN_FREE_BYTES`.
+      `AEPM_PACMAN`, `AEPM_PACMAN_CONF`,
+      `AEPM_PACMAN_CACHE_DIR`, `AEPM_PACMAN_LOCK`,
+      `AEPM_PACMAN_LOG`, `AEPM_YAY_CACHE_DIR`,
+      `AEPM_TRUSTED_USERS`, `AEPM_SUDOERS`,
+      `AEPM_USER_UNIT_DIR`, `AEPM_STATE`,
+      `AEPM_MIN_FREE_BYTES`.
 - [x] `src/state.rs`: read/write the state file atomically.
 - [x] `src/commands/{fetch,check,install,clean,doctor,init}.rs`.
 - [x] `tests/` with fixtures for `pacman -Qui`, `pacman-conf`, `pacman.log`.
@@ -130,7 +130,7 @@ Today the sim runs everything as root, so the real privilege path is untested.
 - [x] Scenario: `fetch` uses only the allowed argv.
 - [x] Scenario: `install` builds nothing when the local repo is current.
 - [x] One image tag per worktree:
-      `aur-prefetch-sim:<worktree directory>-<8 hex of its path>`, with
+      `aepm-sim:<worktree directory>-<8 hex of its path>`, with
       `SIM_IMAGE` as the override, so concurrent worktrees cannot build into or
       run each other's binary; `run.sh --no-cache` rebuilds a changed binary.
       `sim/check-image-tag.sh` proves the derived tag and the override, and
@@ -214,7 +214,7 @@ permissions, and a floor that only the shared rule makes `doctor` refuse.
 
 - [x] Dry-run output with sizes and the exact commands that would run.
 - [x] `--apply` required for deletion, and it needs root for `paccache`
-      (`sudo aur-prefetch clean --apply`).
+      (`sudo aepm clean --apply`).
 - [x] Never touch aurto repo or chroots.
 - [x] Never delete a yay build for a package that is not installed.
 - [x] Sim scenario: dry-run changes nothing, apply removes only the expected
@@ -243,7 +243,7 @@ and that an AUR build path exits loudly instead of silently passing.
       user and prompts for sudo only to install the sudoers rule; do not run
       the binary itself with sudo.
 - [x] Write the user service and timer, enable with `systemctl --user`.
-- [x] Write `/etc/sudoers.d/aur-prefetch` through `visudo -c` validation.
+- [x] Write `/etc/sudoers.d/aepm` through `visudo -c` validation.
 - [x] Never run `aurto init`. Check for it and print the manual command.
 - [x] Never write a wildcard sudoers rule.
 
@@ -448,7 +448,7 @@ The nom capture study is [`docs/NOM.md`](docs/NOM.md). It measures a real
 120x40 `nh home switch` run and orders the remaining T2 work: tree model,
 frontier wiring, real progress bars, layout and viewport, ANSI-16 palette,
 live loop, final receipt. The playable comparison is
-[`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/nom-study.html),
+[`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/nom-study.html),
 archived on `archive/prototype-studies` to keep the review diff renderable. The
 study is evidence, not implementation.
 
@@ -459,7 +459,7 @@ study is evidence, not implementation.
 - [x] Attached `yay -Syuu`; the tree is plan and result, never a fake live tree.
 - [x] Post-install receipt.
 - [x] Suspend/restore verified in a pty.
-- [x] No clean action in v1; `aur-prefetch clean` stays CLI.
+- [x] No clean action in v1; `aepm clean` stays CLI.
 
 Done when sim 31 (the pty shell restores the terminal), 32 (the gate opens and
 cancels with no change), 34 (the live fetch), and 36 (the attached install
@@ -590,8 +590,8 @@ Only if the tree earns it. The panels are not part of the first release.
       commented. Keep the fallback, drop the premise.
 - [x] `context.md` trust gate is inverted. Missing file means trust everyone.
       See D1.
-- [x] `spec.md` names the timer target `~/.local/bin/aur-prefetch.sh`, while the
-      repo builds `aur-prefetch`. Decide: install the binary and call it
+- [x] `spec.md` names the timer target `~/.local/bin/aepm.sh`, while the
+      repo builds `aepm`. Decide: install the binary and call it
       directly, or keep a thin wrapper. Recommendation: call the binary.
 - [x] `spec.md` embeds a shell free-space gate. That logic now lives in the
       binary. Keep the shell block only as a teaching example, and say so.

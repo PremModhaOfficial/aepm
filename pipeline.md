@@ -1,8 +1,8 @@
-# aur-prefetch Blueprint
+# aepm Blueprint
 
 ## System Overview
 
-`aur-prefetch` is a Rust CLI plus terminal UI for Arch Linux that splits an
+`aepm` is a Rust CLI plus terminal UI for Arch Linux that splits an
 update in two: `fetch` downloads the pending official-repository packages, and
 `install` runs the foreground upgrade afterwards, when the download is already
 on disk. AUR builds are not part of `fetch`: they belong to `install`
@@ -55,26 +55,26 @@ are the build gate and the packaging recipes:
   fails the run rather than auditing with defaults; a missing `cargo-deny` fails
   the run in CI and locally unless `ALLOW_AUDIT_SKIP=1` is set. The gate never
   degrades to a silent skip that still prints success [ci.sh:ALLOW_AUDIT_SKIP].
-- `Cargo.toml` — package manifest for the `aur-prefetch` binary and library.
+- `Cargo.toml` — package manifest for the `aepm` binary and library.
   Edition 2024 with `rust-version = "1.85"` declared so Cargo reports the floor
   instead of a parse error. Dependencies: `clap`, `crossterm`, `ratatui`,
   `serde`, `serde_json`, `signal-hook`, `unicode-width`. The `sim-hooks` feature
   is test-only and must not be enabled in a packaged build [Cargo.toml:sim-hooks].
 - `PKGBUILD` — AUR recipe. It builds with `cargo build --release --locked`,
-  installs the binary to `/usr/bin/aur-prefetch`, and installs
-  `packaging/aur-prefetch.service` and `packaging/aur-prefetch.timer` into
+  installs the binary to `/usr/bin/aepm`, and installs
+  `packaging/aepm.service` and `packaging/aepm.timer` into
   `/usr/lib/systemd/user`, so a fresh account already has the units and only
   enables them [PKGBUILD:pkgname].
-- `packaging/aur-prefetch.timer` fires `OnCalendar=daily` with
+- `packaging/aepm.timer` fires `OnCalendar=daily` with
   `Persistent=true`; the service is `Type=oneshot` and runs
-  `"/usr/bin/aur-prefetch" fetch` — the prefetch, never the install
-  [packaging/aur-prefetch.timer] [packaging/aur-prefetch.service].
+  `"/usr/bin/aepm" fetch` — the prefetch, never the install
+  [packaging/aepm.timer] [packaging/aepm.service].
 - `deny.toml` holds the license and advisory policy that `ci.sh` enforces
   [deny.toml:deny].
 
 ## Subdirectories & System Boundaries
 
-- [`src/`](./src/pipeline.md) — the `aur_prefetch` library: collection modules,
+- [`src/`](./src/pipeline.md) — the `aepm` library: collection modules,
   the report layer, the pure frontier and fetch-source models, the error/exit
   contract, the one process spawn, and the CLI surface.
   - [`src/commands/`](./src/commands/pipeline.md) — one module per subcommand,
@@ -163,15 +163,15 @@ Shared resources and external systems this tool can touch:
 - **Installed system:** `/usr`, and `/etc` as far as the installed packages
 themselves touch it, change only through `yay -Syuu` in `install`, run as the
   user. The one `/etc` file this tool writes directly is
-  `/etc/sudoers.d/aur-prefetch`, written by `init --apply` and validated with
+  `/etc/sudoers.d/aepm`, written by `init --apply` and validated with
   `visudo -cf` first [install.rs:run_with_status] [init.rs:render_sudoers].
-- **User state:** `$XDG_STATE_HOME/aur-prefetch/state.json` (default
-  `~/.local/state/aur-prefetch/state.json`), overridable with
-  `AUR_PREFETCH_STATE` [config.rs:Config] [state.rs:State].
+- **User state:** `$XDG_STATE_HOME/aepm/state.json` (default
+  `~/.local/state/aepm/state.json`), overridable with
+  `AEPM_STATE` [config.rs:Config] [state.rs:State].
 - **System configuration, written only by `init --apply`:** the sudoers file
-  (`/etc/sudoers.d/aur-prefetch`, validated with `visudo -cf`), and the systemd
+  (`/etc/sudoers.d/aepm`, validated with `visudo -cf`), and the systemd
   user unit and timer, then `systemctl --user daemon-reload` and
-  `systemctl --user enable --now aur-prefetch.timer` [init.rs:run_with]
+  `systemctl --user enable --now aepm.timer` [init.rs:run_with]
   [init.rs:validate_and_rename].
 - **Escalation:** `sudo -n` for the one pinned pacman command, and a sudo prompt
   only to install the sudoers rule. No wildcard rule is written

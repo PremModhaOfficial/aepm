@@ -26,7 +26,7 @@ assert_true "the direct build attempt was recorded" test -s /var/log/sim-yay-bui
 touch /etc/sim/yay-syuu-fail
 log=$(mktemp)
 
-runuser -l installer -c 'aur-prefetch install --yes' >"$log" 2>&1
+runuser -l installer -c 'aepm install --yes' >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "2" "install exited 2 on yay's build failure"

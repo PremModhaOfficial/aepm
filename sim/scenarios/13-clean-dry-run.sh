@@ -15,7 +15,7 @@ dry_log=$(mktemp)
 apply_log=$(mktemp)
 before_usr=$(usr_state)
 
-aur-prefetch clean >"$dry_log" 2>&1
+aepm clean >"$dry_log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "dry run exited 0"
@@ -26,7 +26,7 @@ assert_contains "$(cat "$dry_log")" "dry run" "the output says it was a dry run"
 assert_contains "$(cat "$dry_log")" "paccache -r -c" "the dry run prints the apply command"
 assert_contains "$(cat "$dry_log")" "aurto repo" "the aurto repo was reported"
 
-aur-prefetch clean --apply >"$apply_log" 2>&1
+aepm clean --apply >"$apply_log" 2>&1
 status=$?
 
 assert_eq "$status" "0" "apply exited 0"

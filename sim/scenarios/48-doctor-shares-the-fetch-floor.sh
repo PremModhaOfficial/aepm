@@ -20,22 +20,22 @@ chmod 0755 /dev/shm/simcache
 printf '[options]\nCacheDir = /dev/shm/simcache\nInclude = /etc/pacman.d/aurto\n' >/tmp/sim-pacman.conf
 
 mkdir -p /etc/aurto
-printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aur-prefetch
-chmod 0440 /etc/sudoers.d/aur-prefetch
+printf 'root ALL=(root) NOPASSWD: /usr/bin/pacman -Syuw --noconfirm\n' >/etc/sudoers.d/aepm
+chmod 0440 /etc/sudoers.d/aepm
 printf 'maintainer\n' >/etc/aurto/trusted-users
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=500M\n' >/etc/systemd/journald.conf
-printf 'Tue 2026-11-11 00:00:00 UTC  aur-prefetch.timer\n' >/etc/sim/systemctl.out
+printf 'Tue 2026-11-11 00:00:00 UTC  aepm.timer\n' >/etc/sim/systemctl.out
 printf '1\n' >/etc/sim/snapper.exit
 
-envs='AUR_PREFETCH_PACMAN_CONF=/tmp/sim-pacman.conf AUR_PREFETCH_MIN_FREE_BYTES=1048576'
+envs='AEPM_PACMAN_CONF=/tmp/sim-pacman.conf AEPM_MIN_FREE_BYTES=1048576'
 before_usr=$(usr_state)
 
 doctor_log=$(mktemp)
-env $envs aur-prefetch doctor >"$doctor_log" 2>&1
+env $envs aepm doctor >"$doctor_log" 2>&1
 doctor_status=$?
 
 fetch_log=$(mktemp)
-env $envs aur-prefetch fetch >"$fetch_log" 2>&1
+env $envs aepm fetch >"$fetch_log" 2>&1
 fetch_status=$?
 
 assert_eq "$doctor_status" "1" "doctor refused, not healthy"

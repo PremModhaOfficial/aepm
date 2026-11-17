@@ -17,10 +17,10 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use aur_prefetch::report::{ArtifactState, PackageView, PrefetchReport, Repo, Section, Snapshot};
-use aur_prefetch::tui::live::{LiveRun, Selection};
-use aur_prefetch::tui::render::{Footer, render_frame, render_live_frame_status};
-use aur_prefetch::tui::tree::Tree;
+use aepm::report::{ArtifactState, PackageView, PrefetchReport, Repo, Section, Snapshot};
+use aepm::tui::live::{LiveRun, Selection};
+use aepm::tui::render::{Footer, render_frame, render_live_frame_status};
+use aepm::tui::tree::Tree;
 
 const PACKAGES: usize = 2_000;
 /// `TUI.md`: key -> frame, for the shipped optimised build.

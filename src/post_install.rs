@@ -156,10 +156,8 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "aur-prefetch-post-install-{}-{id}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aepm-post-install-{}-{id}", std::process::id()));
         fs::create_dir_all(&root).expect("temp root");
         root
     }

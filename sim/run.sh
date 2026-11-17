@@ -6,7 +6,7 @@
 #   ./sim/run.sh --no-cache               rebuild from scratch, no layer cache
 #   ./sim/run.sh sim/scenarios/03-*.sh    run selected scenarios
 #   SIM_IMAGE=name:tag ./sim/run.sh       override the image tag
-#   SIM_BINARY=target/release/aur-prefetch ./sim/run.sh
+#   SIM_BINARY=target/release/aepm ./sim/run.sh
 #                                         reuse a host-built binary (same Arch glibc)
 #
 # Every scenario gets a fresh container with no network. Nothing is written to
@@ -36,7 +36,7 @@ fi
 # called.
 slug=$(printf %s "${PWD##*/}" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40 | sed 's/^[.-]*//')
 [[ -n $slug ]] || slug=worktree
-IMAGE=${SIM_IMAGE:-aur-prefetch-sim:"$slug"-$(printf %s "$PWD" | sha256sum | cut -c1-8)}
+IMAGE=${SIM_IMAGE:-aepm-sim:"$slug"-$(printf %s "$PWD" | sha256sum | cut -c1-8)}
 
 build_image() {
     "$RUNTIME" build "${no_cache[@]}" -f sim/Dockerfile -t "$IMAGE" .
@@ -88,7 +88,7 @@ for scenario in "${scenarios[@]}"; do
     echo "=== $scenario ==="
     mount=(-v "$(realpath "$scenario"):/scenario.sh:ro")
     if [[ -n ${SIM_BINARY:-} ]]; then
-        mount+=(-v "$(realpath "$SIM_BINARY"):/usr/local/bin/aur-prefetch:ro")
+        mount+=(-v "$(realpath "$SIM_BINARY"):/usr/local/bin/aepm:ro")
     fi
 
     # A scenario asks for extra container flags with a header comment, e.g.

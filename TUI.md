@@ -4,29 +4,29 @@ Status: **spec. T0 report layer, the T1 shell, T2a–T2f and T3's fetch
 checklist/log, install gate, attached install and post-install receipt are
 implemented; T4 polish and later screens are not.** Written 2026-11-08.
 
-Prototype: [`prototype/tui-variants.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/tui-variants.html) — five
+Prototype: [`prototype/tui-variants.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/tui-variants.html) — five
 explorations plus Atlas, the hillclimbed target, and a reviewed cross-tool
 scorecard. Throwaway, not a decision. The HTML studies are archived on the
 `archive/prototype-studies` branch so the review diff stays renderable.
 
-Dossier: [`prototype/atlas.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/atlas.html) — every screen the rubric
+Dossier: [`prototype/atlas.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/atlas.html) — every screen the rubric
 scored, with the 50 checks and the proof for each. A design gallery, not a
 running TUI.
 
-Walkthrough: [`prototype/tui-walkthrough.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/tui-walkthrough.html)
+Walkthrough: [`prototype/tui-walkthrough.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/tui-walkthrough.html)
 — one page for the screens, the state model and the terminal limits below. The
 Markdown file remains the contract.
 
 Execution model: [`docs/ANIMATION.md`](docs/ANIMATION.md) — the DAG frontier,
 readiness, parallel fronts and replay.
 
-Hillclimb: [`prototype/hillclimb/RESULTS.md`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/hillclimb/RESULTS.md) —
+Hillclimb: [`prototype/hillclimb/RESULTS.md`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/hillclimb/RESULTS.md) —
 the harness claims 10/10 on ten metrics, but two independent clean-context audits
 put the same artifacts at **6.0 and 5.1 mean — conservative 4.7, floor 2.0** and
-flag 20 checks ([`AUDIT.md`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/hillclimb/AUDIT.md)). That is a design
+flag 20 checks ([`AUDIT.md`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/hillclimb/AUDIT.md)). That is a design
 claim, not user testing.
 
-Progress lab: [`prototype/progress-lab.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/progress-lab.html) —
+Progress lab: [`prototype/progress-lab.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/progress-lab.html) —
 five progress layouts selected and crossed. The lab self-scored Canopy+ at 9.86;
 two independent scorers put it at **6.29–6.86** against nom's **5.86–6.00**.
 That is not a win. The live tree is now borrowed from nom; the design value is
@@ -56,7 +56,7 @@ shell. They are specified so the report layer can feed them later, not because
 v1 ships them.
 
 ```text
-┌ aur-prefetch ───────────────────── Progress · 3 pending · prefetched 2 · built 0 ┐
+┌ aepm ───────────────────── Progress · 3 pending · prefetched 2 · built 0 ┐
 │ Dependency Graph:                        install 3 packages · static prefetch · ghost │
 ├──────────────────────────────────────────────────────────────────────────────────┤
 │  ┌─ ? go                              unknown                                  │
@@ -116,7 +116,7 @@ The v2 dashboard adds timer, disk and trust at a glance.
 - Not a place to review PKGBUILDs. That happens in the real terminal after the
   TUI hands the terminal over.
 - Not a network client. No news fetching, no AUR API.
-- Not a second configuration system. It reads the same `AUR_PREFETCH_*`
+- Not a second configuration system. It reads the same `AEPM_*`
   environment variables as the CLI.
 
 ---
@@ -125,7 +125,7 @@ The v2 dashboard adds timer, disk and trust at a glance.
 
 ### T1. Entry point
 
-- `aur-prefetch tui`. Bare `aur-prefetch` still prints help, so no script
+- `aepm tui`. Bare `aepm` still prints help, so no script
   changes.
 - Not a tty, or `TERM=dumb`: print one line and exit 2. `--render-once` is the
   explicit exception: it is a pipe diagnostic and must work without a tty.
@@ -391,7 +391,7 @@ All frames below are 90 columns. The real layout is responsive; see
 The default panel. One verdict, then the evidence.
 
 ```
-┌ aur-prefetch ─────────────────────────────────────────────────────────────────── 14:32 ┐
+┌ aepm ─────────────────────────────────────────────────────────────────── 14:32 ┐
 │ ▸ Dashboard  2 Updates  3 Install  4 Caches  5 Doctor  6 Activity  7 Settings          │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │ SYSTEM                                                   ACTION                        │
@@ -403,7 +403,7 @@ The default panel. One verdict, then the evidence.
 │ ██████████████████░░░░░░░       14.2 GiB free                 4.1 GiB free             │
 │                                 62% used · floor 2 GiB        inodes 98% free          │
 │                                                                                        │
-│ TIMER    aur-prefetch.timer · next Tue 03:00 (in 12h) · last result success            │
+│ TIMER    aepm.timer · next Tue 03:00 (in 12h) · last result success            │
 │ LOCK     none                                                                          │
 │ TRUST    12 maintainers                                                                │
 │ CACHES   18.4 GiB · downloads 12.1 · yay 4.2 · aurto 2.1 · measured 3m ago             │
@@ -428,7 +428,7 @@ times below it. It still shows disk, timer, and trust; "nothing pending" is not
 ### Updates
 
 ```
-┌ aur-prefetch ──────────────────────────────────────────────────── Updates ── 3 pending ┐
+┌ aepm ──────────────────────────────────────────────────── Updates ── 3 pending ┐
 │ filter: all    sort: size ↓    search: —                                               │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │   PACKAGE             REPO    INSTALLED         AVAILABLE         SIZE      CACHED     │
@@ -461,7 +461,7 @@ of faking a percentage. The rows are a nom-style dependency tree, not a flat
 list.
 
 ```
-┌ aur-prefetch ─────────────────────────────── Fetch · 3 packages · live · 00:42 ────────┐
+┌ aepm ─────────────────────────────── Fetch · 3 packages · live · 00:42 ────────┐
 │ GATES   ✓ lock   ✓ space 14.2 GiB free   ✓ lists 3 pending                             │
 ├─ TREE ─────────────────────────────────────────────────────────────────────────────────┤
 │ ▾ 3 packages                                              1 running · 1 planned        │
@@ -599,7 +599,7 @@ edits `/etc` itself.
 ### Caches
 
 ```
-┌ aur-prefetch ─────────────────────────────────────────────────────── Caches ── dry run ┐
+┌ aepm ─────────────────────────────────────────────────────── Caches ── dry run ┐
 │   CACHE               PATH                               SIZE       ACTION             │
 │ ▸ downloads           /var/cache/pacman/pkg              12.1 GiB   keep 1 version     │
 │   yay builds          ~/.cache/yay                       4.2 GiB    2 builds > 30d     │
@@ -622,7 +622,7 @@ edits `/etc` itself.
 - Always a dry run first. The plan is the same list `clean` prints.
 - `enter` opens a confirm modal, then runs `sudo <current_exe> clean --apply`
   attached and re-collects. Resolve the executable absolutely; `sudo` drops
-  `AUR_PREFETCH_*`, so the root run re-collects the plan. Say that before the
+  `AEPM_*`, so the root run re-collects the plan. Say that before the
   confirm: the unprivileged preview can differ. The TUI does not have its own
   delete path.
 - No per-item selection in v1. The CLI applies the whole policy; the TUI shows
@@ -634,9 +634,9 @@ edits `/etc` itself.
 ### Doctor
 
 ```
-┌ aur-prefetch ───────────────────────────────────────────────────────── Doctor ── audit ┐
-│ ✓  timer        aur-prefetch.timer enabled · next in 12h · last success                │
-│ ✓  sudoers      exact rule · /etc/sudoers.d/aur-prefetch                               │
+┌ aepm ───────────────────────────────────────────────────────── Doctor ── audit ┐
+│ ✓  timer        aepm.timer enabled · next in 12h · last success                │
+│ ✓  sudoers      exact rule · /etc/sudoers.d/aepm                               │
 │ ✓  trust        allowlist · 12 maintainers                                             │
 │ ✖  journald     Storage=volatile · logs vanish on reboot                               │
 │ ✓  cache dir    /var/cache/pacman/pkg · writable by alpm                               │
@@ -664,7 +664,7 @@ Each row is one `Check` from the report layer. `Skipped` (`–`) is distinct fro
 An in-memory ring buffer of what ran, 500 events max:
 
 ```
-┌ aur-prefetch ────────────────────────────────────────────────────────── Activity ─ log ┐
+┌ aepm ────────────────────────────────────────────────────────── Activity ─ log ┐
 │ 14:28:03  ok     fetch    pacman -Qui · 3 pending                                      │
 │ 14:28:03  ok     fetch    df · /var/cache/pacman/pkg 14.2 GiB free                     │
 │ 14:28:04  ok     fetch    sudo -n pacman -Syuw --noconfirm · exited 0                  │
@@ -688,7 +688,7 @@ A read-only table of resolved configuration. No inputs, no save button.
 |---|---|
 | setting | `pacman cache dir` |
 | value | `/var/cache/pacman/pkg` |
-| source | `default`, `env AUR_PREFETCH_PACMAN_CACHE_DIR`, `config` |
+| source | `default`, `env AEPM_PACMAN_CACHE_DIR`, `config` |
 
 Footer: `y copy value  o copy env name  ? help`. The panel exists so users can
 answer "which path is it actually using?" without reading `--help` or `env`.
@@ -870,7 +870,7 @@ modals.
 
 Themes: `ansi` (default, 16 colors), `dark`, `light` (truecolor), `mono`
 (no color). `NO_COLOR` forces `mono` without changing glyphs. `--theme` and
-`AUR_PREFETCH_THEME` override the config.
+`AEPM_THEME` override the config.
 
 Rules:
 
@@ -940,7 +940,7 @@ model where it matters:
 - Clean confirm: `Delete 2 old builds and prune the cache to 1 version? This
   cannot be undone.`
 - Error: `pacman -Qu failed (exit 2): database error. Retry, or run
-  aur-prefetch check in a shell.`
+  aepm check in a shell.`
 
 ### Accessibility
 
@@ -1105,7 +1105,7 @@ Danger drives behavior: `ReadOnly` runs immediately; `Mutating` shows a plan;
 
 ### Themes and config
 
-`$XDG_CONFIG_HOME/aur-prefetch/tui.conf`, optional, line-based, hand-parsed
+`$XDG_CONFIG_HOME/aepm/tui.conf`, optional, line-based, hand-parsed
 like the state file. No TOML dependency.
 
 ```ini
@@ -1270,7 +1270,7 @@ dismisses the notice.
 - [x] Attached `yay -Syuu`; the tree is plan and result, never a fake live tree.
 - [x] Post-install receipt.
 - [x] Suspend/restore verified in a pty.
-- [x] No clean action in v1; `aur-prefetch clean` stays CLI.
+- [x] No clean action in v1; `aepm clean` stays CLI.
 
 Done when: sim 31 (pty restore), 32 (the gate opens and cancels unchanged), 34
 (the live fetch) and 36 (the attached install upgrades and restores the
@@ -1384,7 +1384,7 @@ Recommendations are the default. Change them here first, then implement.
    session file for almost no gain.
 4. **Mouse in v1?** Recommended: no. Click-select and wheel only in T4; the
    app is keyboard-first.
-5. **`aur-prefetch` with no subcommand opens the TUI?** Recommended: not in
+5. **`aepm` with no subcommand opens the TUI?** Recommended: not in
    v1. It changes the CLI contract and breaks `--help` expectations.
 
 ---

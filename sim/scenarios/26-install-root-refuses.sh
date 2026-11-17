@@ -11,7 +11,7 @@ log=$(mktemp)
 before_usr=$(usr_state)
 
 # Plain root: real and effective UID are both 0.
-aur-prefetch install --yes >"$log" 2>&1
+aepm install --yes >"$log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "install refused with exit 1"
@@ -25,7 +25,7 @@ assert_eq "$(usr_state)" "$before_usr" "/usr is unchanged"
 # through.
 if setpriv --help 2>&1 | grep -q -- '--euid'; then
     setpriv --ruid "$(id -u installer)" --rgid "$(id -g installer)" --clear-groups \
-        --euid 0 /usr/local/bin/aur-prefetch install --yes >"$log" 2>&1
+        --euid 0 /usr/local/bin/aepm install --yes >"$log" 2>&1
     status=$?
 
     assert_eq "$status" "1" "the sudo shape refused with exit 1"

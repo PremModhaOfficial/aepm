@@ -7,7 +7,7 @@ echo "scenario: a failed fetch freezes the tree and shows the repair card"
 
 cache=/var/cache/pacman/pkg
 package=simapp-2.0.0-1-x86_64.pkg.tar.zst
-state_dir=/home/builder/.local/state/aur-prefetch
+state_dir=/home/builder/.local/state/aepm
 screen=$(mktemp)
 driver=$(mktemp)
 
@@ -27,7 +27,7 @@ rm -rf "$state_dir"
 
 cat >"$driver" <<'EOF'
 #!/bin/bash
-script -qec "stty rows 40 cols 120; aur-prefetch tui" /dev/null
+script -qec "stty rows 40 cols 120; aepm tui" /dev/null
 EOF
 chmod 755 "$driver"
 

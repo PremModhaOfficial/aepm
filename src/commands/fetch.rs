@@ -367,8 +367,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-fetch-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-fetch-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -377,16 +376,13 @@ mod tests {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
             ("HOME", dir.join("home")),
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_LOCK", dir.join("db.lck")),
-            ("AUR_PREFETCH_SNAPPER_CONFIG_DIR", dir.join("snapper")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_LOCK", dir.join("db.lck")),
+            ("AEPM_SNAPPER_CONFIG_DIR", dir.join("snapper")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }
-        map.insert(
-            "AUR_PREFETCH_MIN_FREE_BYTES".to_string(),
-            "1048576".to_string(),
-        );
+        map.insert("AEPM_MIN_FREE_BYTES".to_string(), "1048576".to_string());
 
         Config::from_lookup(move |name| map.get(name).cloned()).expect("config")
     }
@@ -675,7 +671,7 @@ mod tests {
         let mut config = test_config(&dir);
         // /proc/self accepts reads but not file creation, so load sees a
         // missing state and save fails without relying on test permissions.
-        config.state_file = PathBuf::from("/proc/self/aur-prefetch-state.json");
+        config.state_file = PathBuf::from("/proc/self/aepm-state.json");
         let runner = FakeRunner::new();
         runner.push_output(none_running());
         runner.push_output(ok(QUI));
@@ -696,7 +692,7 @@ mod tests {
     fn record_success_names_the_state_path_when_saving_fails() {
         let dir = temp_dir();
         let mut config = test_config(&dir);
-        config.state_file = PathBuf::from("/proc/self/aur-prefetch-state.json");
+        config.state_file = PathBuf::from("/proc/self/aepm-state.json");
         let plan = FetchPlan {
             pending: vec!["a".to_string(), "b".to_string()],
             pending_bytes: 1000,

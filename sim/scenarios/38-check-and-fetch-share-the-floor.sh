@@ -14,14 +14,14 @@ printf '[options]\nCacheDir = /dev/shm/simcache\n' >/tmp/sim-pacman.conf
 
 # The configured floor is 1 MiB; the snapshot floor is 5 GiB; the CacheDir
 # filesystem is 64 MiB. Only the shared rule refuses.
-envs='AUR_PREFETCH_PACMAN_CONF=/tmp/sim-pacman.conf AUR_PREFETCH_MIN_FREE_BYTES=1048576'
+envs='AEPM_PACMAN_CONF=/tmp/sim-pacman.conf AEPM_MIN_FREE_BYTES=1048576'
 
 fetch_log=$(mktemp)
-runuser -l builder -c "$envs aur-prefetch fetch" >"$fetch_log" 2>&1
+runuser -l builder -c "$envs aepm fetch" >"$fetch_log" 2>&1
 fetch_status=$?
 
 check_log=$(mktemp)
-runuser -l builder -c "$envs aur-prefetch check" >"$check_log" 2>&1
+runuser -l builder -c "$envs aepm check" >"$check_log" 2>&1
 check_status=$?
 
 assert_eq "$fetch_status" "1" "fetch refused below the snapshot floor"

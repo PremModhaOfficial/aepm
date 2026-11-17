@@ -37,68 +37,36 @@ impl Config {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let state_file = match non_empty(&lookup, "AUR_PREFETCH_STATE") {
+        let state_file = match non_empty(&lookup, "AEPM_STATE") {
             Some(path) => PathBuf::from(path),
-            None => default_state_dir(&lookup)?
-                .join("aur-prefetch")
-                .join("state.json"),
+            None => default_state_dir(&lookup)?.join("aepm").join("state.json"),
         };
 
-        let min_free_bytes = match non_empty(&lookup, "AUR_PREFETCH_MIN_FREE_BYTES") {
+        let min_free_bytes = match non_empty(&lookup, "AEPM_MIN_FREE_BYTES") {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
-                Error::failed(format!(
-                    "AUR_PREFETCH_MIN_FREE_BYTES is not a byte count: {raw}"
-                ))
+                Error::failed(format!("AEPM_MIN_FREE_BYTES is not a byte count: {raw}"))
             })?,
             None => DEFAULT_MIN_FREE_BYTES,
         };
 
         Ok(Self {
-            pacman: path_or(&lookup, "AUR_PREFETCH_PACMAN", "/usr/bin/pacman"),
-            pacman_conf: path_or(&lookup, "AUR_PREFETCH_PACMAN_CONF", "/etc/pacman.conf"),
-            pacman_cache_dir: path_or(
-                &lookup,
-                "AUR_PREFETCH_PACMAN_CACHE_DIR",
-                "/var/cache/pacman/pkg",
-            ),
-            pacman_lock: path_or(
-                &lookup,
-                "AUR_PREFETCH_PACMAN_LOCK",
-                "/var/lib/pacman/db.lck",
-            ),
-            pacman_log: path_or(&lookup, "AUR_PREFETCH_PACMAN_LOG", "/var/log/pacman.log"),
-            yay_cache_dir: match non_empty(&lookup, "AUR_PREFETCH_YAY_CACHE_DIR") {
+            pacman: path_or(&lookup, "AEPM_PACMAN", "/usr/bin/pacman"),
+            pacman_conf: path_or(&lookup, "AEPM_PACMAN_CONF", "/etc/pacman.conf"),
+            pacman_cache_dir: path_or(&lookup, "AEPM_PACMAN_CACHE_DIR", "/var/cache/pacman/pkg"),
+            pacman_lock: path_or(&lookup, "AEPM_PACMAN_LOCK", "/var/lib/pacman/db.lck"),
+            pacman_log: path_or(&lookup, "AEPM_PACMAN_LOG", "/var/log/pacman.log"),
+            yay_cache_dir: match non_empty(&lookup, "AEPM_YAY_CACHE_DIR") {
                 Some(path) => PathBuf::from(path),
                 None => default_cache_dir(&lookup)?.join("yay"),
             },
-            trusted_users: path_or(
-                &lookup,
-                "AUR_PREFETCH_TRUSTED_USERS",
-                "/etc/aurto/trusted-users",
-            ),
-            sudoers_file: path_or(
-                &lookup,
-                "AUR_PREFETCH_SUDOERS",
-                "/etc/sudoers.d/aur-prefetch",
-            ),
-            journald_conf: path_or(
-                &lookup,
-                "AUR_PREFETCH_JOURNALD_CONF",
-                "/etc/systemd/journald.conf",
-            ),
-            snapper_config_dir: path_or(
-                &lookup,
-                "AUR_PREFETCH_SNAPPER_CONFIG_DIR",
-                "/etc/snapper/configs",
-            ),
-            aurto_repo: path_or(
-                &lookup,
-                "AUR_PREFETCH_AURTO_REPO",
-                "/var/cache/pacman/aurto",
-            ),
-            aurbuild_dir: path_or(&lookup, "AUR_PREFETCH_AURBUILD_DIR", "/var/lib/aurbuild"),
-            archbuild_dir: path_or(&lookup, "AUR_PREFETCH_ARCHBUILD_DIR", "/var/lib/archbuild"),
-            user_unit_dir: non_empty(&lookup, "AUR_PREFETCH_USER_UNIT_DIR")
+            trusted_users: path_or(&lookup, "AEPM_TRUSTED_USERS", "/etc/aurto/trusted-users"),
+            sudoers_file: path_or(&lookup, "AEPM_SUDOERS", "/etc/sudoers.d/aepm"),
+            journald_conf: path_or(&lookup, "AEPM_JOURNALD_CONF", "/etc/systemd/journald.conf"),
+            snapper_config_dir: path_or(&lookup, "AEPM_SNAPPER_CONFIG_DIR", "/etc/snapper/configs"),
+            aurto_repo: path_or(&lookup, "AEPM_AURTO_REPO", "/var/cache/pacman/aurto"),
+            aurbuild_dir: path_or(&lookup, "AEPM_AURBUILD_DIR", "/var/lib/aurbuild"),
+            archbuild_dir: path_or(&lookup, "AEPM_ARCHBUILD_DIR", "/var/lib/archbuild"),
+            user_unit_dir: non_empty(&lookup, "AEPM_USER_UNIT_DIR")
                 .map(PathBuf::from)
                 .or_else(|| {
                     default_config_dir(&lookup)
@@ -202,10 +170,7 @@ mod tests {
             config.trusted_users,
             PathBuf::from("/etc/aurto/trusted-users")
         );
-        assert_eq!(
-            config.sudoers_file,
-            PathBuf::from("/etc/sudoers.d/aur-prefetch")
-        );
+        assert_eq!(config.sudoers_file, PathBuf::from("/etc/sudoers.d/aepm"));
         assert_eq!(
             config.journald_conf,
             PathBuf::from("/etc/systemd/journald.conf")
@@ -223,7 +188,7 @@ mod tests {
         );
         assert_eq!(
             config.state_file,
-            PathBuf::from("/home/user/.local/state/aur-prefetch/state.json")
+            PathBuf::from("/home/user/.local/state/aepm/state.json")
         );
         assert_eq!(config.min_free_bytes, 2 * GIB);
     }
@@ -231,23 +196,23 @@ mod tests {
     #[test]
     fn every_path_has_an_override() {
         let config = Config::from_lookup(lookup(&[
-            ("AUR_PREFETCH_PACMAN", "/tmp/pacman"),
-            ("AUR_PREFETCH_PACMAN_CONF", "/tmp/pacman.conf"),
-            ("AUR_PREFETCH_PACMAN_CACHE_DIR", "/tmp/cache"),
-            ("AUR_PREFETCH_PACMAN_LOCK", "/tmp/db.lck"),
-            ("AUR_PREFETCH_PACMAN_LOG", "/tmp/pacman.log"),
-            ("AUR_PREFETCH_YAY_CACHE_DIR", "/tmp/yay"),
-            ("AUR_PREFETCH_TRUSTED_USERS", "/tmp/trusted-users"),
-            ("AUR_PREFETCH_SUDOERS", "/tmp/sudoers"),
-            ("AUR_PREFETCH_JOURNALD_CONF", "/tmp/journald.conf"),
-            ("AUR_PREFETCH_SNAPPER_CONFIG_DIR", "/tmp/snapper"),
-            ("AUR_PREFETCH_AURTO_REPO", "/tmp/aurto"),
-            ("AUR_PREFETCH_AURBUILD_DIR", "/tmp/aurbuild"),
-            ("AUR_PREFETCH_ARCHBUILD_DIR", "/tmp/archbuild"),
-            ("AUR_PREFETCH_SUDOERS", "/tmp/sudoers"),
-            ("AUR_PREFETCH_USER_UNIT_DIR", "/tmp/user-units"),
-            ("AUR_PREFETCH_STATE", "/tmp/state.json"),
-            ("AUR_PREFETCH_MIN_FREE_BYTES", "1048576"),
+            ("AEPM_PACMAN", "/tmp/pacman"),
+            ("AEPM_PACMAN_CONF", "/tmp/pacman.conf"),
+            ("AEPM_PACMAN_CACHE_DIR", "/tmp/cache"),
+            ("AEPM_PACMAN_LOCK", "/tmp/db.lck"),
+            ("AEPM_PACMAN_LOG", "/tmp/pacman.log"),
+            ("AEPM_YAY_CACHE_DIR", "/tmp/yay"),
+            ("AEPM_TRUSTED_USERS", "/tmp/trusted-users"),
+            ("AEPM_SUDOERS", "/tmp/sudoers"),
+            ("AEPM_JOURNALD_CONF", "/tmp/journald.conf"),
+            ("AEPM_SNAPPER_CONFIG_DIR", "/tmp/snapper"),
+            ("AEPM_AURTO_REPO", "/tmp/aurto"),
+            ("AEPM_AURBUILD_DIR", "/tmp/aurbuild"),
+            ("AEPM_ARCHBUILD_DIR", "/tmp/archbuild"),
+            ("AEPM_SUDOERS", "/tmp/sudoers"),
+            ("AEPM_USER_UNIT_DIR", "/tmp/user-units"),
+            ("AEPM_STATE", "/tmp/state.json"),
+            ("AEPM_MIN_FREE_BYTES", "1048576"),
         ]))
         .expect("config");
 
@@ -279,21 +244,18 @@ mod tests {
 
         assert_eq!(
             config.state_file,
-            PathBuf::from("/var/lib/user-state/aur-prefetch/state.json")
+            PathBuf::from("/var/lib/user-state/aepm/state.json")
         );
     }
 
     #[test]
     fn empty_overrides_fall_back_to_defaults() {
-        let config = Config::from_lookup(lookup(&[
-            ("HOME", "/home/user"),
-            ("AUR_PREFETCH_STATE", ""),
-        ]))
-        .expect("config");
+        let config = Config::from_lookup(lookup(&[("HOME", "/home/user"), ("AEPM_STATE", "")]))
+            .expect("config");
 
         assert_eq!(
             config.state_file,
-            PathBuf::from("/home/user/.local/state/aur-prefetch/state.json")
+            PathBuf::from("/home/user/.local/state/aepm/state.json")
         );
     }
 
@@ -301,7 +263,7 @@ mod tests {
     fn a_non_numeric_floor_is_an_error() {
         let result = Config::from_lookup(lookup(&[
             ("HOME", "/home/user"),
-            ("AUR_PREFETCH_MIN_FREE_BYTES", "2G"),
+            ("AEPM_MIN_FREE_BYTES", "2G"),
         ]));
 
         assert!(result.is_err());

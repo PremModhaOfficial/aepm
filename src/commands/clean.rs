@@ -57,11 +57,11 @@ pub fn run(apply: bool) -> Result<(), Error> {
         let euid = SystemRunner.run("id", &["-u"])?;
         if euid.stdout.trim() != "0" {
             return Err(Error::blocked(
-                "clean --apply needs root for the download cache; run `sudo aur-prefetch clean --apply`",
+                "clean --apply needs root for the download cache; run `sudo aepm clean --apply`",
             ));
         }
     }
-    if std::env::var("AUR_PREFETCH_YAY_CACHE_DIR").map_or(true, |value| value.is_empty()) {
+    if std::env::var("AEPM_YAY_CACHE_DIR").map_or(true, |value| value.is_empty()) {
         if let Some(cache) =
             sudo_user_cache(&SystemRunner, std::env::var("SUDO_USER").ok().as_deref())?
         {
@@ -522,8 +522,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("aur-prefetch-clean-{}-{id}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aepm-clean-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
@@ -531,9 +530,9 @@ mod tests {
     fn test_config(dir: &Path) -> Config {
         let mut map: HashMap<String, String> = HashMap::new();
         for (key, value) in [
-            ("AUR_PREFETCH_STATE", dir.join("state.json")),
-            ("AUR_PREFETCH_PACMAN_CONF", dir.join("pacman.conf")),
-            ("AUR_PREFETCH_YAY_CACHE_DIR", dir.join("yay")),
+            ("AEPM_STATE", dir.join("state.json")),
+            ("AEPM_PACMAN_CONF", dir.join("pacman.conf")),
+            ("AEPM_YAY_CACHE_DIR", dir.join("yay")),
         ] {
             map.insert(key.to_string(), value.to_string_lossy().into_owned());
         }

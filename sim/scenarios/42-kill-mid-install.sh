@@ -42,7 +42,7 @@ before_usr=$(usr_state)
 before_local=$(local_db_state)
 
 log=$(mktemp)
-runuser -l installer -c "ulimit -f $limit; aur-prefetch install --yes" >"$log" 2>&1
+runuser -l installer -c "ulimit -f $limit; aepm install --yes" >"$log" 2>&1
 status=$?
 
 # 1. The failure is loud: an execution error, no success line, and the tool
@@ -107,7 +107,7 @@ assert_eq "$(usr_state)" "$before_usr" "the killed transaction wrote nothing to 
 #    system is the gap this step records.
 rm -f /var/lib/pacman/db.lck
 retry=$(mktemp)
-runuser -l installer -c 'aur-prefetch install --yes' >"$retry" 2>&1
+runuser -l installer -c 'aepm install --yes' >"$retry" 2>&1
 status=$?
 
 assert_eq "$status" "0" "the retried install exits 0"

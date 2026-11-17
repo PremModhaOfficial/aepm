@@ -1,4 +1,4 @@
-aur-prefetch · Progress · 4 pending · 1 prefetched · 0 built
+aepm · Progress · 4 pending · 1 prefetched · 0 built
 Dependency Graph:                   install 4 packages · static prefetch · ghost
 ○ simapp 2.0.0-1                 missing · not in cache                  1.1 MiB
 ┌─ ⏸ yay-bin 12.4.1-1            build-pending · build pending           1.1 MiB

@@ -1,20 +1,20 @@
-# Maintainer: the aur-prefetch maintainers
-# AUR package: https://aur.archlinux.org/packages/aur-prefetch
+# Maintainer: the aepm maintainers
+# AUR package: https://aur.archlinux.org/packages/aepm
 #
 # This PKGBUILD ships the same binary `cargo install` builds and the same two
-# user units `aur-prefetch init` writes, system-wide under
-# /usr/lib/systemd/user so a fresh account gets `aur-prefetch.timer`
+# user units `aepm init` writes, system-wide under
+# /usr/lib/systemd/user so a fresh account gets `aepm.timer`
 # without running init first. Enabling the timer is still a user decision:
-#   systemctl --user daemon-reload && systemctl --user enable --now aur-prefetch.timer
-# `aur-prefetch init --apply` remains the path that also installs the sudoers
+#   systemctl --user daemon-reload && systemctl --user enable --now aepm.timer
+# `aepm init --apply` remains the path that also installs the sudoers
 # rule and points the unit at a $HOME binary instead.
 
-pkgname=aur-prefetch
+pkgname=aepm
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='Split Arch updates: download in the background, install in the foreground'
 arch=('x86_64' 'aarch64')
-url='https://github.com/PremModhaOfficial/aur-prefetch'
+url='https://github.com/PremModhaOfficial/aepm'
 license=('MIT' 'Apache-2.0')
 depends=('pacman' 'glibc' 'gcc-libs')
 makedepends=('cargo' 'git')
@@ -37,11 +37,11 @@ build() {
 
 package() {
   cd "$pkgname"
-  install -Dm755 target/release/aur-prefetch "$pkgdir/usr/bin/aur-prefetch"
-  install -Dm644 packaging/aur-prefetch.service \
-    "$pkgdir/usr/lib/systemd/user/aur-prefetch.service"
-  install -Dm644 packaging/aur-prefetch.timer \
-    "$pkgdir/usr/lib/systemd/user/aur-prefetch.timer"
+  install -Dm755 target/release/aepm "$pkgdir/usr/bin/aepm"
+  install -Dm644 packaging/aepm.service \
+    "$pkgdir/usr/lib/systemd/user/aepm.service"
+  install -Dm644 packaging/aepm.timer \
+    "$pkgdir/usr/lib/systemd/user/aepm.timer"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
   install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }

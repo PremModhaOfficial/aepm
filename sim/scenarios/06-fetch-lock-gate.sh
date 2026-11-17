@@ -16,7 +16,7 @@ cp /bin/sleep /tmp/pacman
 holder=$!
 sleep 0.2
 
-runuser -l builder -c 'aur-prefetch fetch' >"$lock_log" 2>&1
+runuser -l builder -c 'aepm fetch' >"$lock_log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "fetch refused while the lock was held"
@@ -29,7 +29,7 @@ wait "$holder" 2>/dev/null || true
 
 # The same file with no live pacman is stale. pacman would refuse anyway, so
 # the gate must block with exit 1 and must not remove the file.
-runuser -l builder -c 'aur-prefetch fetch' >"$stale_log" 2>&1
+runuser -l builder -c 'aepm fetch' >"$stale_log" 2>&1
 status=$?
 
 assert_eq "$status" "1" "a stale lock blocked with exit 1"

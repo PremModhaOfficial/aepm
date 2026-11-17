@@ -6,7 +6,7 @@ covers where things stand and the first move. Do not re-plan.
 
 ## Where things stand
 
-- Repo: `PremModhaOfficial/aur-prefetch`, branch `main`.
+- Repo: `PremModhaOfficial/aepm`, branch `main`.
 - All six subcommands (`init`, `check`, `fetch`, `install`, `clean`, `doctor`)
   are implemented and have sim scenarios.
 - Phase 1-3 in `NEXT.md` are ticked. Phase 4 (chaos), Phase 5 (VM) and Phase 6
@@ -14,7 +14,7 @@ covers where things stand and the first move. Do not re-plan.
 - Phase 7 T0 (the shared report layer) is landed: `src/report.rs`, collect and
   render splits for `check`/`fetch`/`clean`, the system cache paths in
   `Config`, and frozen `check` text. The full CI and all 31 sim scenarios pass.
-- Phase 7 T1's shell is landed: `aur-prefetch tui`, `--render-once`, `--ascii`,
+- Phase 7 T1's shell is landed: `aepm tui`, `--render-once`, `--ascii`,
   `NO_COLOR`, the Drop guard, the panic hook, the static tree frame, the
   sanitizer, and sim `31-tui-readonly.sh`. The pty checks prove a normal quit,
   Ctrl-C exit 130, a forced-panic restore, and Ctrl-Z re-entry/clear with raw
@@ -110,8 +110,8 @@ covers where things stand and the first move. Do not re-plan.
   frontier is not wired yet.
 - The nom capture study is landed: [`docs/NOM.md`](docs/NOM.md) measures the
   2026-11-09 `nh home switch` run and orders the remaining T2 work. The
-  playable comparison is [`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/nom-study.html);
-  the still is [`prototype/shots/nom-study.png`](https://github.com/PremModhaOfficial/aur-prefetch/blob/archive/prototype-studies/prototype/shots/nom-study.png).
+  playable comparison is [`prototype/nom-study.html`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/nom-study.html);
+  the still is [`prototype/shots/nom-study.png`](https://github.com/PremModhaOfficial/aepm/blob/archive/prototype-studies/prototype/shots/nom-study.png).
   No TUI code changed in that pass.
 - The T1 shell is implemented. The prefetch view is the T2a bottom-up
   dependency tree; the T2b live grammar and palette read the pure frontier, and

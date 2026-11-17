@@ -1,6 +1,6 @@
-# aur-prefetch TUI, playable in a browser
+# aepm TUI, playable in a browser
 
-`aur-prefetch.html` is a self-contained demo of the landed TUI: no build step
+`aepm.html` is a self-contained demo of the landed TUI: no build step
 needed to open it, no server, no network.
 
 Its screens are the app's own captures. `tests/golden/*.txt` is the fixture set
@@ -11,7 +11,7 @@ the Rust binary printed, not a redrawing of it. `showcase` is the one exception:
 ## Run it
 
 ```sh
-xdg-open prototype/web/aur-prefetch.html
+xdg-open prototype/web/aepm.html
 ```
 
 App keys, per `src/tui/mod.rs`: `F` fetch (PRE-FLIGHT → streaming → progress),
@@ -44,7 +44,7 @@ captured screen.
 ## Regenerate and check
 
 ```sh
-node prototype/web/build.mjs     # tests/golden + app.js -> aur-prefetch.html
+node prototype/web/build.mjs     # tests/golden + app.js -> aepm.html
 node prototype/web/verify.mjs    # headless chromium: 76 assertions
 ```
 

@@ -141,7 +141,7 @@ mod tests {
             timer: Section::ready(
                 TimerState {
                     available: true,
-                    next: Some("Tue 2026-11-11 00:00:00 UTC aur-prefetch.timer".to_string()),
+                    next: Some("Tue 2026-11-11 00:00:00 UTC aepm.timer".to_string()),
                     last_result: Some("success".to_string()),
                     actionable: false,
                 },

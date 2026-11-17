@@ -31,7 +31,7 @@ before_pkgs=$(pkg_state | sha256sum)
 before_local=$(local_db_state | sha256sum)
 
 log=$(mktemp)
-runuser -l builder -c 'aur-prefetch fetch' >"$log" 2>&1
+runuser -l builder -c 'aepm fetch' >"$log" 2>&1
 status=$?
 
 # 1. The kill is an execution error, and the tool names the command that died.
@@ -74,14 +74,14 @@ assert_eq "$(local_db_state | sha256sum)" "$before_local" "the local package DB 
 #    the tool never removes the lock itself. After the user's own removal the
 #    same cache completes, and the `.part` is replaced rather than appended to.
 stale=$(mktemp)
-runuser -l builder -c 'aur-prefetch fetch' >"$stale" 2>&1
+runuser -l builder -c 'aepm fetch' >"$stale" 2>&1
 assert_eq "$?" "1" "the retry refuses while the dead pacman's lock is there"
 assert_contains "$(cat "$stale")" "stale lock" "the refusal names the stale lock"
 assert_true "the tool never removed the lock itself" test -f /var/lib/pacman/db.lck
 
 rm -f /var/lib/pacman/db.lck
 retry=$(mktemp)
-runuser -l builder -c 'aur-prefetch fetch' >"$retry" 2>&1
+runuser -l builder -c 'aepm fetch' >"$retry" 2>&1
 status=$?
 
 assert_eq "$status" "0" "the retry on the same cache succeeds"
