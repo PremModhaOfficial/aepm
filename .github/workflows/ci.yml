@@ -124,3 +124,40 @@ jobs:
           cargo clippy --all-targets --all-features --locked -- -D warnings
           cargo fmt --all --check
           cargo test --all-targets --all-features --locked
+
+  # The HTML demo embeds `tests/golden/*.txt` verbatim, and no workflow built
+  # it, so the committed page could go stale against the fixtures in silence —
+  # it had, for `live-window` and `showcase`. `verify.mjs` rebuilds the page
+  # before it asserts, so it cannot catch that by itself: this job compares the
+  # rebuild with the committed bytes first, then drives the demo in a browser.
+  # Offline after checkout: the page is one local file with every asset inlined.
+  prototype:
+    name: Prototype (web demo matches the goldens)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # ubuntu-latest ships Google Chrome and Chromium; a runner without either
+      # fails here instead of skipping the check.
+      - name: Find a browser
+        run: |
+          for binary in google-chrome chromium chromium-browser; do
+            if command -v "$binary" >/dev/null 2>&1; then
+              echo "CHROMIUM=$binary" >> "$GITHUB_ENV"
+              echo "using $binary"
+              exit 0
+            fi
+          done
+          echo "::error::no chrome or chromium on this runner — refusing to skip the demo check"
+          exit 1
+      - name: Rebuild the demo and compare the committed HTML
+        run: |
+          node prototype/web/build.mjs
+          if ! git diff --quiet -- prototype/web/aepm.html; then
+            echo "::error::prototype/web/aepm.html does not match a rebuild from tests/golden; run node prototype/web/build.mjs and commit the result"
+            exit 1
+          fi
+      - name: Verify the demo in a browser
+        run: node prototype/web/verify.mjs
