@@ -20,7 +20,9 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: review-gate-${{ github.event.workflow_run.head_branch || github.event.pull_request.number }}
+  # Keyed on the head commit: two `/review` runs for different PRs both report
+  # the base branch as their `head_branch`, and would cancel each other.
+  group: review-gate-${{ github.event.workflow_run.head_sha || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -38,26 +40,26 @@ jobs:
     timeout-minutes: 5
     steps:
       # Resolve which PR to gate. A review run started by `/review` has no
-      # `pull_requests` entry, so fall back to the run's branch.
+      # `pull_requests` entry and reports the base branch as its `head_branch`,
+      # so the commit is the only reliable key.
       - name: Resolve the PR and the base ref
         id: target
         env:
+          # This runs before checkout, so there is no git remote for gh to infer
+          # the repository from.
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           pr="${PR:-}"
-          if [[ -z "$pr" && -n "${BRANCH:-}" ]]; then
-            pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ -z "$pr" && -n "${SHA:-}" ]]; then
+            pr="$(gh api "repos/$GH_REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // empty')"
           fi
-          [[ -n "$pr" ]] || { echo "::error::no open PR for this run; the gate cannot evaluate"; exit 1; }
-          base="${BASE_SHA:-}"
-          if [[ -z "$base" ]]; then
-            base="$(gh pr view "$pr" --json baseRefName --jq .baseRefName)"
-          fi
+          [[ -n "$pr" ]] || { echo "::error::no open PR contains this commit; the gate cannot evaluate"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "base=$(gh pr view "$pr" --json baseRefName --jq .baseRefName)" >> "$GITHUB_OUTPUT"
       # The gate runs the script from the base branch, not the PR head: a PR
       # must not be able to loosen the check it is judged by.
       - name: Check out the trusted base
