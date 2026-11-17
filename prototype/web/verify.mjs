@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Turing check for prototype/web/aur-prefetch.html.
-// 1. Every captured screen renders in headless chromium with the DOM text of
-//    #screen equal, byte for byte, to the golden fixture it came from.
-// 2. Key sequences reach the screen the landed TUI reaches (F, l, g, i, esc).
-// Fails loudly: missing chromium, crashed page, or one differing byte is a fail.
+//  1. Every capture renders with DOM text byte-equal to its golden fixture.
+//  2. Key paths follow src/tui/mod.rs, including modal screens and refusals.
+//  3. Colour classes follow the palette constants in src/tui/render.rs.
+//  4. sub-second paths: the install gate never auto-advances; a failing fetch
+//     reaches the repair card; ctrl-v self-check can fail; sizing is declared.
+// Fails loudly: a missing chromium, a crashed page, or one differing byte.
 import { readdirSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,17 +30,16 @@ function parseName(file) {
   return { scene, size: `${m[2]}x${m[3]}`, ascii };
 }
 
-function dom(query) {
+function dom(query, { window = '1400,1200', budget = 800 } = {}) {
   return execFileSync(chrome, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-    '--virtual-time-budget=800', `--user-data-dir=${profile}`,
-    '--window-size=1400,1200', '--dump-dom', `file://${page}?${query}`
+    `--virtual-time-budget=${budget}`, `--user-data-dir=${profile}`,
+    `--window-size=${window}`, '--dump-dom', `file://${page}?${query}`
   ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
 }
 
-const decode = (s) => s
-  .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+const decode = (s) => s.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENTITIES[e]);
 
 function rowsOf(html) {
   const pre = /<pre id="screen">([\s\S]*?)<\/pre>/.exec(html);
@@ -47,63 +48,102 @@ function rowsOf(html) {
     .replace(/\n$/, '').split('\n');
 }
 
+function noteOf(html) {
+  const m = /<span id="note"[^>]*>([\s\S]*?)<\/span>/.exec(html);
+  return m ? decode(m[1].replace(/<[^>]+>/g, '')) : '';
+}
+
 const failures = [];
 let pass = 0;
+const fail = (msg) => failures.push(msg);
 
-function check(label, query, wantFile) {
+function guarded(label, fn) {
+  try { fn(); } catch (e) { fail(`${label}: ${String(e.message).split('\n')[0]}`); }
+}
+
+// Text for one screen, compared with the fixture it claims to be.
+function check(label, query, wantFile, opts) {
   const want = readFileSync(join(golden, wantFile), 'utf8').replace(/\n$/, '').split('\n');
-  let got, html;
-  try {
-    html = dom(query);
-    if (html.includes('class="null"')) failures.push(`${label}: tokenizer emitted class="null"`);
-    got = rowsOf(html);
-  } catch (e) {
-    failures.push(`${label}: ${e.message.split('\n')[0]}`);
-    return;
-  }
-  if (got.length !== want.length) {
-    failures.push(`${label}: ${got.length} rows rendered, expected ${want.length}`);
-    return;
-  }
-  const bad = want.findIndex((line, i) => got[i] !== line);
-  if (bad === -1) { pass++; return; }
-  failures.push(`${label}: row ${bad + 1}\n  want ${JSON.stringify(want[bad])}\n  got  ${JSON.stringify(got[bad])}`);
+  guarded(label, () => {
+    const html = dom(query, opts);
+    if (html.includes('class="null"')) fail(`${label}: tokenizer emitted class="null"`);
+    const got = rowsOf(html);
+    if (got.length !== want.length) {
+      return fail(`${label}: ${got.length} rows rendered, expected ${want.length}`);
+    }
+    const bad = want.findIndex((line, i) => got[i] !== line);
+    if (bad === -1) return void pass++;
+    fail(`${label}: row ${bad + 1}\n  want ${JSON.stringify(want[bad])}\n  got  ${JSON.stringify(got[bad])}`);
+  });
 }
 
-function checkDom(label, query, pred) {
-  let html;
-  try { html = dom(query); } catch (e) {
-    failures.push(`${label}: ${e.message.split('\n')[0]}`);
-    return;
-  }
-  if (pred(html)) { pass++; return; }
-  failures.push(`${label}: DOM assertion failed`);
+function checkDom(label, query, pred, opts) {
+  guarded(label, () => {
+    if (pred(dom(query, opts))) return void pass++;
+    fail(`${label}: DOM assertion failed`);
+  });
 }
 
-// 1. Every fixture, at its own size, in colour and in ascii where captured.
+// 1. Every fixture, at its own size, colour and ascii tier.
 for (const file of readdirSync(golden).sort()) {
   if (!file.endsWith('.txt')) continue;
   const { scene, size, ascii } = parseName(file);
   check(file, `scene=${scene}&size=${size}${ascii ? '&ascii=1' : ''}`, file);
 }
 
-// 2. The landed TUI's key paths.
-const INTERACTION = [
+// 2. Key paths, per mod.rs: modal screens first, and refusals that keep the frame.
+const KEYS = [
   ['F opens PRE-FLIGHT', 'keys=F', 'tui-gates-120x40.txt'],
   ['l opens the captured log', 'keys=F,l', 'tui-log-120x40.txt'],
-  ['esc closes the log first, back to the frame underneath', 'keys=F,l,escape', 'tui-gates-120x40.txt'],
-  ['g opens the ledger', 'keys=g', 'tui-ledger-120x40.txt'],
-  ['i opens the install gate', 'keys=i', 'tui-install-gate-120x40.txt'],
-  ['space attests, enter lands the receipt', 'keys=i,space,enter', 'tui-post-install-120x40.txt'],
+  ['l again closes the log', 'keys=F,l,l', 'tui-gates-120x40.txt'],
+  ['esc closes the log before anything else', 'keys=F,l,escape', 'tui-gates-120x40.txt'],
+  ['g toggles the ledger on', 'keys=g', 'tui-ledger-120x40.txt'],
+  ['g toggles the ledger off', 'keys=g,g', 'tui-prefetch-120x40.txt'],
+  ['i opens the modal gate', 'keys=i', 'tui-install-gate-120x40.txt'],
   ['enter is refused until space attests', 'keys=i,enter', 'tui-install-gate-120x40.txt'],
-  ['an unhandled key changes nothing', 'keys=x&size=80x24', 'tui-prefetch-80x24.txt'],
-  ['esc detaches a running fetch and keeps the frame', 'keys=F,escape&size=80x24', 'tui-gates-80x24.txt'],
-  ['esc from a top-level screen returns to the tree', 'keys=escape&size=80x24', 'tui-prefetch-80x24.txt'],
+  ['space attests, enter lands the receipt', 'keys=i,space,enter', 'tui-post-install-120x40.txt'],
+  ['the gate ignores l, g, F', 'keys=i,l,g,F', 'tui-install-gate-120x40.txt'],
+  ['the receipt ignores l, g, F', 'keys=i,space,enter,l,g,F', 'tui-post-install-120x40.txt'],
+  ['i is refused while a fetch runs', 'keys=F,i', 'tui-gates-120x40.txt'],
+  ['a second F is refused while a fetch runs', 'keys=F,F', 'tui-gates-120x40.txt'],
+  ['l before any fetch does nothing', 'keys=l', 'tui-prefetch-120x40.txt'],
+  ['the ledger ignores esc, as mod.rs does', 'scene=ledger&keys=escape', 'tui-ledger-120x40.txt'],
+  ['the failing fetch ends on the repair card', 'keys=x&norum=0', 'tui-repair-120x40.txt', { budget: 4000 }],
+  ['the install gate never auto-advances', 'keys=i&norum=0', 'tui-install-gate-120x40.txt', { budget: 3000 }],
+  ['a narrow window selects the 80x24 capture', '', 'tui-prefetch-80x24.txt', { window: '900,700' }],
+  ['a wide window selects the 120x40 capture', '', 'tui-prefetch-120x40.txt'],
 ];
-for (const [label, query, wantFile] of INTERACTION) check(label, `${query}&norum=1`, wantFile);
+for (const [label, query, wantFile, opts] of KEYS) {
+  const q = query.includes('norum=') ? query : `${query}${query ? '&' : ''}norum=1`;
+  check(label, q, wantFile, opts);
+}
 
-// 3. q ends the session instead of leaving a stale screen on display.
-checkDom('q ends the session', 'keys=q&size=80x24&norum=1',
+// 3. Palette constants from render.rs, per span class.
+checkDom('planned markers are blue', 'scene=ledger&norum=1',
+  (h) => /class="planned">\[ \]<\/span>/.test(h));
+checkDom('done markers are green', 'scene=ledger&norum=1',
+  (h) => /class="done">\[√\]<\/span>/.test(h));
+checkDom('a failed row is red', 'scene=repair&norum=1',
+  (h) => /class="failed">\[×\]<\/span>/.test(h));
+checkDom('bars are yellow, empty cells dim', 'scene=showcase&norum=1',
+  (h) => /class="active">[■█◧◨]{2,}/.test(h) && /class="dim">[□░]{2,}/.test(h));
+checkDom('no legacy class names survive', 'scene=gates&norum=1',
+  (h) => !/class="(ok|err|block|run|muted|accent)"/.test(h));
+checkDom('ascii tier is monochrome, as use_color() is', 'scene=showcase&ascii=1&norum=1',
+  (h) => !/class="(planned|active|done|failed|dim|cursor|warn|bold)"/.test(h));
+
+// 4. Declared substitutions and the two controls that are demo-only.
+checkDom('the news key says it cannot open a browser', 'scene=install-gate&keys=n&norum=1',
+  (h) => /news page/.test(noteOf(h)));
+checkDom('a missing ascii capture is declared', 'scene=gates&ascii=1&norum=1',
+  (h) => /no ascii capture/.test(noteOf(h)));
+checkDom('ctrl-v self-check reads the DOM and passes', 'scene=prefetch&keys=ctrl-v&norum=1',
+  (h) => /self-check: DOM matches prefetch/.test(noteOf(h)));
+checkDom('ctrl-v self-check can fail', 'scene=prefetch&tamper=1&keys=ctrl-v&norum=1',
+  (h) => /self-check: MISMATCH/.test(noteOf(h)));
+checkDom('esc ends the session while a fetch runs', 'keys=F,escape&norum=1',
+  (h) => /id="exit" style="display: block/.test(h));
+checkDom('q ends the session', 'keys=q&norum=1',
   (h) => /id="exit" style="display: block/.test(h) && /id="crt" style="display: none/.test(h));
 
 rmSync(profile, { recursive: true, force: true });
@@ -113,4 +153,4 @@ if (failures.length) {
   for (const f of failures) console.error(' - ' + f);
   process.exit(1);
 }
-console.log(`PASS ${pass}/${total}: every captured frame and key path matches the app`);
+console.log(`PASS ${pass}/${total}: every captured frame, key path and palette rule matches`);
