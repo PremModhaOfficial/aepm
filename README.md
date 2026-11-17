@@ -68,14 +68,45 @@ its side effects. Each command's acceptance criteria are in `NEXT.md`.
 - `aepm install [--yes] [--force]` — news gate, lock check, then `yay -Syuu`. A non-TTY needs `--yes`; an empty trust file needs `--force`. Blocks if the AUR update list cannot be read. Refuses to run as root, because yay and PKGBUILDs must never run as root
 - `aepm clean [--apply]` — dry run by default: prints sizes and the exact commands. `--apply` needs root (sudo) for `paccache` and removes only yay builds older than 30 days whose package is installed. A build is identified by the names in its `.SRCINFO`, or by the package names in its built `*.pkg.tar.*` files when `.SRCINFO` is gone; the directory name is only the pkgbase, which is not an installed name for a split package. A build that names nothing (no `.SRCINFO`, no built package) is kept and printed as `keep (cannot tell what it installs: ...)` rather than guessed
 - `aepm doctor [--json]` — verify timers, limits, repo, journald, the pacman lock
-- `aepm tui [--render-once] [--ascii] [--no-motion]` — dependency tree. Starting it and quitting is read-only; `F` runs the same `fetch` command and draws its real `.part` bytes. `--render-once` prints one frame and works in a pipe. Interactive use needs a terminal.
+- `aepm tui [--render-once] [--ascii] [--no-motion]` — dependency tree. Starting it and quitting is read-only; `F` runs the same `fetch` command and draws its real `.part` bytes. `--render-once` prints one frame and works in a pipe. Interactive use needs a terminal. Details in [TUI](#tui).
 
-### `tui`
+### `check`
+
+`check` is read-only: it writes neither state nor any cache it inspects. It
+reports pending official and AUR updates, free space and inodes on the download
+cache and `/`, the pacman lock, cache sizes, timer state, and the last
+fetch/install times. System-owned caches (`/var/cache/pacman/aurto`, aurutils
+chroots) that the invoking user cannot read are reported as unreadable but do
+not fail a healthy system; unreadable user caches do.
+
+It also reports a **partial upgrade**: an install or upgrade after the last
+download-only fetch while updates are still pending, read from `pacman.log`. It
+prints the evidence it read. When the log cannot be read it says the answer is
+unknown rather than guessing, and it still exits `1` for the pending updates.
+
+Exit codes: `0` when clean, `1` when one or more checks need attention, `2`
+when a check could not run (for example `pacman -Qu` failed).
+
+### `--json`
+
+`check --json` and `doctor --json` print one JSON object instead of the text
+report, for a script or a dashboard. Field names are the report field names, so
+the text output and the JSON cannot disagree: a section is
+`{"state":"ready","data":…,"at":<unix seconds>}`, `{"state":"failed","error":…}`,
+or `{"state":"not_collected"}`, and a section a command did not collect says so
+instead of guessing. `verdict` is `clean`/`ok`, `action_needed`, or `error` when
+collection stopped; `check` also carries `actionable`, `doctor` carries
+`problems`. `check`'s `fatal` and `doctor`'s `error` are `null` on a normal run.
+The exit code is the same as the text form, and there is no colour or glyph in
+the JSON.
+
+## TUI
 
 The tree is a renderer over the same snapshot as `check`, plus a read-only
 download-cache scan. It labels each pending package cached, stale, partial,
 missing, build-pending, built or unknown, and prints the counts, mirror host and
-`Σ` line. Starting it and quitting writes no state or cache. `--render-once`
+`Σ` line. Read-only until `F`: starting it and quitting writes no state or
+cache. `--render-once`
 prints one frame to stdout so a script or a pipe can read it; the exit code is
 `1` when the snapshot is actionable and `2` when collection failed. Without a
 terminal, the interactive form exits `2` and points at `--render-once`.
@@ -127,35 +158,12 @@ re-collected, and a read-only post-install receipt shows the exit, kernel,
 file after a successful exit. `?` opens the help overlay, `r` re-collects the
 snapshot (refused while the fetch runs), and `j`/`k` move the selection.
 
-### `check`
+Keys at a glance, from the one table in `src/keymap.rs`:
 
-`check` is read-only: it writes neither state nor any cache it inspects. It
-reports pending official and AUR updates, free space and inodes on the download
-cache and `/`, the pacman lock, cache sizes, timer state, and the last
-fetch/install times. System-owned caches (`/var/cache/pacman/aurto`, aurutils
-chroots) that the invoking user cannot read are reported as unreadable but do
-not fail a healthy system; unreadable user caches do.
-
-It also reports a **partial upgrade**: an install or upgrade after the last
-download-only fetch while updates are still pending, read from `pacman.log`. It
-prints the evidence it read. When the log cannot be read it says the answer is
-unknown rather than guessing, and it still exits `1` for the pending updates.
-
-Exit codes: `0` when clean, `1` when one or more checks need attention, `2`
-when a check could not run (for example `pacman -Qu` failed).
-
-### `--json`
-
-`check --json` and `doctor --json` print one JSON object instead of the text
-report, for a script or a dashboard. Field names are the report field names, so
-the text output and the JSON cannot disagree: a section is
-`{"state":"ready","data":…,"at":<unix seconds>}`, `{"state":"failed","error":…}`,
-or `{"state":"not_collected"}`, and a section a command did not collect says so
-instead of guessing. `verdict` is `clean`/`ok`, `action_needed`, or `error` when
-collection stopped; `check` also carries `actionable`, `doctor` carries
-`problems`. `check`'s `fatal` and `doctor`'s `error` are `null` on a normal run.
-The exit code is the same as the text form, and there is no colour or glyph in
-the JSON.
+- `q` quit, `ctrl-c` interrupt, `ctrl-z` suspend
+- `?` help, `esc` back, `r` re-collect (refused while a fetch runs)
+- `j` / `k` move the selection, `enter` confirm
+- `F` fetch, `i` install gate, `l` log, `g` ledger, `space` attest
 
 ## Environment overrides
 
