@@ -22,15 +22,50 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The scenario detector diffs the branch against its base commit.
+          fetch-depth: 0
       - name: Check scenario numbering
         # Two scenario files with the same number make a log line and a README
         # row ambiguous. Fails before the image build spends a minute.
         run: ./sim/check-scenario-numbers.sh
+      # A pull request runs exactly the scenarios its changed src/ paths map to
+      # in sim/scenario-map.tsv, plus every scenario it edits, so a branch that
+      # changes a scenario always runs it. A changed path under src/ with no row
+      # fails here rather than merging with nothing exercised. main and
+      # workflow_dispatch keep the full suite.
+      - name: Select scenarios
+        id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" != pull_request ]]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          scripts/gate-scenarios.sh --check-map
+          list=$(mktemp)
+          scripts/gate-scenarios.sh --list "$BASE" > "$list"
+          echo "mode=changed" >> "$GITHUB_OUTPUT"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "$(wc -l < "$list") scenario(s) selected by scripts/gate-scenarios.sh"
+          sed 's/^/  /' "$list"
       - name: Build sim image and run scenarios
         env:
           # Flat directory so the artifact path is stable; run.sh prints it.
           SIM_LOG_DIR: sim-logs
-        run: ./sim/run.sh
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.select.outputs.mode }}" != changed ]]; then
+            ./sim/run.sh
+            exit 0
+          fi
+          mapfile -t scenarios < "${{ steps.select.outputs.list }}"
+          if ((${#scenarios[@]} == 0)); then
+            echo "no src/ or sim/ change in this pull request; nothing to run"
+            exit 0
+          fi
+          ./sim/run.sh "${scenarios[@]}"
       - name: Upload scenario logs
         # Always: a failed or timed-out run is the one whose log is needed.
         if: always()

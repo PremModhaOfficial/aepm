@@ -160,6 +160,26 @@ on the stale aurto repo.
 01 and 02 are a pair. Passing 01 alone would prove nothing if the harness could
 not detect a real install at all.
 
+## Which scenarios a change must run
+
+`sim/scenario-map.tsv` names, for every path under `src/` and for the harness
+itself, the scenarios that exercise it. A pull request runs exactly that set,
+plus every scenario it edits:
+
+```bash
+./sim/run.sh $(scripts/gate-scenarios.sh --list origin/main)
+```
+
+`scripts/gate-scenarios.sh --check-map` walks `git ls-files src` and fails on a
+path with no row, on a row naming a scenario that does not exist, and on a row
+for a file that is gone. `ci.sh` runs it, so a new `src/` file that nothing
+exercises is a red build instead of a quiet merge. `main` and
+`workflow_dispatch` still run the whole suite.
+
+The map is a claim about the harness, not a wish: every listed scenario runs
+that code path. If a scenario stops touching a file, the change that removes
+the last use edits the row.
+
 ## Adding a scenario
 
 ```bash

@@ -1,0 +1,60 @@
+# src path -> the sim scenarios that exercise it.
+#
+# `scripts/gate-scenarios.sh` reads this file: a path under src/ with no row
+# here fails CI, and a changed row selects exactly the scenarios in its third
+# column. Longest prefix wins, so a file row beats a directory row.
+#
+# Columns, tab separated:
+#   path       a file or a directory prefix under src/, or `sim/` for the
+#              harness itself (the image, the stubs, the shared assertions).
+#   scenarios  scenario numbers from sim/scenarios/, comma separated, `all`
+#              for the whole suite, or `none` for a path no scenario runs
+#              (module notes and this file itself).
+#   why        the evidence for the row. Keep it to one line.
+#
+# A row is a claim about the harness, not a wish: every listed scenario runs
+# the binary path through that file. If a scenario stops touching a file, the
+# row is wrong and the change that removes the last use edits it.
+
+# --- every scenario goes through these -------------------------------------
+src/main.rs	all	argv parsing and the exit-code mapping for every command
+src/lib.rs	all	module wiring; every module below is reachable from here
+src/runner.rs	all	every external command is spawned through this trait
+src/error.rs	all	the exit code every failure maps to
+src/config.rs	all	the paths every command reads
+src/util.rs	all	shared size, path and CacheDir helpers
+src/commands/mod.rs	all	command dispatch
+sim/	all	the image, stubs, fixtures and assertions every scenario runs in
+sim/README.md	none	this table; documentation only
+sim/scenario-map.tsv	none	the map itself; nothing runs it
+src/pipeline.md	none	module notes beside the code; no scenario reads a .md file
+src/commands/pipeline.md	none	module notes beside the code
+src/tui/pipeline.md	none	module notes beside the code
+
+# --- commands --------------------------------------------------------------
+src/commands/fetch.rs	03,05,06,07,34,35,37,38,39,41,43,44,46,48	fetch's gates, argv, exit codes and cache writes
+src/commands/check.rs	03,09,10,25,37,38,43,44	check's read-only report and verdict
+src/commands/doctor.rs	03,11,12,21,22,23,24,27,28,30,43,48	doctor's setup audit
+src/commands/clean.rs	13,68	clean's dry run and --apply
+src/commands/install.rs	14,15,17,18,26,42,45,47	install's gates, attached yay and root refusal
+src/commands/init.rs	16,20	init's rendered artifacts and --apply escalation
+
+# --- shared internals ------------------------------------------------------
+src/lock.rs	06,37,43,46	the lock gate and the live-process list
+src/state.rs	05,34,36,39,44	the state file fetch and install write
+src/report.rs	09,10,11,12,21,22,23,24,25,27,28,30,43,44	the snapshot the text and JSON reports render
+src/gate.rs	07,15,26,32,34,35,36	the gate vocabulary the preflight lists carry
+src/json.rs	09,12	`check --json` and `doctor --json`
+src/progress.rs	33,34,35	the cache scan behind the prefetch badges
+src/fetch_source.rs	34,35	real `.part` observation during a streamed fetch
+src/frontier.rs	31,33,34,35,36	the readiness reducer behind the tree
+src/post_install.rs	36	the read-only post-install receipt
+
+# --- TUI -------------------------------------------------------------------
+src/tui/mod.rs	31,32,33,34,35,36,47,49	the shell, keys and terminal guard entry
+src/tui/guard.rs	31,36	raw mode on enter and off on exit, panic, signal
+src/tui/live.rs	33,34,35	the live view over the forest and the frontier
+src/tui/render.rs	31,32,33,34,35,36,47,49	the frames, glyphs, palette and goldens
+src/tui/tree.rs	31,33,34,35	the bottom-up forest model
+src/tui/sanitize.rs	31,32,34,35	child output into a cell
+src/tui/fetch_session.rs	32,34,35,36,47,49	the streamed fetch and the attached install

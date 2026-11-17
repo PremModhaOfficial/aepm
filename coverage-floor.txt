@@ -1,0 +1,16 @@
+# Line-coverage floor. Measured, not chosen.
+#
+#   scripts/gate-coverage.sh                       # enforce this file
+#   COVERAGE_FLOOR=<n> scripts/gate-coverage.sh    # prove the gate fires
+#
+# Measured with:
+#   cargo llvm-cov --locked --all-targets --all-features \
+#       --lcov --output-path target/lcov.info
+#
+# Measured on 70a0a17 + this gate commit, before the floor existed:
+#   16127 / 18373 lines = 87.7767%, reported as 87.78%.
+# Log: /tmp/aepm-coverage-measure-main.log
+#
+# Raise it when coverage rises. The gate fails the moment it falls below, so a
+# change that deletes a test is a red build, not a quiet slide.
+floor=87.78
