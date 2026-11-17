@@ -600,6 +600,25 @@ reaches, and a flag carrying two meanings.
       the five uncollected fields and the types only they used are gone, and a
       JSON test pins the key set to the list of real sections.
 
+### T7. State machines
+
+The screens, the gates and the flags were implicit machines: states nobody
+could name, so no transition could be reviewed or tested. `docs/STATE-MACHINES.md`
+names them; `scripts/gate-state-machines.sh` keeps the tables true.
+
+- [x] #45 TUI screens: body precedence (session, then notice, then the static
+      tree), the overlay stack (receipt, gate, log, body), the `Esc` ladder, and
+      the `session.is_some() or not log_open` invariant with the `assert!` that
+      holds it. The orphaned `log_open` was closed in #57.
+- [x] #47 the remaining machines in one table each: gates and their two orders,
+      the fetch phase, the lock gate and its report state, the artifact states
+      with the two dead ones named, the clean build lifecycle, `frozen` versus
+      `is_complete`, and the exit-code mapping.
+- [x] The gate: a dropped variant or a moved cited line fails `./ci.sh`, and
+      `--self-test` proves the checker can fail.
+- [ ] #41 partial upgrade: the declared states and the transitions are still
+      undescribed; the table links to the issue rather than guessing.
+
 ---
 
 ## Phase 8: TUI v2 shell
