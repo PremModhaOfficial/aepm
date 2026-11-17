@@ -167,6 +167,7 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `TUI.md` | Terminal UI spec: screens, keys, action safety |
 | `GLOSSARY.md` | The words this project uses. Test names and commits use these, not synonyms |
 | `docs/ANIMATION.md` | DAG execution frontier: readiness, parallel fronts, replay |
+| `docs/STATE-MACHINES.md` | Every implicit machine named: states, transitions, who owns precedence |
 | `NEXT.md` | Working plan: decisions, phases, acceptance criteria |
 | `context.md` | Implementation notes and edge cases |
 | `src/main.rs` | CLI surface (subcommands) |

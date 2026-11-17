@@ -1,8 +1,11 @@
 //! Full-screen TUI entry point.
 //!
 //! The static tree is read-only. `F` runs the existing `fetch` command through
-//! [`fetch_session`] and draws the real cache until it exits. The install gate
-//! and the repair card are later phases.
+//! [`fetch_session`] and draws the real cache until it exits; a nonzero exit
+//! freezes the run and shows the repair card. `i` opens the install gate, the
+//! one screen that hands the terminal to `yay`. The screens, the precedence
+//! between them and the log's owner are tabulated in
+//! `docs/STATE-MACHINES.md` (M1), not inferred from this file.
 
 pub mod fetch_session;
 pub mod guard;

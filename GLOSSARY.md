@@ -72,8 +72,30 @@ Test names, commit messages and issues use these words, not synonyms.
 | **state file** | The only file this tool writes about itself. A failed write is a warning, never a failed download. |
 | **invariant** | A rule proven by a test and a sim scenario, not by inspection. |
 
+## State machines
+
+Tabulated, with its transitions and its owner, in
+[`docs/STATE-MACHINES.md`](../docs/STATE-MACHINES.md). Use these words for these
+things and no synonyms.
+
+| Word | Means |
+|---|---|
+| **machine** | A set of states one owner moves between. Named in the table, never re-derived from a `match`. |
+| **owner** | The one function whose control flow decides the next state. A second place deciding it is the bug. |
+| **precedence** | The one order that resolves what is drawn and which key runs. Modal first, then body. |
+| **body** | What fills the frame: the static tree, a live session, or a notice. One of the three, by precedence. |
+| **overlay** | A layer over the body: the log, the install gate, the receipt. Stacked in that order. |
+| **modal** | An overlay that takes every key. The gate and the receipt are modal; help and the log are not. |
+| **log open** | The `l` flag. It belongs to a session and cannot be true without one. |
+| **attestation** | The `space` in the install gate, meaning "I read the news". In the TUI process only, never on disk. |
+| **phase** | Where a fetch is: running, finished, failed. A gate refusal never reaches a phase. |
+| **lock state** | `None`, `HeldBy` or `Stale`: what the probe found. Reported, never decisive; the **lock gate** refuses. |
+| **dead state** | A variant nothing produces. Documented as dead, never branched on. |
+| **anchor** | A `path:line` claim in the docs that a gate re-reads before CI can pass. |
+
 ## Where these live
 
 `spec.md` for the plain-language flow, `PROGRESS.md` for the tree states,
-`TUI.md` for the screens, `docs/ANIMATION.md` for the execution model,
-`NEXT.md` for the order of work.
+`TUI.md` for the screens, `docs/STATE-MACHINES.md` for the states and who owns
+precedence between them, `docs/ANIMATION.md` for the execution model, `NEXT.md`
+for the order of work.

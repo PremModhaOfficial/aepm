@@ -15,6 +15,14 @@ echo "=== sim scenario map (every src path names its scenarios) ==="
 # .github/workflows/sim.yml runs exactly the mapped set for a pull request.
 bash scripts/gate-scenarios.sh --check-map
 
+echo "=== state machines (docs match code) ==="
+# An implicit machine drifts in silence: a variant is added, a precedence branch
+# moves, and the table keeps describing the tree it was written against. F11 —
+# docs/STATE-MACHINES.md is checked against the variants it names and the lines
+# it cites, and the checker proves it can fail.
+bash scripts/gate-state-machines.sh --self-test
+bash scripts/gate-state-machines.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

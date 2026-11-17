@@ -103,6 +103,11 @@ pub enum Repo {
     Other(String),
 }
 
+/// Whether a package file was in the cache when the scan ran.
+///
+/// `Yes` and `No` are declared and never produced: every writer writes
+/// `Unknown` (`docs/STATE-MACHINES.md` M5, issue 66). Do not branch on them as
+/// if they were live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cached {

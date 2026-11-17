@@ -777,6 +777,10 @@ only.
   name.
 - Modals are the only place focus can be trapped. `Esc` always leaves, and
   leaving never performs the action.
+- The precedence this section states as intent is tabulated as fact in
+  [`docs/STATE-MACHINES.md`](docs/STATE-MACHINES.md) (M1): which screen wins,
+  which key survives it, and what each transition does. Where the two disagree,
+  the table is what the code does and this section is the thing to fix.
 - A running task shows a progress strip in the footer plus elapsed time. The
   rest of the UI stays navigable (read-only panes can still be inspected).
 
