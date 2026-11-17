@@ -1124,9 +1124,10 @@ refresh = r
 ```
 
 Precedence: flags > environment > file > defaults. Only `[keys]` is read in
-v1; a line outside it, an unknown action name, or a key that cannot be parsed
-is an error at load, and the TUI does not start with a keymap it cannot apply.
-A missing file is normal, and the TUI never writes this one.
+v1; a line outside it, an unknown action name, a key that cannot be parsed, or a
+key another action already uses is an error at load, and the TUI does not start
+with a keymap it cannot apply. A missing file is normal, and the TUI never
+writes this one.
 
 ### Not extensible
 
