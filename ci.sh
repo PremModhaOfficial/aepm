@@ -9,6 +9,11 @@ echo "=== sim scenario numbers (unique) ==="
 bash scripts/check-sim-numbers.sh --self-test
 bash scripts/check-sim-numbers.sh
 
+echo "=== pkgbuild version (Cargo.toml is the one typed version) ==="
+# An AUR checkout has no Cargo.toml at parse time, so PKGBUILD's pkgver and
+# _tag stay literal; this gate keeps them equal to the crate version.
+bash scripts/gate-pkgbuild-version.sh
+
 echo "=== sim scenario map (every src path names its scenarios) ==="
 # F19 — A src file no scenario exercises used to merge green. The map in
 # sim/scenario-map.tsv names the scenarios for every path under src/, and

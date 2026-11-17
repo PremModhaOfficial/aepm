@@ -94,6 +94,12 @@ fresh image.
   of any size into the sim repo, for the chaos scenarios that need a payload
   worth interrupting
 - `/usr/local/bin/aepm`, built inside the image so the glibc matches
+- `rust`, `git`, the builder stage's crate registry, the source tree at
+  `/usr/local/lib/sim/pkg-src`, and an AUR-style checkout at
+  `/usr/local/lib/sim/pkg-repo` (PKGBUILD and its `.install`, no `Cargo.toml`).
+  Scenario 53 runs the real `makepkg` offline: pkg-src becomes a local git
+  repo, and the PKGBUILD's github URL is rewritten to it. The build recompiles
+  the crate with `--locked` against the cached registry
 
 The sim binary is built with the `sim-hooks` feature. It adds one env-gated
 forced panic after the terminal guard is active, used to prove the panic hook
@@ -157,12 +163,14 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `50-mirror-500.sh` | the `http500` fault makes the package transfer fail the way a broken mirror does: `fetch` exits 2, quotes the 500, never claims success, keeps the lists it already received, leaves nothing in the cache and no lock, writes nothing to `/usr` or the local DB, `check` and `doctor` stay read-only, and the retry after the mirror recovers fetches the real artifact |
 | `51-corrupt-download.sh` | the `corrupt` fault flips one byte in the transfer, so pacman's own checksum check rejects the artifact: `fetch` exits 2 and quotes the rejection, keeps neither a final nor a partial artifact, still delivered the lists, leaves no lock, writes nothing to `/usr` or the local DB, and the retry fetches bytes that match the repo |
 | `52-corrupt-cached-artifact.sh` | a prefetched artifact is corrupted in place before the install: `check` and `doctor` stay read-only, `install --yes` discards the invalid cache file, transfers the real bytes and upgrades, pacman's log records the discarded copy, and the corrupt cache never turns into an AUR rebuild or an unverified install |
+| `53-package-install.sh` | a real `makepkg` builds the AUR package offline in an AUR-style directory (PKGBUILD and `.install`, no `Cargo.toml`), with its literal `pkgver` and source tag matching the crate version; `pacman -U` installs `/usr/bin/aepm` and both units in `/usr/lib/systemd/user`, with nothing under `/etc/systemd`, and the `.install` scriptlet prints how to enable the timer instead of enabling it |
 
 41-46 are the Phase 4 chaos level from `NEXT.md`; they need the fault
 injection below. 43, 44 and 45 each drive a real fault and assert the detection
 it needs: `doctor` on the deleted lock, `check` on the hand install, `install`
 on the stale aurto repo. 50-52 are the same level for a mirror that answers 500
-and for bytes that are wrong, on the wire and already in the cache.
+and for bytes that are wrong, on the wire and already in the cache. 53 is the
+packaging level: a real `makepkg` and `pacman -U` against the checkout.
 
 01 and 02 are a pair. Passing 01 alone would prove nothing if the harness could
 not detect a real install at all.
@@ -265,7 +273,6 @@ kills pacman mid-extraction (scenario 42).
 This is a real pacman with a synthetic repo. It does not simulate:
 
 - systemd timers, journald, or linger
-- the AUR build path or `makepkg`
 - aurto's own repository and build chroots
 - btrfs/snapper behaviour (a container has no snapshots)
 
