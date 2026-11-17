@@ -53,4 +53,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
-        run: scripts/review-state.sh "$PR" --gate
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Bootstrap: on the PR that introduces `--gate`, the base branch still
+          # has the old script, which exits 2 on the unknown flag and would make
+          # this check red before merge. A base without `--gate` means there is
+          # no gate to loosen yet, so running the head copy once is safe. After
+          # the merge the base copy always exists and always wins.
+          if scripts/review-state.sh --help | grep -q -- '--gate'; then
+            exec scripts/review-state.sh "$PR" --gate
+          fi
+          echo "::warning::base branch has no --gate yet: bootstrap, running the head copy"
+          [[ -n "$HEAD_SHA" ]] || { echo "::error::bootstrap needs a head sha"; exit 1; }
+          git fetch --depth=1 origin "$HEAD_SHA"
+          git show "$HEAD_SHA:scripts/review-state.sh" > "$RUNNER_TEMP/gate.sh"
+          exec bash "$RUNNER_TEMP/gate.sh" "$PR" --gate

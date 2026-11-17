@@ -3,7 +3,7 @@
 # schema, pre-computed aggregates, definitive empty state, structured errors.
 set -uo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 case "$BIN" in "$HOME"/*) BIN="~${BIN#"$HOME"}" ;; esac
@@ -24,6 +24,11 @@ flags:
   --gate      exit 1 when the review is missing or older than the PR head
   --help      this reference
   --version   print the version only
+
+env:
+  REVIEW_BOT_LOGIN  comma-separated logins whose comments count as the review
+                    (default: github-actions[bot],github-actions, because
+                    `gh pr view` drops the [bot] suffix the API keeps)
 
 examples:
   scripts/review-state.sh
@@ -111,8 +116,17 @@ failed="$(jq '[.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .sta
 pending="$(jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING" or .state == "REQUESTED" or .state == "EXPECTED")] | length' <<<"$checks")"
 skipped="$(jq '[.[] | select(.state == "SKIPPED" or .state == "NEUTRAL")] | length' <<<"$checks")"
 
+# The marker text is forgeable: any commenter can paste a typed block carrying
+# the current head SHA, and `last` would then pick the forgery over the bot's
+# review. Author first, marker second.
+REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
+[[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
+  || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
 if ! review="$(gh pr view "$pr" --json comments \
-  --jq '[.comments[] | select(.body | test("pr-agent-review-state|Risk level|Merge recommendation|PR Reviewer Guide"))] | last // {}' \
+  --jq "[.comments[]
+    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
+    | select(.body | test(\"pr-agent-review-state|Risk level|Merge recommendation|PR Reviewer Guide\"))]
+    | last // {}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
@@ -163,7 +177,7 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 
 if [[ "$gate" -eq 1 ]]; then
   if [[ "$present" != "true" ]]; then
-    printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
     exit 1
   fi
   if [[ "$stale" != "false" ]]; then

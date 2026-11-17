@@ -152,7 +152,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `--findings` lists `path:line`, `--full` includes the comment.
 - **Gate:** the `Review Gate` check fails when the review comment is missing or
   older than the PR head. It makes no model call, so it spends no credits, and
-  it runs the script from the base branch. Findings stay advisory.
+  it runs the script from the base branch. Only a comment authored by the bot
+  counts (`REVIEW_BOT_LOGIN`): the marker text alone is forgeable. Findings stay
+  advisory.
 - **Authority:** the bot advises. `CI` and `Sim` are the behaviour gates;
   `Review Gate` is the coverage gate. A merge verdict is input to a human
   decision, not permission to merge.

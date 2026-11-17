@@ -281,7 +281,9 @@ head.
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
 - The `Review Gate` check fails when the review is missing or older than the
   PR head. It makes no model call, so it is free; make it a required check so a
-  force push cannot merge ahead of the review. Findings stay advisory.
+  force push cannot merge ahead of the review. Only the bot's own comment
+  counts, so pasting the marker by hand does not pass it. Findings stay
+  advisory.
 - A review that cannot run fails the check. It never reports green.
 - Fork PRs are skipped because GitHub does not expose secrets to them.
 
