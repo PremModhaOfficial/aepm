@@ -89,8 +89,15 @@ run stale 1 'gate: fail'
 export FAKE_COMMENTS='[]'
 run missing 1 'from the bot'
 
-export FAKE_COMMENTS="[$(comment '## PR Reviewer Guide\n\nRisk level: Medium')]"
+# A typed block that records no head commit reports that, not staleness.
+nohead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true}}\n-->\n')"
+export FAKE_COMMENTS="[$(comment "$nohead")]"
 run untracked 1 'does not record a head'
+
+# A timed-out or truncated run can still print a clean recommendation.
+incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$incomplete")]"
+run incomplete 1 'did not complete'
 
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD" 'Changes required')")]"
 run changes-required 1 'did not clear the merge'
@@ -123,8 +130,17 @@ run no-checks-api 0 'gate: pass'
 unset FAKE_CHECKS_FAIL
 
 # A later bot comment from another command must not shadow the review: only
-# the typed block identifies one.
-export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment '## PR Description\n\nRisk level: Low\nMerge recommendation: Approved')]"
+# the typed block identifies one, and `/describe` also prints the guide header,
+# `Risk level` and `Merge recommendation`.
+describe_body='## PR Reviewer Guide 🔍
+
+<table><tr><td>⚠️ <strong>Risk level</strong>: Low</td></tr>
+<tr><td>✅ <strong>Merge recommendation</strong>: No concerns found</td></tr></table>'
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$describe_body")]"
 run describe-newer 1 'older than the PR head'
 
-printf 'review gate: 12/12\n'
+# The reverse: a describe behind a current review does not break the pass.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$describe_body")]"
+run describe-after-review 0 'gate: pass'
+
+printf 'review gate: 14/14\n'

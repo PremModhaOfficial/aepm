@@ -126,17 +126,16 @@ fi
 
 # The marker text is forgeable: any commenter can paste a typed block carrying
 # the current head SHA, and `last` would then pick the forgery over the bot's
-# review. Author first, marker second. The marker is the typed block, or the
-# guide header on a review too old to carry one: the looser `Risk level` /
-# `Merge recommendation` alternation also matched other bot commands, and the
-# newest of those shadowed the review.
+# review. Author first, marker second. The marker is the typed block alone:
+# `Risk level`, `Merge recommendation` and the guide header are all emitted by
+# other bot commands too, and the newest of those shadowed the review.
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
 if ! review="$(gh pr view "$pr" --json comments \
   --jq "[.comments[]
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
-    | select(.body | test(\"pr-agent-review-state:v1|PR Reviewer Guide\"))]
+    | select(.body | contains(\"pr-agent-review-state:v1\"))]
     | last // {}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
@@ -161,6 +160,7 @@ if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   fi
 else
   state_json=""
+  complete="false"
   findings_total="0"
   findings_active="0"
   review_head=""
@@ -197,6 +197,12 @@ if [[ "$gate" -eq 1 ]]; then
     else
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
+    exit 1
+  fi
+  # A truncated or timed-out run can still print a clean recommendation, so a
+  # partial review never counts.
+  if [[ "$complete" != "true" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
   # The verdict is the merge decision, not a footnote. A review that says

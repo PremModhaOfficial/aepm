@@ -279,14 +279,17 @@ head.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
-- The `Review Gate` check re-runs after every review run and fails when the
-  review is missing, older than the PR head, or its verdict is anything but
-  `No concerns found`. It reads the review only: CI and `Sim` stay the
-  behaviour gates. It makes no model call, so it is free; make it a required
-  check so neither a force push nor an open finding merges. Only the bot's own comment counts, so pasting the
-  marker by hand does not pass it. A `/review` refresh does not move the check
-  until the next push: GitHub anchors it to the commit the review run checked
-  out, which for a `/review` run is the default branch.
+- The `Review Gate` check is evaluated after every review run, the only
+  trigger that cannot be forged, and fails when the review is missing, older
+  than the PR head, incomplete, or its verdict is anything but
+  `No concerns found`. It reads the review only: CI and `Sim` stay the behaviour
+  gates. It makes no model call, so it is free; make it a required check so
+  neither a force push nor an open finding merges — a push starts no review, so
+  the new head simply has no check, and a required check that never runs blocks
+  the button. Only the bot's own comment counts, and only its typed block
+  identifies one, so pasting a marker by hand does not pass it. A `/review`
+  refresh does not move the check onto the PR: GitHub anchors it to the commit
+  the review run checked out, which for a `/review` run is the default branch.
 - Each review carries a run-details section: model, tokens in/out, duration, and
   AI calls. That is the only usage record; the job log prints prompt tokens
   only.

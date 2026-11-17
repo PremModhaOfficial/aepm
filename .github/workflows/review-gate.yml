@@ -58,6 +58,7 @@ jobs:
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           pr="${RUN_PR:-}"
@@ -71,7 +72,14 @@ jobs:
           fi
           [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          gh pr view "$pr" --json headRefOid --jq '"head=" + .headRefOid' >> "$GITHUB_OUTPUT"
+          head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
+          # A run that named its own PR must agree with it: a green check may
+          # never describe a different commit than the run that asked for it.
+          if [[ "$RUN_EVENT" != "issue_comment" && -n "${RUN_SHA:-}" && "$head" != "$RUN_SHA" ]]; then
+            echo "::error::PR $pr head $head is not this run's head $RUN_SHA"
+            exit 1
+          fi
+          echo "head=$head" >> "$GITHUB_OUTPUT"
       # The script comes from the default branch, never from the PR head and
       # never from the PR's base ref: a PR aimed at another branch would
       # otherwise choose the script that judges it.
