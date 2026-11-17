@@ -158,8 +158,11 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   Only a comment authored by the bot counts (`REVIEW_BOT_LOGIN`): the marker
   text alone is forgeable.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict. A red verdict blocks the merge, so the bot is no longer advisory.
-  A human override is an admin merge, and it is a decision, not a formality.
+  the verdict. A red `Review Gate` blocks a merge only once it is a required
+  status check in the `main` ruleset, which is a one-time repository setting and
+  not something this repo can assert (`PR-AGENT.md` N5). Until that setting
+  exists the gate reports and the verdict stays advisory. A human override is an
+  admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
