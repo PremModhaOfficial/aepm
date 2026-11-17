@@ -19,6 +19,15 @@ assert_eq "$status" "2" "an unknown action name exits 2"
 assert_contains "$out" 'unknown action `quits`' "the error names the unknown action"
 assert_contains "$out" "tui.conf" "the error names the file"
 
+# 1b. A key another action already uses is the same kind of load error, so one
+#     key cannot quietly mean two things.
+printf '[keys]\nquit = j\n' >"$conf"
+chown builder:builder "$conf"
+out=$(runuser -l builder -c 'aepm tui --render-once' 2>&1)
+status=$?
+assert_eq "$status" "2" "a duplicate key exits 2"
+assert_contains "$out" 'already bound to `down`' "the error names the action holding the key"
+
 # 2. `quit = x` moves the action: the old key stops working and the new one
 #    works. Only the rebinding is written, so the rest is still the default.
 printf '[keys]\nquit = x\n' >"$conf"
