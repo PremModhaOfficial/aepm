@@ -126,14 +126,17 @@ fi
 
 # The marker text is forgeable: any commenter can paste a typed block carrying
 # the current head SHA, and `last` would then pick the forgery over the bot's
-# review. Author first, marker second.
+# review. Author first, marker second. The marker is the typed block, or the
+# guide header on a review too old to carry one: the looser `Risk level` /
+# `Merge recommendation` alternation also matched other bot commands, and the
+# newest of those shadowed the review.
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
 if ! review="$(gh pr view "$pr" --json comments \
   --jq "[.comments[]
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
-    | select(.body | test(\"pr-agent-review-state|Risk level|Merge recommendation|PR Reviewer Guide\"))]
+    | select(.body | test(\"pr-agent-review-state:v1|PR Reviewer Guide\"))]
     | last // {}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"

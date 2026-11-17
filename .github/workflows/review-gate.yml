@@ -33,9 +33,14 @@ jobs:
     # Fork PRs are skipped by the review bot because `pull_request` does not
     # expose secrets to them, so the gate would fail forever with no way to
     # produce a review. This matches the bot's fork policy.
+    # A skipped `/review` run changed nothing (the comment was not authorized),
+    # and its gate run would land on the default branch, so this stays skipped.
+    # A skipped review run on a push is a draft PR; that one is still evaluated,
+    # because a skipped check counts as a pass.
     if: >-
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.conclusion != 'skipped'
+      !(github.event.workflow_run.event == 'issue_comment' &&
+        github.event.workflow_run.conclusion == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

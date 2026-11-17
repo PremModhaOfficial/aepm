@@ -89,7 +89,7 @@ run stale 1 'gate: fail'
 export FAKE_COMMENTS='[]'
 run missing 1 'from the bot'
 
-export FAKE_COMMENTS="[$(comment 'Risk level: Medium')]"
+export FAKE_COMMENTS="[$(comment '## PR Reviewer Guide\n\nRisk level: Medium')]"
 run untracked 1 'does not record a head'
 
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD" 'Changes required')")]"
@@ -122,4 +122,9 @@ export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
 run no-checks-api 0 'gate: pass'
 unset FAKE_CHECKS_FAIL
 
-printf 'review gate: 11/11\n'
+# A later bot comment from another command must not shadow the review: only
+# the typed block identifies one.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment '## PR Description\n\nRisk level: Low\nMerge recommendation: Approved')]"
+run describe-newer 1 'older than the PR head'
+
+printf 'review gate: 12/12\n'
