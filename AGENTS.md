@@ -170,6 +170,7 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `docs/ANIMATION.md` | DAG execution frontier: readiness, parallel fronts, replay |
 | `docs/STATE-MACHINES.md` | Every implicit machine named: states, transitions, who owns precedence |
 | `NEXT.md` | Working plan: decisions, phases, acceptance criteria |
+| `PENDING.md` | What the release does not ship or prove, each row with the command that shows it |
 | `context.md` | Implementation notes and edge cases |
 | `src/main.rs` | CLI surface (subcommands) |
 | `src/tui/` | Terminal UI (`src/tui/pipeline.md` is the module map): `mod.rs` shell (keys in `src/keymap.rs`), `tree.rs` forest, `live.rs` pure view rows, `fetch_session.rs` live fetch, `render.rs` frames, `guard.rs` terminal restore, `sanitize.rs` untrusted text |
