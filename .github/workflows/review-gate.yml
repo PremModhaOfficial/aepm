@@ -44,10 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Resolve which PR to gate, and take its head and base from the PR rather
-      # than from the event: on a `/review` run both event fields describe the
-      # default branch.
-      - name: Resolve the PR, its head, and the base ref
+      # Resolve which PR to gate, and take its head from the PR rather than from
+      # the event: on a `/review` run both event fields describe the default
+      # branch.
+      - name: Resolve the PR and its head
         id: target
         env:
           # This runs before checkout, so there is no git remote for gh to infer
@@ -71,27 +71,26 @@ jobs:
           fi
           [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          gh pr view "$pr" --json headRefOid,baseRefName \
-            --jq '"head=" + .headRefOid, "base=" + .baseRefName' >> "$GITHUB_OUTPUT"
-      # The gate runs the script from the base branch, not the PR head: a PR
-      # must not be able to loosen the check it is judged by.
-      - name: Check out the trusted base
+          gh pr view "$pr" --json headRefOid --jq '"head=" + .headRefOid' >> "$GITHUB_OUTPUT"
+      # The script comes from the default branch, never from the PR head and
+      # never from the PR's base ref: a PR aimed at another branch would
+      # otherwise choose the script that judges it.
+      - name: Check out the default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.target.outputs.base }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Review must exist for this head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.target.outputs.pr }}
-          BASE: ${{ steps.target.outputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           if ! scripts/review-state.sh --help | grep -q -- '--gate'; then
-            # Reachable only if the gate script is missing from a merged base:
-            # before this workflow exists on the default branch it cannot run at
-            # all, and it never runs a PR's copy. A neutral result would be
-            # counted as a pass, so this fails.
-            echo "::error::$BASE has no review-state.sh --gate; refusing to report a pass"
+            # Before the gate exists on the default branch this workflow cannot
+            # run at all, so this means the default branch lost `--gate`. A
+            # neutral result would be counted as a pass, so this fails.
+            echo "::error::$DEFAULT_BRANCH has no review-state.sh --gate; refusing to report a pass"
             exit 1
           fi
           exec scripts/review-state.sh "$PR" --gate
