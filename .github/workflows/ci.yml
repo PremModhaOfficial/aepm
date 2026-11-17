@@ -58,8 +58,20 @@ jobs:
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Every job keeps its log: a red run must be inspectable after the job is
+      # gone, and `pipefail` keeps the failure visible through `tee`.
       - name: Build + test on MSRV
-        run: cargo test --all-targets --all-features --locked
+        run: |
+          set -o pipefail
+          cargo test --all-targets --all-features --locked 2>&1 | tee "$RUNNER_TEMP/ci.log"
+      - name: Upload the gate log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-log-msrv
+          path: ${{ runner.temp }}/ci.log
+          if-no-files-found: warn
+          retention-days: 14
 
   ci:
     name: CI (Linux)
@@ -90,7 +102,17 @@ jobs:
         with:
           tool: cargo-deny@0.20.2
       - name: Run CI script
-        run: bash ci.sh
+        run: |
+          set -o pipefail
+          bash ci.sh 2>&1 | tee "$RUNNER_TEMP/ci.log"
+      - name: Upload the ci.sh log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-log-ci
+          path: ${{ runner.temp }}/ci.log
+          if-no-files-found: warn
+          retention-days: 14
       # Phase 6 — a release must be packageable. This builds the exact .crate
       # tarball (files listed by `cargo package --list`) and verifies it
       # compiles, then stops before upload. It uses NO registry token and
@@ -121,9 +143,62 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Clippy + fmt + test on stable
         run: |
-          cargo clippy --all-targets --all-features --locked -- -D warnings
-          cargo fmt --all --check
-          cargo test --all-targets --all-features --locked
+          set -o pipefail
+          {
+            cargo clippy --all-targets --all-features --locked -- -D warnings
+            cargo fmt --all --check
+            cargo test --all-targets --all-features --locked
+          } 2>&1 | tee "$RUNNER_TEMP/ci.log"
+      - name: Upload the gate log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-log-stable
+          path: ${{ runner.temp }}/ci.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # A coverage number nobody enforces is decoration. This job measures line
+  # coverage, fails under the floor in coverage-floor.txt, and always keeps the
+  # lcov file so a drop can be read after the run instead of guessed at.
+  coverage:
+    name: Coverage (floor enforced)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.85"
+          # cargo-llvm-cov reads the profile through llvm-tools.
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-llvm-cov
+      - name: Measure and enforce the line-coverage floor
+        run: |
+          set -o pipefail
+          bash scripts/gate-coverage.sh 2>&1 | tee "$RUNNER_TEMP/coverage.log"
+      - name: Upload lcov
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: target/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload the coverage log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-log-coverage
+          path: ${{ runner.temp }}/coverage.log
+          if-no-files-found: warn
+          retention-days: 14
 
   # The HTML demo embeds `tests/golden/*.txt` verbatim, and no workflow built
   # it, so the committed page could go stale against the fixtures in silence —
