@@ -1,25 +1,26 @@
 name: Review Gate
 
-# Model-free coverage gate. The review bot deliberately does not run on push;
-# this check fails when a push made the existing review stale, or when no
-# review exists for the head. It never calls a model and never spends credits.
+# Model-free coverage gate. The review bot deliberately does not run on push,
+# so this check re-evaluates after every push and after every review run, and
+# fails when the review is missing, stale, or did not clear the merge. It never
+# calls a model and never spends credits.
 #
-# Findings stay advisory: this gate checks coverage, not the verdict. CI and
-# Sim remain the merge gates for behaviour.
+# The review run is the trigger, not the review comment: the bot posts with
+# `GITHUB_TOKEN`, and GitHub does not start workflows for events that token
+# creates, so an `issue_comment` trigger would never fire for it.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  issue_comment:
-    types: [created, edited]
+  workflow_run:
+    workflows: ["PR Agent"]
+    types: [completed]
 
 permissions:
   contents: read
   pull-requests: read
-  checks: read
-  issues: read
 
 concurrency:
-  group: review-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: review-gate-${{ github.event.workflow_run.head_branch || github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -28,40 +29,62 @@ jobs:
     # Fork PRs are skipped by the review bot because `pull_request` does not
     # expose secrets to them, so the gate would fail forever with no way to
     # produce a review. This matches the bot's fork policy.
-    #
-    # On issue_comment, only the bot's persistent review comment carries the
-    # typed marker; `/review` commands and human comments do not trigger a
-    # redundant check. The comment is edited in place on re-review, hence the
-    # `edited` event.
     if: >-
       (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request != null &&
-        contains(github.event.comment.body, 'pr-agent-review-state'))
+      (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Resolve which PR to gate. A review run started by `/review` has no
+      # `pull_requests` entry, so fall back to the run's branch.
+      - name: Resolve the PR and the base ref
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          pr="${PR:-}"
+          if [[ -z "$pr" && -n "${BRANCH:-}" ]]; then
+            pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          fi
+          [[ -n "$pr" ]] || { echo "::error::no open PR for this run; the gate cannot evaluate"; exit 1; }
+          base="${BASE_SHA:-}"
+          if [[ -z "$base" ]]; then
+            base="$(gh pr view "$pr" --json baseRefName --jq .baseRefName)"
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
       # The gate runs the script from the base branch, not the PR head: a PR
       # must not be able to loosen the check it is judged by.
       - name: Check out the trusted base
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          ref: ${{ steps.target.outputs.base }}
           persist-credentials: false
       - name: Review must exist for this head
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ steps.target.outputs.pr }}
+          BASE: ${{ steps.target.outputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
         run: |
+          if scripts/review-state.sh --help | grep -q -- '--gate'; then
+            exec scripts/review-state.sh "$PR" --gate
+          fi
           # Bootstrap: on the PR that introduces `--gate`, the base branch still
           # has the old script, which exits 2 on the unknown flag and would make
           # this check red before merge. A base without `--gate` means there is
-          # no gate to loosen yet, so running the head copy once is safe. After
-          # the merge the base copy always exists and always wins.
-          if scripts/review-state.sh --help | grep -q -- '--gate'; then
-            exec scripts/review-state.sh "$PR" --gate
+          # no gate to loosen yet, so running the head copy once is safe. Only
+          # the default branch may bootstrap: pointing a PR at some other branch
+          # must not hand the head copy the trust the base copy would have had.
+          if [[ "$BASE" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::base $BASE has no --gate and is not the default branch; refusing to run the PR copy"
+            exit 1
           fi
           echo "::warning::base branch has no --gate yet: bootstrap, running the head copy"
           [[ -n "$HEAD_SHA" ]] || { echo "::error::bootstrap needs a head sha"; exit 1; }

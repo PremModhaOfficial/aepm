@@ -150,8 +150,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment.
-- **Gate:** the `Review Gate` check fails when the review comment is missing,
-  older than the PR head, or did not clear the merge (verdict other than
+- **Gate:** the `Review Gate` check re-runs when a review run finishes and
+  fails when the review comment is missing, older than the PR head, or did not
+  clear the merge (verdict other than
   `No concerns found`, override with `REVIEW_GATE_VERDICT`). It makes no model
   call, so it spends no credits, and it runs the script from the base branch.
   Only a comment authored by the bot counts (`REVIEW_BOT_LOGIN`): the marker

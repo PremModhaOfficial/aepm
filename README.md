@@ -279,8 +279,9 @@ head.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
-- The `Review Gate` check fails when the review is missing, older than the PR
-  head, or did not clear the merge (anything but `No concerns found`). It makes
+- The `Review Gate` check re-runs after every review run and fails when the
+  review is missing, older than the PR head, or did not clear the merge
+  (anything but `No concerns found`). It makes
   no model call, so it is free; make it a required check so neither a force push
   nor an open finding merges. Only the bot's own comment counts, so pasting the
   marker by hand does not pass it.
