@@ -19,6 +19,16 @@ const page = join(here, 'aur-prefetch.html');
 const chrome = process.env.CHROMIUM || 'chromium';
 const profile = mkdtempSync(join(tmpdir(), 'aur-prefetch-verify-'));
 
+// A stale generated file must not pass: rebuild from app.js and tests/golden
+// first, then prove the build consumed every fixture.
+const built = execFileSync(process.execPath, [join(here, 'build.mjs')], { encoding: 'utf8' });
+const counted = /frames: (\d+) in (\d+) scenes/.exec(built);
+const fixtures = readdirSync(golden).filter((f) => f.endsWith('.txt'));
+if (!counted) throw new Error('build.mjs did not report its frame count: ' + built.trim());
+if (+counted[1] !== fixtures.length) {
+  throw new Error(`build used ${counted[1]} frames, ${fixtures.length} fixtures exist`);
+}
+
 function parseName(file) {
   const name = file.replace(/^tui-/, '').replace(/\.txt$/, '');
   if (/^\d+x\d+$/.test(name)) return { scene: 'tree', size: name, ascii: false };
@@ -55,6 +65,7 @@ function noteOf(html) {
 
 const failures = [];
 let pass = 0;
+let scheduled = 0;
 const fail = (msg) => failures.push(msg);
 
 function guarded(label, fn) {
@@ -63,6 +74,7 @@ function guarded(label, fn) {
 
 // Text for one screen, compared with the fixture it claims to be.
 function check(label, query, wantFile, opts) {
+  scheduled++;
   const want = readFileSync(join(golden, wantFile), 'utf8').replace(/\n$/, '').split('\n');
   guarded(label, () => {
     const html = dom(query, opts);
@@ -78,6 +90,7 @@ function check(label, query, wantFile, opts) {
 }
 
 function checkDom(label, query, pred, opts) {
+  scheduled++;
   guarded(label, () => {
     if (pred(dom(query, opts))) return void pass++;
     fail(`${label}: DOM assertion failed`);
@@ -131,6 +144,32 @@ checkDom('no legacy class names survive', 'scene=gates&norum=1',
   (h) => !/class="(ok|err|block|run|muted|accent)"/.test(h));
 checkDom('ascii tier is monochrome, as use_color() is', 'scene=showcase&ascii=1&norum=1',
   (h) => !/class="(planned|active|done|failed|dim|cursor|warn|bold)"/.test(h));
+checkDom('gate passes are green', 'scene=gates&norum=1',
+  (h) => /class="done">✓<\/span>/.test(h));
+checkDom('a gate warning is blue', 'scene=install-gate&norum=1',
+  (h) => /class="warn">▲<\/span>/.test(h));
+checkDom('a stale badge is yellow, not blue', 'scene=prefetch&norum=1',
+  (h) => /class="active">▲<\/span>/.test(h));
+checkDom('a receipt dash is dim', 'scene=post-install&norum=1',
+  (h) => /class="dim">–<\/span>/.test(h));
+
+// 4. The attested gate repaint (render.rs:391-408) and the tier label.
+checkDom('space repaints the gate as attested', 'scene=install-gate&keys=space&norum=1', (h) => {
+  const rows = rowsOf(h);
+  return rows.length === 40
+    && rows.some((r) => /✓  news     attested for this session/.test(r))
+    && !rows.some((r) => /press space to attest/.test(r))
+    && rows.some((r) => /enter install · esc cancel/.test(r));
+});
+checkDom('the size label names the tier on screen', 'scene=prefetch&size=120x40&norum=1',
+  (h) => /id="size">120x40 · unicode/.test(h));
+checkDom('a unicode fallback is labelled as such', 'scene=gates&ascii=1&norum=1',
+  (h) => /unicode text, monochrome/.test(h));
+checkDom('the picker offers every capture', 'norum=1', (h) => {
+  const opts = [...h.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  const scenes = new Set(fixtures.map((f) => parseName(f).scene));
+  return opts.length === scenes.size && [...scenes].every((s) => opts.includes(s));
+});
 
 // 4. Declared substitutions and the two controls that are demo-only.
 checkDom('the news key says it cannot open a browser', 'scene=install-gate&keys=n&norum=1',
@@ -143,11 +182,20 @@ checkDom('ctrl-v self-check can fail', 'scene=prefetch&tamper=1&keys=ctrl-v&noru
   (h) => /self-check: MISMATCH/.test(noteOf(h)));
 checkDom('esc ends the session while a fetch runs', 'keys=F,escape&norum=1',
   (h) => /id="exit" style="display: block/.test(h));
-checkDom('q ends the session', 'keys=q&norum=1',
-  (h) => /id="exit" style="display: block/.test(h) && /id="crt" style="display: none/.test(h));
+checkDom('q ends the session with exit 0', 'keys=q&norum=1',
+  (h) => /id="exit" style="display: block/.test(h) && /id="crt" style="display: none/.test(h)
+    && /exits 0/.test(h));
+checkDom('ctrl-c is its own exit path', 'keys=ctrl-c&norum=1',
+  (h) => /exits 130/.test(h) && /Interrupted/.test(h));
+checkDom('an unknown scene is declared, not silent', 'scene=nope&norum=1',
+  (h) => /no capture for scene nope/.test(noteOf(h)));
 
 rmSync(profile, { recursive: true, force: true });
-const total = pass + failures.length;
+// Coverage must be accounted for: a skipped check is itself a failure.
+if (pass + failures.length !== scheduled) {
+  failures.push(`coverage: ${pass} pass + ${failures.length} fail != ${scheduled} scheduled`);
+}
+const total = scheduled;
 if (failures.length) {
   console.error(`FAIL ${pass}/${total}`);
   for (const f of failures) console.error(' - ' + f);

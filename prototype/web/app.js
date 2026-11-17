@@ -76,6 +76,7 @@ const RULES = [
   ["\\[ \\]", "planned"],
   ["\\[\\|\\]|◐", "active"],
   ["\\[×\\]|✗|×", "failed"],
+  ["–", "dim"],
   ["▲", "warn"],
   ["⏱|·", "dim"],
   ["\\b(?:done|built|cached|prefetched|ready|success|attested|no lock file)\\b", "done"],
@@ -93,7 +94,28 @@ function esc(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function style(line) {
+/* render.rs:391-408: an attested gate renders the news gate as a pass, drops
+   the "press space to attest" line, and the key hint becomes "enter install".
+   No golden captures that state, so it is derived from the captured gate, with
+   the box padding render.rs uses (inner width = frame width - 4). */
+function attestedGate(text) {
+  const lines = rows(text);
+  const inner = lines[0].length - 4;
+  const box = (s) => "│ " + s.padEnd(inner, " ") + " │";
+  const news = lines.findIndex((l) => l.includes("  news     "));
+  if (news === -1) return text;
+  lines[news] = box("✓  news     attested for this session");
+  const hint = lines.findIndex((l) => l.includes("press space to attest"));
+  if (hint !== -1) {
+    lines.splice(hint, 1);
+    lines.splice(lines.length - 2, 0, box("")); // the paragraph leaves a blank row
+  }
+  const keys = lines.findIndex((l) => l.includes("space attest"));
+  if (keys !== -1) lines[keys] = box("enter install · esc cancel");
+  return lines.join("\n") + "\n";
+}
+
+function style(line, scene) {
   if (S.ascii) return esc(line); // use_color() is false in ascii mode: no spans
   let out = "", last = 0;
   RX.lastIndex = 0;
@@ -102,6 +124,9 @@ function style(line) {
     for (let i = 0; i < CLASSES.length; i++) {
       if (m[i + 1] !== undefined) { cls = CLASSES[i]; break; }
     }
+    // One glyph, two meanings: a gate warning is PLANNED (blue), an artifact
+    // badge for stale/partial is ACTIVE (yellow). render.rs:1296 vs 2268.
+    if (m[0] === "▲" && scene !== "gates" && scene !== "install-gate") cls = "active";
     if (m.index > last) out += esc(line.slice(last, m.index));
     out += '<span class="' + cls + '">' + esc(m[0]) + "</span>";
     last = m.index + m[0].length;
@@ -121,14 +146,16 @@ function note(msg, bad) {
 function paint() {
   const f = resolve(S.scene);
   if (!f) { note("no capture for " + S.scene, true); return; }
+  f.text = effectiveText(f.text);
   const lines = rows(f.text);
   let html = "";
   for (let i = 0; i < lines.length; i++) {
-    html += '<div class="r' + (i === 0 ? " r0" : "") + '">' + style(lines[i]) + "</div>";
+    html += '<div class="r' + (i === 0 ? " r0" : "") + '">' + style(lines[i], S.scene) + "</div>";
   }
   screenEl.innerHTML = html;
   whereEl.textContent = LABEL[S.scene] || S.scene;
-  sizeEl.textContent = f.size + (S.ascii ? " · ascii (no colour)" : "");
+  // The tier label must describe the text actually on screen, not the request.
+  sizeEl.textContent = f.size + " · " + (S.ascii ? (f.ascii ? "ascii" : "unicode text, monochrome") : "unicode");
   pick.value = S.scene;
   asciiBtn.classList.toggle("on", S.ascii);
   // A substitution is never silent: say which capture is actually on screen.
@@ -151,7 +178,7 @@ function startRun(names, label) {
     while (i < names.length && !resolve(names[i])) i++;
     if (i >= names.length) { S.run = null; note(label + ": captures exhausted"); return; }
     show(names[i++]);
-    note(label + " running · esc ends the session, the app exits the TUI");
+    note(label + " running · each step is a separate capture · esc ends the session");
     if (S.norum) return;
     S.timer = setTimeout(step, STEP_MS);
   };
@@ -167,11 +194,15 @@ function stopRun() {
 
 /* Ctrl-V: compare what is on screen, read back from the DOM, with the capture.
    It must be able to fail, so it never reads the FRAMES entry directly. */
+function effectiveText(text) {
+  return S.scene === "install-gate" && S.attested ? attestedGate(text) : text;
+}
+
 function selfCheck() {
   const f = resolve(S.scene);
   if (!f) { note("self-check: nothing captured for " + S.scene, true); return; }
   const shown = Array.from(screenEl.querySelectorAll(".r")).map((el) => el.textContent);
-  const same = shown.join("\n") === rows(f.text).join("\n");
+  const same = shown.join("\n") === rows(effectiveText(f.text)).join("\n");
   note(same ? "self-check: DOM matches " + S.scene + " " + f.size
             : "self-check: MISMATCH on " + S.scene, !same);
 }
@@ -185,7 +216,7 @@ function onKey(e) {
     return;
   }
   if (e.ctrlKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); selfCheck(); return; }
-  if (e.ctrlKey && (e.key === "c" || e.key === "C")) { quit(); return; }
+  if (e.ctrlKey && (e.key === "c" || e.key === "C")) { quit(130); return; }
 
   // The receipt is read-only and modal: esc/enter close it, q quits, nothing else.
   if (S.scene === "post-install") {
@@ -200,6 +231,7 @@ function onKey(e) {
     else if (e.key === " ") {
       e.preventDefault();
       S.attested = true;
+      paint(); // the gate repaints: news becomes a pass, the hint becomes enter
       note("attested for this session · enter is armed");
     } else if (e.key === "n") {
       // TUI.md gives the gate an n key that opens the news page.
@@ -207,6 +239,11 @@ function onKey(e) {
     } else if (e.key === "Enter") {
       // render.rs arms the action only on an attested news gate.
       if (!S.attested) { note("refused: press space to attest after reading the news", true); return; }
+      // mod.rs:243-250 also requires that no gate blocks the install.
+      if (/\u2717  /.test(rows(effectiveText(resolve("install-gate").text)).join("\n"))) {
+        note("refused: a gate blocks install", true);
+        return;
+      }
       show("post-install");
       note("receipt · read-only");
     }
@@ -266,17 +303,21 @@ function onKey(e) {
   }
   if (e.key === "Escape") {
     if (S.scene === "log") { show(S.under || "prefetch"); return; }
+    if (S.run) { quit(); return; } // mod.rs detaches whenever a session is running
     if (S.scene === "ledger") { note("esc does nothing on the ledger; g toggles back"); return; }
-    if (S.run) { quit(); return; } // mod.rs breaks out of the TUI while a fetch runs
     note(""); // at top level the app clears a notice and nothing else
   }
 }
 
-function quit() {
+function quit(code) {
   stopRun();
   document.getElementById("crt").style.display = "none";
   document.getElementById("chrome").style.display = "none";
   document.querySelector(".legend").style.display = "none";
+  exitEl.textContent = code === 130
+    // mod.rs maps an interrupted session to its own exit code.
+    ? "Interrupted. The real app restores the terminal and exits 130. Reload to boot again."
+    : "Session ended. The real app restores the terminal and exits 0. Reload to boot again.";
   exitEl.style.display = "block";
 }
 
@@ -295,6 +336,9 @@ if (qs.get("ascii") === "1") S.ascii = true;
 S.norum = qs.get("norum") === "1";
 S.tamper = qs.get("tamper") === "1";
 show(qs.get("scene") && FRAMES[qs.get("scene")] ? qs.get("scene") : "prefetch");
+if (qs.get("scene") && !FRAMES[qs.get("scene")]) {
+  note("no capture for scene " + qs.get("scene") + "; showing prefetch", true);
+}
 if (S.tamper) screenEl.firstChild.textContent = "X"; // proves Ctrl-V can fail
 if (qs.get("keys")) {
   for (const token of qs.get("keys").split(",")) {
