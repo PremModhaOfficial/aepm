@@ -72,6 +72,17 @@ pub enum Phase {
     },
 }
 
+/// The keys legal in this phase. The session renders them and the frame tests
+/// read them, so a footer can only say what the app says.
+pub fn footer_keys(phase: &Phase, ascii: bool) -> &'static str {
+    match (phase, ascii) {
+        (Phase::Running, false) => "esc detach · g ledger · l log · ? help",
+        (Phase::Running, true) => "esc detach | g ledger | l log | ? help",
+        (_, false) => "esc dismiss · F fetch again · g ledger · l log · q quit · ? help",
+        (_, true) => "esc dismiss | F fetch again | g ledger | l log | q quit | ? help",
+    }
+}
+
 /// What one tick changed. `changed` is true only when the rendered frame
 /// differs: a real observation, an elapsed label crossing its floor, or the
 /// result arriving.
@@ -240,25 +251,9 @@ impl FetchSession {
 
     /// The action line and the keys that are legal in this phase.
     pub fn footer(&self, ascii: bool) -> Footer<'_> {
-        let keys = match (&self.phase, ascii) {
-            (Phase::Running, false) => "esc detach · g ledger · l log · ? help",
-            (Phase::Running, true) => "esc detach | g ledger | l log | ? help",
-            (Phase::Finished { .. }, false) => {
-                "esc dismiss · F fetch again · g ledger · l log · q quit · ? help"
-            }
-            (Phase::Finished { .. }, true) => {
-                "esc dismiss | F fetch again | g ledger | l log | q quit | ? help"
-            }
-            (Phase::Failed { .. }, false) => {
-                "esc dismiss · F fetch again · g ledger · l log · q quit · ? help"
-            }
-            (Phase::Failed { .. }, true) => {
-                "esc dismiss | F fetch again | g ledger | l log | q quit | ? help"
-            }
-        };
         Footer {
             status: Some(&self.status),
-            keys: Some(keys),
+            keys: Some(footer_keys(&self.phase, ascii)),
             failed: self.failed,
             repair: self.card.as_ref(),
         }

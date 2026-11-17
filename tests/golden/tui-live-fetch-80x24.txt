@@ -21,4 +21,4 @@ Dependency Graph:                                       install 1 package · liv
 
 
 fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm
-esc detach · g ledger · ? help
+esc detach · g ledger · l log · ? help

@@ -48,10 +48,14 @@ node prototype/web/build.mjs     # tests/golden + app.js -> aepm.html
 node prototype/web/verify.mjs    # headless chromium: 76 assertions
 ```
 
-`verify.mjs` rebuilds the HTML first, so a stale generated file cannot pass.
-Then it renders every capture in chromium and compares the DOM text of the
-terminal pane with the fixture; it drives the key paths, modal refusals, the
-timed runs, the size selection, the palette classes per glyph, the ascii tier's
-monochrome rule, the attested-gate repaint, picker coverage, and both outcomes
-of the self-check. Both scripts fail loudly. Neither is part of `ci.sh`: this
-directory is a demo, not a command.
+`verify.mjs` rebuilds the HTML before it asserts, so every assertion it makes
+is about a fresh build — which is exactly why it cannot notice that the
+*committed* page has gone stale. The `prototype` job in
+`.github/workflows/ci.yml` closes that hole: it rebuilds, fails when
+`prototype/web/aepm.html` differs from a rebuild of `tests/golden`, and then
+runs `verify.mjs`, which renders every capture in chromium and compares the DOM
+text of the terminal pane with the fixture; it drives the key paths, modal
+refusals, the timed runs, the size selection, the palette classes per glyph,
+the ascii tier's monochrome rule, the attested-gate repaint, picker coverage,
+and both outcomes of the self-check. Both scripts fail loudly. Not part of
+`ci.sh`: this directory is a demo, not a command, so it gets its own job.

@@ -2462,6 +2462,7 @@ mod tests {
         ArtifactState, Cached, PackageView, PrefetchReport, Repo, Section, Snapshot, Update,
     };
     use crate::runner::{StreamKind, StreamLine};
+    use crate::tui::fetch_session::{Phase, footer_keys};
     use crate::tui::live::{Activity, LiveRun};
     use crate::tui::tree::Tree;
     use std::collections::VecDeque;
@@ -3566,10 +3567,12 @@ mod tests {
         run
     }
 
+    /// A session's footer, built from the session's own keys: this file owns
+    /// the fixture's status and card, never a second copy of the key line.
     fn fetch_footer() -> Footer<'static> {
         Footer {
             status: Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm"),
-            keys: Some("esc detach · g ledger · ? help"),
+            keys: Some(footer_keys(&Phase::Running, false)),
             failed: false,
             repair: None,
         }
