@@ -142,7 +142,7 @@ const LABEL = {
   "install-gate": "Install · gate", "post-install": "Install · receipt"
 };
 
-const S = { scene: "prefetch", ascii: false, stack: [], run: null, timer: null, exited: false };
+const S = { scene: "prefetch", ascii: false, below: null, run: null, timer: null, attested: false, norum: false };
 
 const pick = document.getElementById("pick");
 const screenEl = document.getElementById("screen");
@@ -246,6 +246,7 @@ function show(name) {
 
 function startRun(names, label) {
   stopRun();
+  S.attested = false;
   let i = 0;
   const step = () => {
     while (i < names.length && !resolve(names[i])) i++;
@@ -296,13 +297,20 @@ function onKey(e) {
   }
   if (e.key === " ") {
     if (S.scene === "install-gate") {
+      S.attested = true;
       note("attested for this session · enter installs");
     }
     e.preventDefault();
     return;
   }
   if (e.key === "Enter") {
-    if (S.scene === "install-gate") { stopRun(); show("post-install"); note("receipt · read-only"); }
+    if (S.scene === "install-gate") {
+      // The gate refuses the action until the news is attested, per render.rs.
+      if (!S.attested) { note("refused: press space to attest after reading the news", true); return; }
+      stopRun();
+      show("post-install");
+      note("receipt · read-only");
+    }
     return;
   }
 }

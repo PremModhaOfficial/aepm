@@ -52,9 +52,11 @@ let pass = 0;
 
 function check(label, query, wantFile) {
   const want = readFileSync(join(golden, wantFile), 'utf8').replace(/\n$/, '').split('\n');
-  let got;
+  let got, html;
   try {
-    got = rowsOf(dom(query));
+    html = dom(query);
+    if (html.includes('class="null"')) failures.push(`${label}: tokenizer emitted class="null"`);
+    got = rowsOf(html);
   } catch (e) {
     failures.push(`${label}: ${e.message.split('\n')[0]}`);
     return;
@@ -66,6 +68,16 @@ function check(label, query, wantFile) {
   const bad = want.findIndex((line, i) => got[i] !== line);
   if (bad === -1) { pass++; return; }
   failures.push(`${label}: row ${bad + 1}\n  want ${JSON.stringify(want[bad])}\n  got  ${JSON.stringify(got[bad])}`);
+}
+
+function checkDom(label, query, pred) {
+  let html;
+  try { html = dom(query); } catch (e) {
+    failures.push(`${label}: ${e.message.split('\n')[0]}`);
+    return;
+  }
+  if (pred(html)) { pass++; return; }
+  failures.push(`${label}: DOM assertion failed`);
 }
 
 // 1. Every fixture, at its own size, in colour and in ascii where captured.
@@ -83,10 +95,16 @@ const INTERACTION = [
   ['g opens the ledger', 'keys=g', 'tui-ledger-120x40.txt'],
   ['i opens the install gate', 'keys=i', 'tui-install-gate-120x40.txt'],
   ['space attests, enter lands the receipt', 'keys=i,space,enter', 'tui-post-install-120x40.txt'],
+  ['enter is refused until space attests', 'keys=i,enter', 'tui-install-gate-120x40.txt'],
+  ['an unhandled key changes nothing', 'keys=x&size=80x24', 'tui-prefetch-80x24.txt'],
   ['esc detaches a running fetch and keeps the frame', 'keys=F,escape&size=80x24', 'tui-gates-80x24.txt'],
   ['esc from a top-level screen returns to the tree', 'keys=escape&size=80x24', 'tui-prefetch-80x24.txt'],
 ];
 for (const [label, query, wantFile] of INTERACTION) check(label, `${query}&norum=1`, wantFile);
+
+// 3. q ends the session instead of leaving a stale screen on display.
+checkDom('q ends the session', 'keys=q&size=80x24&norum=1',
+  (h) => /id="exit" style="display: block/.test(h) && /id="crt" style="display: none/.test(h));
 
 rmSync(profile, { recursive: true, force: true });
 const total = pass + failures.length;
