@@ -131,9 +131,10 @@ The actions are `quit`, `interrupt`, `suspend`, `help`, `back`, `ledger`, `down`
 `up`, `log`, `install`, `refresh`, `fetch`, `confirm` and `attest`. A value is one
 character (`F` and `f` are different keys), `esc`, `enter`, `space`, `tab`, one of
 the arrows, or `ctrl-c` / `^c`. A line that is not in `[keys]`, an unknown action
-name and a key it cannot read all stop the TUI at startup with the file and line,
-instead of being ignored. The file is optional and the TUI never writes it. The
-footer and the help overlay still print the default keys.
+name, a key it cannot read, and a key another action already uses all stop the TUI
+at startup with the file and line, instead of being ignored. The file is optional
+and the TUI never writes it. The footer and the help overlay still print the
+default keys.
 
 Exit codes follow `check`: `0` healthy or done, `1` actionable, `2` a terminal
 or collection error, and `130` when Ctrl-C ends the interactive tree.

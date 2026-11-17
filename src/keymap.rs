@@ -108,6 +108,13 @@ fn action_named(name: &str) -> Option<Action> {
         .map(|(_, action, _)| *action)
 }
 
+fn name_of(action: Action) -> &'static str {
+    DEFAULTS
+        .iter()
+        .find(|(_, default, _)| *default == action)
+        .map_or("?", |(name, _, _)| *name)
+}
+
 fn known_actions() -> String {
     DEFAULTS
         .iter()
@@ -185,6 +192,18 @@ impl Keymap {
                 ))
             })?;
             let key = parse_key(value).ok_or_else(|| at(format!("`{value}` is not a key")))?;
+            // One key cannot mean two actions: `action_for` would return the
+            // first, and the second would never fire.
+            if let Some((other, _)) = keymap
+                .keys
+                .iter()
+                .find(|(bound, taken)| *bound != action && *taken == key)
+            {
+                return Err(at(format!(
+                    "`{value}` is already bound to `{}`; one key cannot mean two actions",
+                    name_of(*other)
+                )));
+            }
             keymap.bind(action, key);
         }
         Ok(keymap)
@@ -307,6 +326,18 @@ mod tests {
         let error = Keymap::parse("[keys]\nquit = qq\n").expect_err("bad key");
 
         assert!(error.to_string().contains("`qq` is not a key"), "{error}");
+    }
+
+    #[test]
+    fn a_key_bound_to_two_actions_is_an_error() {
+        for text in ["[keys]\nquit = j\n", "[keys]\nquit = x\nledger = x\n"] {
+            let error = Keymap::parse(text).expect_err("duplicate key");
+
+            assert!(error.to_string().contains("already bound to"), "{error}");
+        }
+        let error = Keymap::parse("[keys]\nquit = j\n").expect_err("duplicate key");
+        assert!(error.to_string().contains("`down`"), "{error}");
+        assert!(error.to_string().contains("line 2"), "{error}");
     }
 
     #[test]
