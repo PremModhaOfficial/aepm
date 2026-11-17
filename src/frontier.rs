@@ -193,6 +193,15 @@ pub struct GraphState {
     pub mode: ExecutionMode,
     pub frozen: bool,
     pub last_seq: u64,
+    /// `edges` indexed by dependency: the dependents one state change can
+    /// release. Built once at seed so a burst of observations costs its own
+    /// dependents, not every edge in the plan.
+    // shortcut: the index is only built at seed, so a caller mutating the public
+    // `edges` desyncs it; upgrade to an accessor if a caller ever edits the plan.
+    dependents: BTreeMap<NodeId, Vec<NodeId>>,
+    /// `edges` indexed by dependent: the required dependencies whose state
+    /// decides readiness. Built once at seed for the same reason.
+    requirements: BTreeMap<NodeId, Vec<NodeId>>,
 }
 
 impl GraphState {
@@ -247,8 +256,29 @@ impl GraphState {
             mode,
             ..Self::default()
         };
+        state.index_edges();
         state.settle_all(0, &mut Vec::new());
         Ok(state)
+    }
+
+    /// Build the two direction indexes the reducer walks, once per plan.
+    ///
+    /// `edges` stays the plan of record; these maps are only its adjacency.
+    /// Rebuilding them outside seeding would let a caller desync the model,
+    /// so they are private and only `seed_with_mode` fills them.
+    fn index_edges(&mut self) {
+        for edge in &self.edges {
+            self.dependents
+                .entry(edge.dependency.clone())
+                .or_default()
+                .push(edge.dependent.clone());
+            if edge.required {
+                self.requirements
+                    .entry(edge.dependent.clone())
+                    .or_default()
+                    .push(edge.dependency.clone());
+            }
+        }
     }
 
     /// Fold one observation. A non-matching state, an unknown node, or any
@@ -448,12 +478,11 @@ impl GraphState {
             if self.nodes.get(moved) == Some(&NodeState::Pending) && queued.insert(moved.clone()) {
                 queue.push_back(moved.clone());
             }
-            for edge in &self.edges {
-                if edge.dependency == *moved
-                    && self.nodes.get(&edge.dependent) == Some(&NodeState::Pending)
-                    && queued.insert(edge.dependent.clone())
+            for dependent in self.dependents.get(moved).into_iter().flatten() {
+                if self.nodes.get(dependent) == Some(&NodeState::Pending)
+                    && queued.insert(dependent.clone())
                 {
-                    queue.push_back(edge.dependent.clone());
+                    queue.push_back(dependent.clone());
                 }
             }
         }
@@ -470,15 +499,11 @@ impl GraphState {
             self.set_state(&id, next, seq, transitions);
 
             // A node leaving Pending can unblock its dependents.
-            for edge in &self.edges {
-                if edge.dependent == id {
-                    continue;
-                }
-                if edge.dependency == id
-                    && self.nodes.get(&edge.dependent) == Some(&NodeState::Pending)
-                    && queued.insert(edge.dependent.clone())
+            for dependent in self.dependents.get(&id).into_iter().flatten() {
+                if self.nodes.get(dependent) == Some(&NodeState::Pending)
+                    && queued.insert(dependent.clone())
                 {
-                    queue.push_back(edge.dependent.clone());
+                    queue.push_back(dependent.clone());
                 }
             }
         }
@@ -486,11 +511,8 @@ impl GraphState {
 
     fn next_state(&self, node: &str) -> NodeState {
         let mut all_satisfied = true;
-        for edge in &self.edges {
-            if edge.dependent != node || !edge.required {
-                continue;
-            }
-            let Some(dependency) = self.nodes.get(&edge.dependency) else {
+        for dependency in self.requirements.get(node).into_iter().flatten() {
+            let Some(dependency) = self.nodes.get(dependency) else {
                 all_satisfied = false;
                 continue;
             };
@@ -1071,5 +1093,58 @@ mod tests {
         let observation = observation(1, "a", Observed::Started).at(std::time::UNIX_EPOCH);
         assert_eq!(observation.at, std::time::UNIX_EPOCH);
         assert_eq!(observation.evidence, "test a");
+    }
+
+    /// The T4 burst gate. `docs/ANIMATION.md` budgets 66 to 100 ms for a burst
+    /// the reducer coalesces into one frame, so the whole ingest of a real
+    /// 2,000-package pending set has to fit there in release.
+    ///
+    /// The fixture is the T4 shape: ten layers of two hundred, two required
+    /// dependencies each, and four thousand observations (start and finish per
+    /// package). Plan plus reduce is timed together because both run inside the
+    /// same coalescing window. The unoptimized test build gets ten times the
+    /// release budget.
+    #[test]
+    fn a_four_thousand_observation_burst_reduces_inside_the_animation_budget() {
+        use std::time::{Duration, Instant};
+
+        const PACKAGES: usize = 2_000;
+        const LAYER: usize = 200;
+        const BUDGET: Duration = if cfg!(debug_assertions) {
+            Duration::from_millis(1_000)
+        } else {
+            Duration::from_millis(100)
+        };
+
+        let names: Vec<String> = (0..PACKAGES)
+            .map(|index| format!("pkg-{index:04}"))
+            .collect();
+        let mut edges = Vec::new();
+        for index in LAYER..PACKAGES {
+            let below = (index / LAYER - 1) * LAYER;
+            edges.push(edge(&names[below + index % LAYER], &names[index]));
+            edges.push(edge(&names[below + (index * 7 + 3) % LAYER], &names[index]));
+        }
+
+        let start = Instant::now();
+        let mut state = GraphState::seed_with_mode(names.clone(), edges, ExecutionMode::Concurrent)
+            .expect("the fixture is a DAG");
+        let mut seq = 0;
+        for name in &names {
+            for kind in [Observed::Started, Observed::Finished] {
+                seq += 1;
+                state
+                    .reduce(&observation(seq, name, kind))
+                    .expect("the burst reduces");
+            }
+        }
+        let elapsed = start.elapsed();
+        println!("burst {elapsed:?} against the {BUDGET:?} budget");
+
+        assert!(state.is_complete(), "every package finished");
+        assert!(
+            elapsed < BUDGET,
+            "plan plus 4,000 observations took {elapsed:?}; the burst budget is {BUDGET:?}"
+        );
     }
 }

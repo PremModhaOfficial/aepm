@@ -525,12 +525,20 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
 - [x] The log screen belongs to its session: `esc` on a finished session, and a
       `F` that a gate refuses, close the log with it, so no open-log flag is
       left with no screen to toggle it.
-- [x] `--no-motion`, ASCII, 2,000-package performance pass.
-      `--no-motion` freezes the spinner and the 10 Hz pulse: the ten-per-second
-      tick still observes the cache, but only a real fact or the once-a-second
-      elapsed label redraws. `--ascii`
-      uses an ASCII frame set for every overlay and one sweep test asserts no
-      non-ASCII byte on any screen at 80x24 and 120x40.
+- [x] `--no-motion` and the ASCII pass. `--ascii` is monochrome end to end,
+      cursor cell included, and `--no-motion` removes the spinner so a frame is
+      a settled repaint. Both are asserted in `src/tui/render.rs`.
+- [x] The 2,000-package performance pass. A warm 2,000-package frame is
+      10.5 ms in release and 56 ms in the unoptimized test build, inside the
+      16 ms key-to-frame budget; the first cold frame is ~35 ms in release,
+      inside the 100 ms first-paint budget. Plan plus a 4,000-observation
+      reduce is now 190 to 230 ms debug and 25 to 60 ms release (the range is
+      machine load; a quiet run is 11 ms seed plus 13 ms reduce), inside the
+      66-100 ms animation budget, after `GraphState` began indexing both edge
+      directions once at seed instead of rescanning every edge per observation
+      (it was 3.0 to 4.4 s debug and 0.44 to 0.50 s release). The burst budget is
+      asserted in `src/frontier.rs` and the frame and ingest costs in the
+      2,000-package test in `src/tui/tree.rs`.
 - [ ] Keymap overrides for the v1 keys.
 - [ ] No mouse, themes, or `tui.conf` in v1.
 
