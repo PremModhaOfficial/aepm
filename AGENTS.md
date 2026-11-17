@@ -150,13 +150,16 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment.
-- **Gate:** the `Review Gate` check re-runs when a review run finishes and
-  fails when the review comment is missing, older than the PR head, or did not
+- **Gate:** the `Review Gate` check re-runs on every push and when a
+  `pull_request`-triggered review run finishes. It fails when the review comment
+  is missing, older than the PR head, or did not
   clear the merge (verdict other than
   `No concerns found`, override with `REVIEW_GATE_VERDICT`). It makes no model
   call, so it spends no credits, and it runs the script from the base branch.
   Only a comment authored by the bot counts (`REVIEW_BOT_LOGIN`): the marker
-  text alone is forgeable.
+  text alone is forgeable. A `/review` refresh does not move the check until the
+  next push, because GitHub anchors it to the commit the review run checked out
+  and a `/review` run checks out the default branch.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
   the verdict. A red `Review Gate` blocks a merge only once it is a required
   status check in the `main` ruleset, which is a one-time repository setting and
