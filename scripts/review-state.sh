@@ -21,7 +21,8 @@ usage:
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
-  --gate      exit 1 when the review is missing or older than the PR head
+  --gate      exit 1 when the review is missing, older than the PR head, or
+              does not clear the merge
   --help      this reference
   --version   print the version only
 
@@ -29,6 +30,8 @@ env:
   REVIEW_BOT_LOGIN  comma-separated logins whose comments count as the review
                     (default: github-actions[bot],github-actions, because
                     `gh pr view` drops the [bot] suffix the API keeps)
+  REVIEW_GATE_VERDICT  the merge verdict `--gate` accepts, snake_case
+                    (default: no_concerns_found)
 
 examples:
   scripts/review-state.sh
@@ -188,7 +191,15 @@ if [[ "$gate" -eq 1 ]]; then
     fi
     exit 1
   fi
-  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\n' "$number" "$head"
+  # The verdict is the merge decision, not a footnote. A review that says
+  # `changes required` or `needs review` did not clear the merge, and merging
+  # it anyway is the failure this gate exists to catch.
+  GATE_VERDICT="${REVIEW_GATE_VERDICT:-no_concerns_found}"
+  if [[ "$verdict" != "$GATE_VERDICT" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
+    exit 1
+  fi
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\n' "$number" "$head" "$verdict"
   exit 0
 fi
 

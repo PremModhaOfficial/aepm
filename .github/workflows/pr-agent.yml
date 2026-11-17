@@ -45,8 +45,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: pr-agent
-        # pragent/pr-agent:0.49.0-github_action, pinned by manifest digest.
-        uses: docker://pragent/pr-agent@sha256:b1ed6e8de56eb4d6e4169ee0d5c209bb5ed1ef071a01c0c042c64b80192a785c
+        # pragent/pr-agent:0.50.0-github_action, pinned by manifest digest.
+        # 0.50.0 adds the run-details section (model, tokens in/out, duration,
+        # AI calls), which is the only place token usage is observable: the job
+        # log prints prompt tokens only.
+        uses: docker://pragent/pr-agent@sha256:548e894a88071180832b2f4233f734d0acd0db1a879e2fcbaa70bac8b8372ebe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Official Provider API: https://commandcode.ai/docs/provider
@@ -63,6 +66,7 @@ jobs:
           CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS: '["openai/deepseek/deepseek-v4.1-flash"]'
           CONFIG__AI_TIMEOUT: "900"
           CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT: "false"
+          CONFIG__OUTPUT_RUN_DETAILS: "true"
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: "true"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"

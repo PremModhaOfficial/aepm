@@ -150,18 +150,22 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment.
-- **Gate:** the `Review Gate` check fails when the review comment is missing or
-  older than the PR head. It makes no model call, so it spends no credits, and
-  it runs the script from the base branch. Only a comment authored by the bot
-  counts (`REVIEW_BOT_LOGIN`): the marker text alone is forgeable. Findings stay
-  advisory.
-- **Authority:** the bot advises. `CI` and `Sim` are the behaviour gates;
-  `Review Gate` is the coverage gate. A merge verdict is input to a human
-  decision, not permission to merge.
+- **Gate:** the `Review Gate` check fails when the review comment is missing,
+  older than the PR head, or did not clear the merge (verdict other than
+  `No concerns found`, override with `REVIEW_GATE_VERDICT`). It makes no model
+  call, so it spends no credits, and it runs the script from the base branch.
+  Only a comment authored by the bot counts (`REVIEW_BOT_LOGIN`): the marker
+  text alone is forgeable.
+- **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
+  the verdict. A red verdict blocks the merge, so the bot is no longer advisory.
+  A human override is an admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
   the rules it is judged by.
+- **Usage:** the review comment's run-details section carries model, tokens
+  in/out, duration, and AI calls (`output_run_details = true`). The job log
+  prints prompt tokens only, so that section is the usage record.
 - **Decisions and measurements:** `.github/PR-AGENT.md`.
 
 ## Layout

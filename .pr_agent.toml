@@ -35,6 +35,12 @@ repo_context_files = ["AGENTS.md", "NEXT.md", "context.md"]
 repo_context_from_default_branch = true
 repo_context_max_lines = 900
 
+# Token usage on the review comment (model, tokens in/out/total, duration, AI
+# calls). The job log only prints prompt tokens, so this is the only honest
+# usage figure. `output_run_cost` stays off: litellm has no price for this model
+# id and would print "unavailable" on every review.
+output_run_details = true
+
 response_language = "en-US"
 
 [pr_reviewer]

@@ -279,11 +279,14 @@ head.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
-- The `Review Gate` check fails when the review is missing or older than the
-  PR head. It makes no model call, so it is free; make it a required check so a
-  force push cannot merge ahead of the review. Only the bot's own comment
-  counts, so pasting the marker by hand does not pass it. Findings stay
-  advisory.
+- The `Review Gate` check fails when the review is missing, older than the PR
+  head, or did not clear the merge (anything but `No concerns found`). It makes
+  no model call, so it is free; make it a required check so neither a force push
+  nor an open finding merges. Only the bot's own comment counts, so pasting the
+  marker by hand does not pass it.
+- Each review carries a run-details section: model, tokens in/out, duration, and
+  AI calls. That is the only usage record; the job log prints prompt tokens
+  only.
 - A review that cannot run fails the check. It never reports green.
 - Fork PRs are skipped because GitHub does not expose secrets to them.
 
