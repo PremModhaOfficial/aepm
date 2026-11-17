@@ -37,4 +37,4 @@ PRE-FLIGHT
 
 
 fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm
-esc detach · g ledger · ? help
+esc detach · g ledger · l log · ? help
