@@ -82,9 +82,14 @@ jobs:
           # no gate to loosen yet, so running the head copy once is safe. Only
           # the default branch may bootstrap: pointing a PR at some other branch
           # must not hand the head copy the trust the base copy would have had.
+          # `BASE` is a branch name or a commit, so ask git whether the default
+          # branch contains it rather than comparing strings.
           if [[ "$BASE" != "$DEFAULT_BRANCH" ]]; then
-            echo "::error::base $BASE has no --gate and is not the default branch; refusing to run the PR copy"
-            exit 1
+            git fetch --quiet --unshallow origin 2>/dev/null || git fetch --quiet origin "$DEFAULT_BRANCH"
+            if ! git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"; then
+              echo "::error::base $BASE is not on $DEFAULT_BRANCH; refusing to run the PR copy"
+              exit 1
+            fi
           fi
           echo "::warning::base branch has no --gate yet: bootstrap, running the head copy"
           [[ -n "$HEAD_SHA" ]] || { echo "::error::bootstrap needs a head sha"; exit 1; }
