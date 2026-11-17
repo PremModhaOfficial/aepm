@@ -2,22 +2,15 @@ name: Review Gate
 
 # Model-free coverage gate. The review bot deliberately does not run on push,
 # so this check re-evaluates after every push and after every review run, and
-# fails when the review is missing, stale, or did not clear the merge. It never
-# calls a model and never spends credits.
+# fails when the review is missing, stale, or its verdict is not a clean pass.
+# It never calls a model and never spends credits.
 #
-# The review run is the trigger, not the review comment: the bot posts with
-# `GITHUB_TOKEN`, and GitHub does not start workflows for events that token
-# creates, so an `issue_comment` trigger would never fire for it.
-#
-# A `/review` run reports the default branch as its head and carries no
-# `pull_requests` entry, so it cannot name its PR. `pr-agent.yml` prints the
-# target it resolved, and the gate reads that line back from the run. GitHub
-# anchors that gate run to the default branch too, so its verdict is accurate
-# for the PR but the check itself cannot block the merge button: only the
-# push-triggered runs land on the PR head.
+# Two triggers only, both of which load this file and the gate script from the
+# default branch, so a PR can neither rewrite the check nor hand it a script.
+# `workflow_run` is the review run rather than the review comment: the bot posts
+# with `GITHUB_TOKEN`, and GitHub does not start workflows for events that token
+# creates.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows: ["PR Agent"]
     types: [completed]
@@ -25,14 +18,13 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  # Reading the target line out of another workflow's log.
+  # Reading the triggering run's name and pull_requests.
   actions: read
 
 concurrency:
-  # Keyed on the run, not the head: every `/review` run reports the default
-  # branch as its head, so a head key made runs for different PRs cancel each
-  # other.
-  group: review-gate-${{ github.event.workflow_run.id || github.event.pull_request.number }}
+  # Keyed on the run, not the head: a `/review` run reports the default branch
+  # as its head, so a head key made runs for different PRs cancel each other.
+  group: review-gate-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
 
 jobs:
@@ -42,10 +34,8 @@ jobs:
     # expose secrets to them, so the gate would fail forever with no way to
     # produce a review. This matches the bot's fork policy.
     if: >-
-      (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'workflow_run' &&
-        github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -59,23 +49,20 @@ jobs:
           # the repository from.
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
           RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          pr="${PR:-}"
-          [[ -n "$pr" ]] || pr="${RUN_PR:-}"
-          # Last resort, for `/review` runs, which carry no `pull_requests` entry
-          # and report the default branch as their head. That line comes from the
-          # workflow file, and for a `pull_request` run the file is the PR's own,
-          # so it is read only for `issue_comment` runs: those always load the
-          # default branch's copy and cannot be rewritten by a PR.
+          pr="${RUN_PR:-}"
+          # A `/review` run carries no `pull_requests` entry and reports the
+          # default branch as its head, so its PR comes from its run name. That
+          # name is evaluated in an `issue_comment` run, which always loads the
+          # default branch's copy of the workflow.
           if [[ -z "$pr" && "$RUN_EVENT" == "issue_comment" && "$RUN_BRANCH" == "$DEFAULT_BRANCH" ]]; then
-            pr="$(gh run view "$RUN_ID" --log 2>/dev/null \
-              | grep -m1 -o 'pr-agent-target: pr=[0-9]\+' | cut -d= -f2 || true)"
+            pr="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq .display_title 2>/dev/null \
+              | grep -o 'PR #[0-9]\+' | tr -dc '0-9' || true)"
           fi
           [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
@@ -93,26 +80,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.target.outputs.pr }}
           BASE: ${{ steps.target.outputs.base }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          HEAD_SHA: ${{ steps.target.outputs.head }}
         run: |
-          if scripts/review-state.sh --help | grep -q -- '--gate'; then
-            exec scripts/review-state.sh "$PR" --gate
+          if ! scripts/review-state.sh --help | grep -q -- '--gate'; then
+            # Before the gate lands on the base branch there is no trusted copy
+            # to run, and the PR's copy is not one. Neutral states that: it is
+            # not a pass, and the annotation says why. From the merge on, the
+            # base always has the script and this branch is dead.
+            echo "::notice::Review Gate is not on $BASE yet; the check is neutral until it lands"
+            exit 78
           fi
-          # Bootstrap: on the PR that introduces `--gate`, the base branch still
-          # has the old script, which exits 2 on the unknown flag and would make
-          # this check red before merge. A base without `--gate` means there is
-          # no gate to loosen yet, so running the head copy once is safe. Only
-          # the default branch may bootstrap: a PR pointed at any other branch,
-          # even one that branched off `main`, must not hand the head copy the
-          # trust the base copy would have had. `BASE` is the PR's base branch
-          # name as GitHub reports it, so this is a name comparison.
-          if [[ "$BASE" != "$DEFAULT_BRANCH" ]]; then
-            echo "::error::base $BASE is not $DEFAULT_BRANCH; refusing to run the PR copy"
-            exit 1
-          fi
-          echo "::warning::base branch has no --gate yet: bootstrap, running the head copy"
-          [[ -n "$HEAD_SHA" ]] || { echo "::error::bootstrap needs a head sha"; exit 1; }
-          git fetch --depth=1 origin "$HEAD_SHA"
-          git show "$HEAD_SHA:scripts/review-state.sh" > "$RUNNER_TEMP/gate.sh"
-          exec bash "$RUNNER_TEMP/gate.sh" "$PR" --gate
+          exec scripts/review-state.sh "$PR" --gate
