@@ -126,19 +126,18 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `39-fetch-state-unwritable.sh` | a download that completed exits 0 with a loud warning when the state file cannot be written, instead of turning the timer red |
 | `41-fill-cache-mid-download.sh` | the `CacheDir` fills during the transfer (a 2 MiB tmpfs and a fault that writes until the kernel refuses): `fetch` exits 2, never claims success, leaves no final artifact and no lock, still delivers the lists, writes nothing to `/usr` or either DB, and completes on a retry after the user frees the space |
 | `42-kill-mid-install.sh` | a file-size rlimit SIGKILLs pacman inside the extraction of a package upgrade: `install` exits 2 and names the killed command, the payload is truncated at the limit, the local DB records the new version with no file list, `pacman -Qk` calls that clean and `pacman -Qkk` reports size and checksum mismatches (it is the honest one), a retry exits 0 without repairing it, and clearing the broken entry plus `--overwrite` does |
-| `43-delete-db-lck-under-pacman.sh` | `db.lck` is deleted under a live, paced `pacman -Syuw`: `check` and `fetch` still name the running pacman because their gate is the process list, and nothing else broke. **Pins a gap:** the last assertion says `doctor` does *not* name the lock, because it has no lock check; it goes red the day `doctor` gains one |
-| `44-partial-upgrade-window.sh` | one package is installed by hand between fetch and install, so the system is half upgraded and the prefetched artifact for the rest is still cached: `check` names the pending update, reads `pacman.log`, names the partial upgrade and the evidence it read, and leaves everything read-only |
-| `45-stale-aurto-foreground-build.sh` | a local aurto repo one version behind the AUR with an AUR update pending: `install` exits 0 and asks for the full upgrade. **Pins a gap:** the last assertion says `install` does *not* warn about the foreground build, because that sentence exists only in the TUI |
+| `43-delete-db-lck-under-pacman.sh` | `db.lck` is deleted under a live, paced `pacman -Syuw`: `check` and `fetch` still name the running pacman because their gate is the process list, and nothing else broke. `doctor` reads the same lock and the same process list, so it names the transaction and reports the missing `db.lck` as a problem instead of calling the system healthy |
+| `44-partial-upgrade-window.sh` | one package is installed by hand between fetch and install, so the system is half upgraded and the prefetched artifact for the rest is still cached: `check` names the pending update and leaves everything read-only. `check` fills `report::PartialUpgrade` from pacman's log and prints the partial upgrade with the evidence it read |
+| `45-stale-aurto-foreground-build.sh` | a local aurto repo one version behind the AUR with an AUR update pending: `install` exits 0 and asks for the full upgrade. `install` prints the foreground-build warning the TUI already carries, from one shared sentence, before `yay -Syuu` runs |
 | `47-tui-install-trust-gate.sh` | `/etc/aurto/trusted-users` is missing, so the install gate blocks instead of arming: `enter` installs nothing, `yay -Syuu` never runs, `/usr`, the package DB, the state file and the sudo log are untouched, and the CLI refuses the same state on a real terminal with exit 1 and the `--yes` it requires |
 | `46-kill-mid-download.sh` | the paced transfer SIGKILLs pacman after the first half: the `.part` is a real prefix of the repo artifact, no final artifact exists, the lock and the refreshed lists are left behind, the next fetch refuses on the stale lock without removing it, and the retry after the user removes it fetches the real bytes |
 | `48-doctor-shares-the-fetch-floor.sh` | a 1 MiB configured floor and a snapper config dir on a pinned 64 MiB `/dev/shm` `CacheDir`: only the 5 GiB snapshot floor can refuse, `doctor` exits 1, names the filesystem and that floor as its only problem, and `fetch` refuses on the same disk on the same machine, so the two verdicts cannot disagree |
 | `49-tui-log-dismiss.sh` | the log belongs to its session: `l` opens it on a finished fetch, a `makepkg` appears so the next `F` is refused by the lock gate, and one `esc` still dismisses the notice, so the refused-`F` path clears the open-log flag before its notice; `/usr` and the package DB stay unchanged and the app exits 0 instead of aborting on the loop's session/log assertion |
 
 41-46 are the Phase 4 chaos level from `NEXT.md`; they need the fault
-injection below. 43, 44 and 45 pin a known gap rather than a fixed behaviour:
-they assert the missing behaviour is *still* missing, so they pass today and go
-red on the day someone implements it — which is when the assertion should be
-inverted, in the same commit as the fix.
+injection below. 43, 44 and 45 each drive a real fault and assert the detection
+it needs: `doctor` on the deleted lock, `check` on the hand install, `install`
+on the stale aurto repo.
 
 01 and 02 are a pair. Passing 01 alone would prove nothing if the harness could
 not detect a real install at all.

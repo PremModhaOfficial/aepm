@@ -10,13 +10,11 @@
 #
 # The harness makes that state real rather than mocking it: a local aurto repo
 # holding auronly 1.0.0, an AUR list offering 2.0.0. The tool sees the AUR
-# update - `check` counts it - so the fact is available to `install` too. Only
-# the TUI says anything about it ("If an AUR package builds now, aurto is
-# stale"), `src/tui/render.rs:425`; the CLI never does. That last assertion is
-# the deliverable and fails on purpose until `install` carries the warning.
+# update - `check` counts it - and `install` carries the same warning the TUI
+# does, from one shared sentence, so a foreground build is never a surprise.
 source /usr/local/lib/sim/lib.sh
 
-echo "scenario: a stale aurto repo is a foreground build risk install never mentions"
+echo "scenario: a stale aurto repo is a foreground build risk install reports"
 
 pkgname=auronly
 repo=/srv/aurto-repo
@@ -61,9 +59,9 @@ status=$?
 assert_eq "$status" "0" "install exits 0"
 assert_contains "$(yay_log)" "-Syuu" "install asked yay for the full upgrade"
 
-# GAP: the sentence exists only in the TUI; the CLI has no aurto staleness gate.
-# When it gains one, this line goes red on purpose — invert it in the same commit.
-assert_false "install still does not report a stale aurto repo" \
+# The deliverable: the CLI says what the TUI already said, so a build that may
+# now hold the terminal is announced before yay is asked to run it.
+assert_true "install reports the stale aurto repo" \
     grep -qi "aurto is stale" "$log"
 
 # The other half of the claim: no build happened here, because the simulated

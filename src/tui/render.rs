@@ -13,7 +13,7 @@ use ratatui::{Frame, Terminal};
 use std::collections::{BTreeSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::commands::install::{INSTALL_COMMAND, Preflight};
+use crate::commands::install::{AURTO_STALE, INSTALL_COMMAND, Preflight};
 use crate::gate::{Gate, GateState};
 use crate::post_install::Receipt;
 use crate::report::{ArtifactState, PrefetchReport, Snapshot, Update};
@@ -431,7 +431,7 @@ fn install_gate_lines(
             format!("{} official update(s).", preflight.official)
         } else {
             format!(
-                "{} official + {} AUR. If an AUR package builds now, aurto is stale: read the PKGBUILD.",
+                "{} official + {} AUR. {AURTO_STALE}",
                 preflight.official, preflight.aur
             )
         };
