@@ -19,12 +19,12 @@ below names one machine, its states, its transitions, and **the one place that
 owns its precedence**. "Owner" means the single function whose control flow
 decides the next state. A second place deciding the same thing is the defect.
 
-Two columns recur:
+Two labels recur, and they are not decoration:
 
 - **Enforced** means a test, an `assert!`, or a type refuses the illegal
-  transition.
-- **Implicit** means a reader must infer it from control flow. Those are the
-  rows this file exists for, and each one names what would prove it.
+  transition, and the row names which.
+- **Not enforced** means the transition is the order of control flow. Those
+  sections say so, and say what would prove it.
 
 ## M1. TUI screens, body and modal stack (`src/tui/mod.rs`)
 
@@ -129,7 +129,7 @@ are untouched by the receipt.
 
 | invariant | enforced by |
 |---|---|
-| `session.is_some() or not log_open` | [`assert!` at the top of every loop iteration](#anchors) |
+| `session.is_some() or not log_open` | [`assert!` at the top of every loop iteration](#anchors), and `sim/49` under a pty |
 | the log never outlives its session | every path that ends a session clears `log_open`; the `assert!` catches a future one that forgets |
 | an attached install never runs concurrently with a fetch | `i` refuses while running, and the gate's `Enter` re-checks |
 | the attestation is never written to disk | it is a local `bool`, set only by `space` |
@@ -137,11 +137,15 @@ are untouched by the receipt.
 The log-flag invariant is the one #45 found missing: dismissing a finished
 session used to leave `log_open = true` with no session to toggle it off, and
 only `r` and `F` cleared it. #57 closed it on both sides, the clearing branch
-and the `assert!`.
+and the `assert!`; `sim/49` opens a log, ends its session with a refused fetch,
+and requires one `Esc` to clear the notice rather than be spent on a stranded
+flag.
 
 **Not enforced:** no type names the composite screen, so the precedence above
-is the order of one `match` and two `if`s. A wrong order is a test failure in
-`sim/35`, not a compile error.
+is the order of one `match` and two `if`s. No unit test covers the ranking; the
+pty scenarios reach it only where they already drive a key (`sim/32` the gate,
+`sim/36` the receipt, `sim/49` the log). A wrong order is a sim failure at best,
+never a compile error.
 
 ## M2. Fetch session (`Phase`)
 
@@ -195,20 +199,29 @@ nothing runs.
 
 Two readers of one probe. `lock::running` asks `pgrep -x
 pacman|yay|makepkg|aurto`; `lock::check` turns the answer into a refusal, and
-`collect_lock` turns the same answer into a report value.
+`collect_lock` turns the same answer into a report value. `doctor` asks it a
+third time, from the pair of answers, because the pair is the diagnosis.
 
-| probe | `lock::check` (every action) | `LockState` (report) | gate |
+| probe | `lock::check` (the gate) | `LockState` (report) | `doctor` (audit) |
 |---|---|---|---|
-| a process matched | `Blocked`, naming the process | `HeldBy(name)` | `Fail` |
-| no match, `db.lck` exists | `Blocked`, "stale lock", never deleted | `Stale(path)` | `Fail` |
-| no match, no file | `Ok` | `None` | `Pass` |
-| `pgrep` exited other than 0 or 1 | `Failed`, exit 2 | the section is `Failed` | `Fail` |
-| `pgrep` exited 0 without printing a name | `Failed`, exit 2 | the section is `Failed` | `Fail` |
+| a process matched, `db.lck` exists | `Blocked`, naming the process | `HeldBy(name)` | `Ok`, "held by {name}" |
+| a process matched, no file | `Blocked`, naming the process | `HeldBy(name)` | `Blocked`, "{lock} is missing while {name} runs" |
+| no match, file exists | `Blocked`, "stale lock", never deleted | `Stale(path)` | `Blocked`, "stale {lock}" |
+| no match, no file | `Ok` | `None` | `Ok`, "no transaction or build running" |
+| `pgrep` exited other than 0 or 1 | `Failed`, exit 2 | the section is `Failed` | the check errors, exit 2 |
+| `pgrep` exited 0 without printing a name | `Failed`, exit 2 | the section is `Failed` | the check errors, exit 2 |
 
 **Who owns precedence:** `lock::check` is the refusal for `fetch`, `install` and
-`check`, and it is always the `lock` gate in both sequences. No caller
-re-implements the rule; `LockState` is observation only and decides nothing.
-`check` and `doctor` report the state; they never refuse on it.
+`check`, and it is always the `lock` gate in both gate sequences (M3). No caller
+re-implements that rule. `LockState` is observation only and decides nothing.
+`check` and `doctor` report the state and never refuse to run: `check` counts a
+non-`None` state as one actionable item, which is why `check` exits 1 while
+still printing the whole report.
+
+One deliberate disagreement: a live process **with** the lock file is `Ok` for
+`doctor` and `Blocked` for the gate. The gate cannot tell a healthy transaction
+from a build that left the file behind, and refusing is the safe read; naming
+which one it is happens to be `doctor`'s whole job.
 
 **Known and inherent:** a `pgrep` that answers before the command starts is a
 TOCTOU gap. A second process can take the database between the probe and the
@@ -352,6 +365,7 @@ purpose, so this table cannot quietly describe an older tree.
 | the lock probe | `src/lock.rs:17` | `pub fn running(runner: &dyn CommandRunner) -> Result<Option<String>, Error> {` |
 | the lock refusal | `src/lock.rs:42` | `pub fn check(config: &Config, runner: &dyn CommandRunner, action: &str) -> Result<(), Error> {` |
 | the lock observation | `src/commands/check.rs:466` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
+| the third reader of the lock probe | `src/commands/doctor.rs:103` | `fn report_lock(` |
 | the clean decision loop | `src/commands/clean.rs:187` | `fn collect_yay(` |
 | the freeze on failure | `src/frontier.rs:363` | `self.frozen = true;` |
 | completion is separate from freezing | `src/frontier.rs:474` | `pub fn is_complete(&self) -> bool {` |
