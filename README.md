@@ -81,7 +81,9 @@ missing, build-pending, built or unknown, and prints the counts, mirror host and
 prints one frame to stdout so a script or a pipe can read it; the exit code is
 `1` when the snapshot is actionable and `2` when collection failed. Without a
 terminal, the interactive form exits `2` and points at `--render-once`.
-`--ascii` replaces every glyph with ASCII, and `NO_COLOR` removes color.
+`--ascii` replaces every glyph with ASCII and drops the palette with it, so an
+ASCII frame is monochrome even when a colour is available. `NO_COLOR` removes
+color and keeps the Unicode glyphs.
 `--no-motion` stops the spinner and the 10 Hz pulse: while a fetch runs the
 frame is redrawn only for a real fact or the once-a-second elapsed label, never
 for the spinner alone.
