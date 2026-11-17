@@ -86,6 +86,24 @@ color and keeps the Unicode glyphs.
 frame is redrawn only for a real fact or the once-a-second elapsed label, never
 for the spinner alone.
 
+Every binding comes from one table. `$XDG_CONFIG_HOME/aepm/tui.conf`
+(`AEPM_TUI_CONFIG` overrides the path) can replace a key, one action per line:
+
+```ini
+[keys]
+quit    = x
+ledger  = L
+refresh = ctrl-r
+```
+
+The actions are `quit`, `interrupt`, `suspend`, `help`, `back`, `ledger`, `down`,
+`up`, `log`, `install`, `refresh`, `fetch`, `confirm` and `attest`. A value is one
+character (`F` and `f` are different keys), `esc`, `enter`, `space`, `tab`, one of
+the arrows, or `ctrl-c` / `^c`. A line that is not in `[keys]`, an unknown action
+name and a key it cannot read all stop the TUI at startup with the file and line,
+instead of being ignored. The file is optional and the TUI never writes it. The
+footer and the help overlay still print the default keys.
+
 Exit codes follow `check`: `0` healthy or done, `1` actionable, `2` a terminal
 or collection error, and `130` when Ctrl-C ends the interactive tree.
 
@@ -159,6 +177,7 @@ An empty value falls back to the default.
 | `AEPM_SNAPPER_CONFIG_DIR` | `/etc/snapper/configs` |
 | `AEPM_SUDOERS` | `/etc/sudoers.d/aepm` |
 | `AEPM_USER_UNIT_DIR` | `$XDG_CONFIG_HOME/systemd/user` or `~/.config/systemd/user` |
+| `AEPM_TUI_CONFIG` | `$XDG_CONFIG_HOME/aepm/tui.conf` or `~/.config/aepm/tui.conf` |
 | `AEPM_STATE` | `$XDG_STATE_HOME/aepm/state.json` |
 | `AEPM_MIN_FREE_BYTES` | `2147483648` (2 GiB) |
 

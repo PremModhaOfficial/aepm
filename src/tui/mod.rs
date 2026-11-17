@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use crossterm::terminal;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -31,6 +31,7 @@ use crate::commands::install;
 use crate::config::Config;
 use crate::error::Error;
 use crate::gate::Gate;
+use crate::keymap::{Action, Keymap};
 use crate::post_install;
 use crate::progress;
 use crate::report::{Snapshot, attention};
@@ -40,6 +41,9 @@ use crate::tui::tree::Tree;
 
 pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
     let config = Config::from_env()?;
+    // Loaded before any frame, so a broken `tui.conf` fails at once and not
+    // silently on the first keypress.
+    let keymap = config.keymap()?;
     let color = use_color(ascii, std::env::var_os("NO_COLOR").is_some());
 
     if render_once {
@@ -62,7 +66,7 @@ pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
         stdout().is_terminal(),
         std::env::var("TERM").ok().as_deref(),
     )?;
-    run_interactive(&config, ascii, color, motion)
+    run_interactive(&config, &keymap, ascii, color, motion)
 }
 
 /// ASCII mode is a no-color mode: the glyph fallback is the signal, and the
@@ -85,7 +89,13 @@ fn ensure_interactive(stdin_tty: bool, stdout_tty: bool, term: Option<&str>) -> 
     Ok(())
 }
 
-fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> Result<(), Error> {
+fn run_interactive(
+    config: &Config,
+    keymap: &Keymap,
+    ascii: bool,
+    color: bool,
+    motion: bool,
+) -> Result<(), Error> {
     guard::install_panic_hook();
     let mut guard = guard::Guard::enter()
         .map_err(|err| Error::failed(format!("cannot enter the terminal: {err}")))?;
@@ -232,12 +242,10 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 // The post-install receipt is read-only and modal.
                 if post_install.is_some() {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Enter => post_install = None,
-                        KeyCode::Char('q') => break,
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Err(Error::Interrupted);
-                        }
+                    match resolve(Context::Receipt, keymap, &key) {
+                        Some(Action::Back | Action::Confirm) => post_install = None,
+                        Some(Action::Quit) => break,
+                        Some(Action::Interrupt) => return Err(Error::Interrupted),
                         _ => {}
                     }
                     dirty = true;
@@ -246,10 +254,10 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                 // The install gate is modal: only attest, the armed install,
                 // cancel and quit are live while it is open.
                 if install_gate.is_some() {
-                    match key.code {
-                        KeyCode::Esc => install_gate = None,
-                        KeyCode::Char(' ') => news_attested = true,
-                        KeyCode::Enter => {
+                    match resolve(Context::Gate, keymap, &key) {
+                        Some(Action::Back) => install_gate = None,
+                        Some(Action::Attest) => news_attested = true,
+                        Some(Action::Confirm) => {
                             let armed = news_attested
                                 && install_gate.as_ref().is_some_and(|open| {
                                     !open.preflight.blocked() && open.preflight.euid.is_some()
@@ -303,25 +311,23 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                                 news_attested = false;
                             }
                         }
-                        KeyCode::Char('q') => break,
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Err(Error::Interrupted);
-                        }
+                        Some(Action::Quit) => break,
+                        Some(Action::Interrupt) => return Err(Error::Interrupted),
                         _ => {}
                     }
                     dirty = true;
                     continue;
                 }
-                match key.code {
-                    KeyCode::Char('q') => {
+                match resolve(Context::Global, keymap, &key) {
+                    Some(Action::Quit) => {
                         // Detach, never kill: the drop below closes our end of the
                         // stream, but the worker keeps the child alive.
                         break;
                     }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::Interrupt) => {
                         return Err(Error::Interrupted);
                     }
-                    KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::Suspend) => {
                         drop(terminal);
                         guard.suspend(&SystemRunner)?;
                         terminal =
@@ -333,11 +339,11 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                         })?;
                         dirty = true;
                     }
-                    KeyCode::Char('?') => {
+                    Some(Action::Help) => {
                         help = !help;
                         dirty = true;
                     }
-                    KeyCode::Esc => {
+                    Some(Action::Back) => {
                         if help {
                             help = false;
                         } else if log_open {
@@ -354,12 +360,12 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                         }
                         dirty = true;
                     }
-                    KeyCode::Char('g') => {
+                    Some(Action::Ledger) => {
                         // A view toggle only; it never touches the fetch or a file.
                         ledger = !ledger;
                         dirty = true;
                     }
-                    KeyCode::Char('j') | KeyCode::Char('k') => {
+                    Some(action @ (Action::Down | Action::Up)) => {
                         // Move the cursor over the rows actually on screen. The
                         // frame is recomputed here because the window depends on
                         // the current snapshot and run, and a cursor must never
@@ -404,24 +410,20 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                                     color,
                                     Some(gates),
                                 );
-                                let delta = if key.code == KeyCode::Char('j') {
-                                    1
-                                } else {
-                                    -1
-                                };
+                                let delta = if action == Action::Down { 1 } else { -1 };
                                 selection = selection.moved(&tree, &plan.slots, delta);
                                 dirty = true;
                             }
                         }
                     }
-                    KeyCode::Char('l') => {
+                    Some(Action::Log) => {
                         // The log exists only after a fetch session starts.
                         if session.is_some() {
                             log_open = !log_open;
                             dirty = true;
                         }
                     }
-                    KeyCode::Char('i') => {
+                    Some(Action::Install) => {
                         if session.as_ref().is_some_and(FetchSession::running) {
                             // One mutation at a time: the fetch owns pacman's lock.
                             session
@@ -436,7 +438,7 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                             dirty = true;
                         }
                     }
-                    KeyCode::Char('r') => {
+                    Some(Action::Refresh) => {
                         if session.as_ref().is_some_and(FetchSession::running) {
                             // The live poll owns the refresh while the fetch runs.
                             session
@@ -452,7 +454,7 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
                             dirty = true;
                         }
                     }
-                    KeyCode::Char('F') => {
+                    Some(Action::Fetch) => {
                         if session.as_ref().is_some_and(FetchSession::running) {
                             // One fetch at a time. No second child.
                             session
@@ -497,6 +499,41 @@ fn run_interactive(config: &Config, ascii: bool, color: bool, motion: bool) -> R
         eprintln!("aepm: fetch detached; pacman may still be running");
     }
     Ok(())
+}
+
+/// Which modal owns the keyboard. A key only means something in a context that
+/// accepts its action, so no global binding can fire under a modal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Context {
+    Global,
+    Gate,
+    Receipt,
+}
+
+/// The actions each context accepts. This is the precedence rule — modal over
+/// global — in one place, not in the order of a match.
+fn accepts(context: Context, action: Action) -> bool {
+    match (context, action) {
+        (Context::Receipt, Action::Quit | Action::Interrupt | Action::Back | Action::Confirm) => {
+            true
+        }
+        (
+            Context::Gate,
+            Action::Quit | Action::Interrupt | Action::Back | Action::Confirm | Action::Attest,
+        ) => true,
+        (Context::Receipt | Context::Gate, _) => false,
+        // Enter and space mean nothing over the static tree.
+        (Context::Global, Action::Confirm | Action::Attest) => false,
+        (Context::Global, _) => true,
+    }
+}
+
+/// Resolve a press to the action this context accepts. The loop and its tests
+/// share this, so a rebound key reaches exactly one arm.
+fn resolve(context: Context, keymap: &Keymap, key: &KeyEvent) -> Option<Action> {
+    keymap
+        .action_for(key)
+        .filter(|action| accepts(context, *action))
 }
 
 /// The install gate screen. It is read-only and never runs `yay`.
@@ -625,7 +662,89 @@ fn collect_snapshot(config: &Config, now: SystemTime) -> Result<Snapshot, Error>
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_interactive, use_color};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{Context, Keymap, ensure_interactive, resolve, use_color};
+    use crate::keymap::Action;
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn the_defaults_resolve_the_actions_the_loop_handles() {
+        let keymap = Keymap::default();
+
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('q'))),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Esc)),
+            Some(Action::Back)
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('F'))),
+            Some(Action::Fetch)
+        );
+        // Enter and space are modal-only; they do nothing over the tree.
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Enter)),
+            None
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char(' '))),
+            None
+        );
+    }
+
+    #[test]
+    fn a_custom_binding_dispatches_the_same_action_as_the_default() {
+        let keymap = Keymap::parse("[keys]\nquit = x\nledger = L\n").expect("keymap");
+
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('x'))),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('L'))),
+            Some(Action::Ledger)
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('q'))),
+            None
+        );
+        assert_eq!(
+            resolve(Context::Global, &keymap, &press(KeyCode::Char('g'))),
+            None
+        );
+    }
+
+    #[test]
+    fn a_modal_rejects_the_global_actions_and_accepts_its_own() {
+        let keymap = Keymap::default();
+
+        assert_eq!(
+            resolve(Context::Gate, &keymap, &press(KeyCode::Char(' '))),
+            Some(Action::Attest)
+        );
+        assert_eq!(
+            resolve(Context::Gate, &keymap, &press(KeyCode::Char('i'))),
+            None
+        );
+        assert_eq!(
+            resolve(Context::Gate, &keymap, &press(KeyCode::Char('g'))),
+            None
+        );
+        assert_eq!(
+            resolve(Context::Receipt, &keymap, &press(KeyCode::Enter)),
+            Some(Action::Confirm)
+        );
+        assert_eq!(
+            resolve(Context::Receipt, &keymap, &press(KeyCode::Char(' '))),
+            None
+        );
+    }
 
     #[test]
     fn ascii_and_no_color_both_disable_the_palette() {
