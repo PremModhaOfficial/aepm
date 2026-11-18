@@ -378,7 +378,7 @@ purpose, so this table cannot quietly describe an older tree.
 | the lock observation | `src/commands/check.rs:466` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
 | the third reader of the lock probe | `src/commands/doctor.rs:103` | `fn report_lock(` |
 | the clean decision loop | `src/commands/clean.rs:187` | `fn collect_yay(` |
-| the freeze on failure | `src/frontier.rs:363` | `self.frozen = true;` |
-| completion is separate from freezing | `src/frontier.rs:474` | `pub fn is_complete(&self) -> bool {` |
+| the freeze on failure | `src/frontier.rs:401` | `self.frozen = true;` |
+| completion is separate from freezing | `src/frontier.rs:512` | `pub fn is_complete(&self) -> bool {` |
 | `Ready` under a freeze draws blocked | `src/tui/live.rs:95` | `fn from_node(state: NodeState, frozen: bool) -> Self {` |
 | the exit-code mapping | `src/error.rs:24` | `pub fn exit_code(&self) -> u8 {` |

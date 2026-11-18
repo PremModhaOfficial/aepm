@@ -36,7 +36,6 @@ release notes.
 | item | why it is open |
 |---|---|
 | #99 | a red `Review` check means "no review happened", but nothing fails the build for that. The PR exists, unmerged, and its checks have not run since it was opened before the rename |
-| #100 | `frontier::tests::a_four_thousand_observation_burst_reduces_inside_the_animation_budget` measures wall-clock, 1 s. Seen at 1.003 s and 1.20 s under load, 0 failures idle. The fix is to measure work, not the host |
 | #101 | a rebound key is dispatched but not advertised: the footer and help overlay print `DEFAULTS`, so a user who rebinds loses the only place the binding is shown |
 | #93 C3 | the palette / `ascii: bool` sweep, 52 call sites, 35 functions taking both, 14 `#[allow(clippy::too_many_arguments)]` in `src/tui/render.rs`. Deferred out of `v0.1.0`: mechanical, no user-visible change, and the highest conflict surface in the tree |
 | #41, #47 | partial upgrade and the remaining implicit state machines. `docs/STATE-MACHINES.md` lists what is declared and unreachable; `scripts/gate-state-machines.sh` holds 22 line anchors so the document cannot drift |
