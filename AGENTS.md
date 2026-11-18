@@ -190,6 +190,7 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `GLOSSARY.md` | The words this project uses. Test names and commits use these, not synonyms |
 | `docs/ANIMATION.md` | DAG execution frontier: readiness, parallel fronts, replay |
 | `docs/STATE-MACHINES.md` | Every implicit machine named: states, transitions, who owns precedence |
+| `docs/FACTORY.md` | The contract every agent run follows: slots, tasks, brakes, brief shape |
 | `NEXT.md` | Working plan: decisions, phases, acceptance criteria |
 | `PENDING.md` | What the release does not ship or prove, each row with the command that shows it |
 | `context.md` | Implementation notes and edge cases |
