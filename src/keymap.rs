@@ -3,10 +3,8 @@
 //! [`DEFAULTS`] is the only place a key names an action. `tui.conf`'s `[keys]`
 //! section replaces them one line at a time. A missing file means defaults; an
 //! unknown action name or an unreadable key is an error at load, never a
-//! silent skip.
-//!
-//! shortcut: the footer text is still static, so a rebound key is not named
-//! there; upgrade when the footer is generated from this table.
+//! silent skip. The footer and the help overlay print [`Keymap::label`], so a
+//! rebound key is advertised with the key that actually fires.
 
 use std::io;
 use std::path::Path;
@@ -215,6 +213,23 @@ impl Keymap {
         }
     }
 
+    /// The key bound to `action`. Every advertisement of a binding prints this,
+    /// never a stored copy of the default, so the footer and the help overlay
+    /// name the key the handler will dispatch.
+    pub fn key(&self, action: Action) -> Option<Key> {
+        self.keys
+            .iter()
+            .find(|(bound, _)| *bound == action)
+            .map(|(_, key)| *key)
+    }
+
+    /// The key to print for `action`. The `?` fallback is unreachable for a
+    /// keymap built by this module, because [`DEFAULTS`] binds every action.
+    pub fn label(&self, action: Action) -> String {
+        self.key(action)
+            .map_or_else(|| "?".to_string(), |key| key.to_string())
+    }
+
     /// What a press means, or `None` when the key is unbound. A key bound to
     /// plain `c` does not fire on Ctrl-C, and `ctrl-c` does not fire on plain
     /// `c`. Other modifiers are ignored, so `F` arrives with Shift held.
@@ -308,6 +323,14 @@ mod tests {
             Some(Action::Quit)
         );
         assert_eq!(keymap.action_for(&press(KeyCode::Char('q'))), None);
+    }
+
+    #[test]
+    fn a_rebound_key_is_the_one_that_is_advertised() {
+        let keymap = Keymap::parse("[keys]\nfetch = f\n").expect("keymap");
+
+        assert_eq!(keymap.label(Action::Fetch), "f");
+        assert_eq!(Keymap::default().label(Action::Fetch), "F");
     }
 
     #[test]

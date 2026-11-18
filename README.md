@@ -66,7 +66,7 @@ its side effects. Each command's acceptance criteria are in `NEXT.md`.
 - `aepm init [--apply]` — print, or with `--apply` write, the user service, timer, and exact sudoers rule. Run it as your user; it prompts for sudo only to install the rule, and never runs `aurto`
 - `aepm check [--json]` — pending updates, disk, lock, caches, timer status
 - `aepm fetch` — free-space gate, `pacman -Syuw` only
-- `aepm install [--yes] [--force]` — news gate, lock check, then `yay -Syuu`. A non-TTY needs `--yes`; an empty trust file needs `--force`. Blocks if the AUR update list cannot be read. Refuses to run as root, because yay and PKGBUILDs must never run as root
+- `aepm install [--yes] [--force]` — news gate, lock check, then `yay -Syuu`. A non-TTY needs `--yes`; an empty trust file needs `--force`. Blocks if the AUR update list cannot be read. Refuses to run as root, because yay and PKGBUILDs must never run as root. After `yay` exits 0 it re-reads `pacman -Qu`: a package the last `fetch` planned that is still pending is a **partial upgrade**, so it exits `2`, names the packages and records no install time rather than calling a half-upgraded system done
 - `aepm clean [--apply]` — dry run by default: prints sizes and the exact commands. `--apply` needs root (sudo) for `paccache` and removes only yay builds older than 30 days whose package is installed. A build is identified by the names in its `.SRCINFO`, or by the package names in its built `*.pkg.tar.*` files when `.SRCINFO` is gone; the directory name is only the pkgbase, which is not an installed name for a split package. A build that names nothing (no `.SRCINFO`, no built package) is kept and printed as `keep (cannot tell what it installs: ...)` rather than guessed
 - `aepm doctor [--json]` — verify timers, limits, repo, journald, the pacman lock
 - `aepm tui [--render-once] [--ascii] [--no-motion]` — dependency tree. Starting it and quitting is read-only; `F` runs the same `fetch` command and draws its real `.part` bytes. `--render-once` prints one frame and works in a pipe. Interactive use needs a terminal. Details in [TUI](#tui).
@@ -134,8 +134,8 @@ character (`F` and `f` are different keys), `esc`, `enter`, `space`, `tab`, one 
 the arrows, or `ctrl-c` / `^c`. A line that is not in `[keys]`, an unknown action
 name, a key it cannot read, and a key another action already uses all stop the TUI
 at startup with the file and line, instead of being ignored. The file is optional
-and the TUI never writes it. The footer and the help overlay still print the
-default keys.
+and the TUI never writes it. The footer and the help overlay print the key
+actually bound, so a rebound key is advertised where it fires.
 
 Exit codes follow `check`: `0` healthy or done, `1` actionable, `2` a terminal
 or collection error, and `130` when Ctrl-C ends the interactive tree.

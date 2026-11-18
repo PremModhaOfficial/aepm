@@ -22,6 +22,7 @@ use crate::error::Error;
 use crate::fetch_source::{FetchExit, FetchMonitor, failure_evidence};
 use crate::frontier::Transition;
 use crate::gate::Gate;
+use crate::keymap::Action;
 use crate::runner::{CommandOutput, CommandRunner, StreamLine};
 use crate::tui::live::{
     Activity, GroupCounts, LiveRun, LiveState, LiveView, Progress, timer_label,
@@ -72,14 +73,28 @@ pub enum Phase {
     },
 }
 
-/// The keys legal in this phase. The session renders them and the frame tests
-/// read them, so a footer can only say what the app says.
-pub fn footer_keys(phase: &Phase, ascii: bool) -> &'static str {
-    match (phase, ascii) {
-        (Phase::Running, false) => "esc detach · g ledger · l log · ? help",
-        (Phase::Running, true) => "esc detach | g ledger | l log | ? help",
-        (_, false) => "esc dismiss · F fetch again · g ledger · l log · q quit · ? help",
-        (_, true) => "esc dismiss | F fetch again | g ledger | l log | q quit | ? help",
+/// The keys legal in this phase, as the action each one means and its label.
+/// The footer resolves them through the one keymap, so a rebound key is named
+/// there. The ASCII separator is `footer_lines`' job, so one list serves both.
+pub fn footer_keys(phase: &Phase) -> &'static [(Action, &'static str)] {
+    const RUNNING: &[(Action, &str)] = &[
+        (Action::Back, "detach"),
+        (Action::Ledger, "ledger"),
+        (Action::Log, "log"),
+        (Action::Help, "help"),
+    ];
+    const FINISHED: &[(Action, &str)] = &[
+        (Action::Back, "dismiss"),
+        (Action::Fetch, "fetch again"),
+        (Action::Ledger, "ledger"),
+        (Action::Log, "log"),
+        (Action::Quit, "quit"),
+        (Action::Help, "help"),
+    ];
+    if *phase == Phase::Running {
+        RUNNING
+    } else {
+        FINISHED
     }
 }
 
@@ -250,12 +265,13 @@ impl FetchSession {
     }
 
     /// The action line and the keys that are legal in this phase.
-    pub fn footer(&self, ascii: bool) -> Footer<'_> {
+    pub fn footer(&self) -> Footer<'_> {
         Footer {
             status: Some(&self.status),
-            keys: Some(footer_keys(&self.phase, ascii)),
+            keys: Some(footer_keys(&self.phase)),
             failed: self.failed,
             repair: self.card.as_ref(),
+            ..Footer::default()
         }
     }
 
@@ -672,7 +688,7 @@ mod tests {
 
         let session = FetchSession::start(&fixture.config, runner, fixture.tree(), at(1), true)
             .expect("session starts");
-        let footer = session.footer(false);
+        let footer = session.footer();
 
         assert_eq!(
             session.argv(),
@@ -682,7 +698,7 @@ mod tests {
             footer.status,
             Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm")
         );
-        assert_eq!(footer.keys, Some("esc detach · g ledger · l log · ? help"));
+        assert_eq!(footer.keys, Some(super::footer_keys(&Phase::Running)));
         assert!(!footer.failed);
         assert!(session.running());
     }
@@ -705,7 +721,7 @@ mod tests {
 
         session.refuse("install blocked: the fetch owns pacman's lock");
         assert_eq!(
-            session.footer(false).status,
+            session.footer().status,
             Some(
                 "fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm · \
                  install blocked: the fetch owns pacman's lock"
@@ -714,7 +730,7 @@ mod tests {
 
         session.refuse("refresh deferred while the fetch runs");
         assert_eq!(
-            session.footer(false).status,
+            session.footer().status,
             Some(
                 "fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm · \
                  refresh deferred while the fetch runs"
@@ -879,11 +895,11 @@ mod tests {
             !session.running()
         }));
         assert!(matches!(session.phase(), Phase::Finished { unproven: 0 }));
-        let footer = session.footer(false);
+        let footer = session.footer();
         assert_eq!(footer.status, Some("fetch: exit 0"));
         assert_eq!(
             footer.keys,
-            Some("esc dismiss · F fetch again · g ledger · l log · q quit · ? help")
+            Some(super::footer_keys(&Phase::Finished { unproven: 0 }))
         );
         assert!(!footer.failed);
         let state = fs::read_to_string(fixture.root.join("state.json")).expect("state file");
@@ -911,7 +927,7 @@ mod tests {
             !session.running()
         }));
 
-        let footer = session.footer(false);
+        let footer = session.footer();
         assert_eq!(
             footer.status,
             Some("fetch failed: exit 1: error: failed to synchronise any database")
@@ -978,7 +994,7 @@ mod tests {
         );
         let view = crate::tui::live::LiveView::build_at(session.tree(), session.live(), at(3));
         assert_eq!(view.spinner, 0, "a finished run draws no spinner");
-        let footer = session.footer(false);
+        let footer = session.footer();
         assert!(
             footer
                 .status
@@ -1012,7 +1028,7 @@ mod tests {
             !session.running()
         }));
 
-        let footer = session.footer(false);
+        let footer = session.footer();
         let status = footer.status.expect("the result is on screen");
         assert!(status.contains("fetch: exit 0"), "{status}");
         assert!(
@@ -1110,7 +1126,7 @@ mod tests {
 
         assert_eq!(session.live().state("tool"), Some(NodeState::Failed));
         assert!(session.live().graph().frozen);
-        let footer = session.footer(false);
+        let footer = session.footer();
         assert_eq!(
             footer.status,
             Some("fetch failed: exit 1: error: failed retrieving file 'tool'")
@@ -1163,7 +1179,7 @@ mod tests {
             !session.running()
         }));
 
-        let footer = session.footer(false);
+        let footer = session.footer();
         assert!(
             footer
                 .status

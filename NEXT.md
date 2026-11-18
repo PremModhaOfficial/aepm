@@ -592,8 +592,8 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
       2,000-package test in `src/tui/tree.rs`.
 - [x] Keymap overrides for the v1 keys: one table in `src/keymap.rs`, the
       `[keys]` section of `tui.conf` (`AEPM_TUI_CONFIG`), and a load error that
-      names the file, the line and the action. Sim 40 proves a rebound key acts
-      and the old one stops.
+      names the file, the line and the action. Sim 40 proves a rebound key acts,
+      the old one stops, and the footer and help overlay name the new one.
 - [x] The palette and the glyph flag travel as one `RenderCtx` instead of an
       `(ascii, color)` pair: 33 signatures and 212 call sites, the 35 golden
       frames byte-identical, and 4 of the 14
@@ -653,8 +653,11 @@ names them; `scripts/gate-state-machines.sh` keeps the tables true.
       `is_complete`, and the exit-code mapping.
 - [x] The gate: a dropped variant or a moved cited line fails `./ci.sh`, and
       `--self-test` proves the checker can fail.
-- [ ] #41 partial upgrade: the declared states and the transitions are still
-      undescribed; the table links to the issue rather than guessing.
+- [x] #41 partial upgrade: `fetch` records the pending names, and `install`
+      re-reads `pacman -Qu` after `yay -Syuu` exits 0 and refuses a name that is
+      still pending: exit 2, the packages named, nothing written. The machine is
+      M9 in `docs/STATE-MACHINES.md`; sim 54 proves the refusal and that the
+      same command completes once the set is empty.
 
 ---
 
@@ -705,4 +708,6 @@ Checked 2026-11-07.
 - [ ] Docker layer cache between CI runs.
 - [x] Coverage report for unit tests: `scripts/gate-coverage.sh`, floor in
       `coverage-floor.txt`, lcov artifact.
-- [ ] Branch protection requiring `CI` and `Sim` before merge.
+- [x] Branch protection requiring `CI` and `Sim` before merge. Live on
+      `main`: strict, both checks required, admins enforced, no force push,
+      no branch deletion (`gh api repos/PremModhaOfficial/aepm/branches/main/protection`).

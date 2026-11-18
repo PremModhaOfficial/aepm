@@ -52,9 +52,25 @@ pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
         // supported size when the terminal cannot report one.
         let (width, height) = terminal::size().unwrap_or((80, 24));
         let snapshot = collect_snapshot(&config, SystemTime::now())?;
+        // The keymap reaches the frame here too, so `--render-once` advertises
+        // the same keys the interactive tree would dispatch.
+        let footer = render::Footer {
+            keymap: Some(&keymap),
+            ..render::Footer::default()
+        };
         print!(
             "{}",
-            render::render_frame(&snapshot, width, height, ctx, false)
+            render::render_frame_status(
+                &snapshot,
+                footer,
+                width,
+                height,
+                ctx,
+                false,
+                false,
+                None,
+                live::Selection::none(),
+            )
         );
         if let Some(error) = snapshot.fatal.clone() {
             return Err(error);
@@ -96,7 +112,6 @@ fn run_interactive(
     ctx: render::RenderCtx,
     motion: bool,
 ) -> Result<(), Error> {
-    let ascii = ctx.ascii;
     guard::install_panic_hook();
     let mut guard = guard::Guard::enter()
         .map_err(|err| Error::failed(format!("cannot enter the terminal: {err}")))?;
@@ -156,7 +171,7 @@ fn run_interactive(
             terminal
                 .draw(|frame| {
                     let (footer, gates, body) =
-                        frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
+                        frame_parts(session.as_ref(), notice.as_ref(), ledger, keymap);
                     // Enforced again at the consumer: the body that was chosen
                     // is the one whose gate list reaches the renderer.
                     debug_assert!(
@@ -363,7 +378,7 @@ fn run_interactive(
                         // footer. Passing `&[]` here planned 9 rows while the
                         // frame drew 3.
                         let (footer, gates, body) =
-                            frame_parts(session.as_ref(), notice.as_ref(), ascii, ledger);
+                            frame_parts(session.as_ref(), notice.as_ref(), ledger, keymap);
                         // The plan must be built from exactly what the frame
                         // draws: the same body, the same gates.
                         debug_assert!(
@@ -569,28 +584,31 @@ impl Notice {
         }
     }
 
-    fn keys(&self, ascii: bool) -> &'static str {
+    fn keys(&self) -> &'static [(Action, &'static str)] {
         match self.kind {
-            NoticeKind::Fetch => fetch_notice_keys(ascii),
-            NoticeKind::Install => install_notice_keys(ascii),
+            NoticeKind::Fetch => fetch_notice_keys(),
+            NoticeKind::Install => install_notice_keys(),
         }
     }
 }
 
-fn fetch_notice_keys(ascii: bool) -> &'static str {
-    if ascii {
-        "F retry | g ledger | r refresh | q quit | ? help"
-    } else {
-        "F retry · g ledger · r refresh · q quit · ? help"
-    }
+fn fetch_notice_keys() -> &'static [(Action, &'static str)] {
+    &[
+        (Action::Fetch, "retry"),
+        (Action::Ledger, "ledger"),
+        (Action::Refresh, "refresh"),
+        (Action::Quit, "quit"),
+        (Action::Help, "help"),
+    ]
 }
 
-fn install_notice_keys(ascii: bool) -> &'static str {
-    if ascii {
-        "i install gate | r refresh | q quit | ? help"
-    } else {
-        "i install gate · r refresh · q quit · ? help"
-    }
+fn install_notice_keys() -> &'static [(Action, &'static str)] {
+    &[
+        (Action::Install, "install gate"),
+        (Action::Refresh, "refresh"),
+        (Action::Quit, "quit"),
+        (Action::Help, "help"),
+    ]
 }
 
 /// Which body is on screen. [`frame_parts`] returns exactly one.
@@ -617,15 +635,20 @@ enum BodyKind {
 fn frame_parts<'a>(
     session: Option<&'a FetchSession>,
     notice: Option<&'a Notice>,
-    ascii: bool,
     ledger: bool,
+    keymap: &'a Keymap,
 ) -> (render::Footer<'a>, Option<&'a [Gate]>, BodyKind) {
     let (footer, gates, body) = match (session, notice) {
-        (Some(live), _) => (live.footer(ascii), Some(live.gates()), BodyKind::Live),
+        (Some(live), _) => {
+            let mut footer = live.footer();
+            footer.keymap = Some(keymap);
+            (footer, Some(live.gates()), BodyKind::Live)
+        }
         (None, Some(notice)) => (
             render::Footer {
                 status: Some(&notice.status),
-                keys: Some(notice.keys(ascii)),
+                keys: Some(notice.keys()),
+                keymap: Some(keymap),
                 failed: notice.failure,
                 repair: None,
             },
@@ -635,7 +658,8 @@ fn frame_parts<'a>(
         (None, None) => (
             render::Footer {
                 status: None,
-                keys: Some(static_keys(ascii, ledger)),
+                keys: Some(static_keys(ledger)),
+                keymap: Some(keymap),
                 failed: false,
                 repair: None,
             },
@@ -665,15 +689,23 @@ fn frame_parts<'a>(
     (footer, gates, body)
 }
 
-/// The static tree's own key line. `--render-once` uses `render_frame`
-/// directly, so its frozen frame is unchanged.
-fn static_keys(ascii: bool, ledger: bool) -> &'static str {
-    match (ascii, ledger) {
-        (false, false) => "q quit · g ledger · ? help · r refresh",
-        (false, true) => "q quit · g tree · ? help · r refresh",
-        (true, false) => "q quit | g ledger | ? help | r refresh",
-        (true, true) => "q quit | g tree | ? help | r refresh",
-    }
+/// The static tree's own key hints. `--render-once` builds the default footer,
+/// so its frozen frame is unchanged. The ASCII separator is applied by
+/// `footer_lines`, so there is one line here, not one per mode.
+fn static_keys(ledger: bool) -> &'static [(Action, &'static str)] {
+    const LEDGER: &[(Action, &str)] = &[
+        (Action::Quit, "quit"),
+        (Action::Ledger, "ledger"),
+        (Action::Help, "help"),
+        (Action::Refresh, "refresh"),
+    ];
+    const TREE: &[(Action, &str)] = &[
+        (Action::Quit, "quit"),
+        (Action::Ledger, "tree"),
+        (Action::Help, "help"),
+        (Action::Refresh, "refresh"),
+    ];
+    if ledger { TREE } else { LEDGER }
 }
 
 fn start_fetch(
@@ -818,13 +850,18 @@ mod tests {
     // a real session, so the two arms a test can build are pinned here.
     #[test]
     fn the_static_body_is_gateless_and_a_notice_owns_its_gates() {
-        let (footer, gates, body) = frame_parts(None, None, false, true);
+        let keymap = Keymap::default();
+        let (footer, gates, body) = frame_parts(None, None, true, &keymap);
         assert_eq!(body, BodyKind::Static);
         assert!(gates.is_none(), "the static body owns no gates");
-        assert_eq!(footer.keys, Some(static_keys(false, true)));
+        assert_eq!(footer.keys, Some(static_keys(true)));
+        assert!(
+            footer.keymap.is_some(),
+            "the footer advertises through the resolved keymap"
+        );
 
         let notice = Notice::install(Ok(0));
-        let (footer, gates, body) = frame_parts(None, Some(&notice), false, false);
+        let (footer, gates, body) = frame_parts(None, Some(&notice), false, &keymap);
         assert_eq!(body, BodyKind::Notice);
         assert!(gates.is_some(), "a notice reports its own gate list");
         assert_eq!(footer.status, Some(notice.status.as_str()));

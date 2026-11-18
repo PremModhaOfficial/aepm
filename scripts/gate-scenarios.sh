@@ -115,6 +115,10 @@ list() {
             continue
         fi
         out=$(expand "$list") || die "$MAP row for $file is broken"
+        # A `none` row (module notes, the map itself) expands to nothing, and a
+        # herestring of nothing is one empty line: `picked[""]` is a bad array
+        # subscript, so a docs-only change under src/ used to crash the gate.
+        [[ -n $out ]] || continue
         mapfile -t scenarios <<< "$out"
         for scenario in "${scenarios[@]}"; do
             picked["$scenario"]=1

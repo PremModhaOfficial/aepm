@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::commands::install::{AURTO_STALE, INSTALL_COMMAND, Preflight};
 use crate::gate::{Gate, GateState};
+use crate::keymap::{Action, Keymap};
 use crate::post_install::Receipt;
 use crate::report::{ArtifactState, PrefetchReport, Snapshot, Update};
 use crate::runner::{StreamKind, StreamLine};
@@ -126,7 +127,13 @@ impl RenderCtx {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Footer<'a> {
     pub status: Option<&'a str>,
-    pub keys: Option<&'a str>,
+    /// The key hints this body advertises, as the action each one means and its
+    /// label. [`footer_lines`] resolves the key through `keymap`, so no surface
+    /// keeps a second copy of a binding.
+    pub keys: Option<&'a [(Action, &'a str)]>,
+    /// The resolved keymap. `None` prints `DEFAULTS`, which is what the static
+    /// frame and the goldens have always shown.
+    pub keymap: Option<&'a Keymap>,
     /// The command failed. A state-file warning on a zero exit is not this.
     pub failed: bool,
     /// When present, the repair card replaces the action status line. It
@@ -134,6 +141,14 @@ pub struct Footer<'a> {
     /// the blocked count.
     pub repair: Option<&'a RepairCard>,
 }
+
+/// What the static footer advertises when the body names no hints. Only the
+/// order and the labels live here; every key is read from the keymap.
+const DEFAULT_HINTS: &[(Action, &str)] = &[
+    (Action::Quit, "quit"),
+    (Action::Help, "help"),
+    (Action::Refresh, "refresh"),
+];
 
 /// A failure summary built from the real exit and the frozen frontier.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -967,18 +982,14 @@ fn draw_with(
     frame.render_widget(Paragraph::new(plan.footer), chunks[2]);
 
     if help {
-        draw_help(frame, area, ctx.ascii);
+        draw_help(frame, area, ctx.ascii, footer.keymap);
     }
 }
 
 fn footer_lines(footer: Footer<'_>, width: usize, ctx: RenderCtx) -> Vec<Line<'static>> {
     let RenderCtx { ascii, color } = ctx;
-    let default_keys = if ascii {
-        "q quit | ? help | r refresh"
-    } else {
-        "q quit · ? help · r refresh"
-    };
-    let keys = footer.keys.unwrap_or(default_keys);
+    let keymap = footer.keymap.cloned().unwrap_or_default();
+    let keys = key_hints(&keymap, ascii, footer.keys.unwrap_or(DEFAULT_HINTS));
     let mut lines = Vec::new();
     if let Some(card) = footer.repair {
         lines.extend(repair_lines(card, width, ctx));
@@ -990,8 +1001,19 @@ fn footer_lines(footer: Footer<'_>, width: usize, ctx: RenderCtx) -> Vec<Line<'s
         };
         lines.push(Line::styled(cell_text(status, width, ascii), style));
     }
-    lines.push(Line::styled(cell_text(keys, width, ascii), dim(color)));
+    lines.push(Line::styled(cell_text(&keys, width, ascii), dim(color)));
     lines
+}
+
+/// One key line, each key resolved through `keymap`, so a rebound key is named
+/// here and nowhere stores the default spelling beside it.
+fn key_hints(keymap: &Keymap, ascii: bool, hints: &[(Action, &str)]) -> String {
+    let separator = if ascii { " | " } else { " · " };
+    hints
+        .iter()
+        .map(|(action, label)| format!("{} {label}", keymap.label(*action)))
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 /// Three observed lines above the keys. The hint is a suggestion, not proof
@@ -2351,34 +2373,45 @@ fn age_label(at: Option<SystemTime>, now: SystemTime) -> Option<String> {
     })
 }
 
-/// The help overlay's rows, for the default bindings. The drift test compares
-/// this table against `keymap::DEFAULTS`, so a bound key cannot lack a row and a
-/// row cannot name a key nothing binds. A rebound key is not advertised here.
-const HELP_ROWS: &[(&str, &str)] = &[
-    ("q", "quit"),
-    ("?", "toggle help"),
-    ("esc", "close, detach or dismiss"),
-    ("j k", "move selection"),
-    ("enter", "install · dismiss receipt"),
-    ("space", "attest news"),
-    ("F", "fetch downloads"),
-    ("g", "tree/ledger"),
-    ("i", "install gate"),
-    ("l", "fetch log"),
-    ("r", "refresh"),
-    ("ctrl-c", "quit with 130"),
-    ("ctrl-z", "suspend"),
+/// The help overlay's rows, as the actions each row names plus its label. The
+/// key column is resolved from the one keymap, so a rebound key is named here
+/// too. The drift test compares these actions against `keymap::DEFAULTS` both
+/// ways, so a bound key cannot lack a row and a row cannot name a dead action.
+const HELP_ROWS: &[(&[Action], &str)] = &[
+    (&[Action::Quit], "quit"),
+    (&[Action::Help], "toggle help"),
+    (&[Action::Back], "close, detach or dismiss"),
+    (&[Action::Down, Action::Up], "move selection"),
+    (&[Action::Confirm], "install · dismiss receipt"),
+    (&[Action::Attest], "attest news"),
+    (&[Action::Fetch], "fetch downloads"),
+    (&[Action::Ledger], "tree/ledger"),
+    (&[Action::Install], "install gate"),
+    (&[Action::Log], "fetch log"),
+    (&[Action::Refresh], "refresh"),
+    (&[Action::Interrupt], "quit with 130"),
+    (&[Action::Suspend], "suspend"),
 ];
 
-fn help_lines(ascii: bool) -> Vec<String> {
-    let label = HELP_ROWS
+fn help_lines(keymap: &Keymap, ascii: bool) -> Vec<String> {
+    let rows: Vec<(String, &str)> = HELP_ROWS
+        .iter()
+        .map(|(actions, label)| {
+            let keys = actions
+                .iter()
+                .map(|action| keymap.label(*action))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (keys, *label)
+        })
+        .collect();
+    let label = rows
         .iter()
         .map(|(keys, _)| display_width(keys))
         .max()
         .unwrap_or(0)
         + 2;
-    HELP_ROWS
-        .iter()
+    rows.iter()
         .map(|(keys, action)| {
             let action = if ascii {
                 action.replace('·', "|")
@@ -2406,8 +2439,9 @@ fn fit_help(mut text: Vec<String>, room: usize) -> Vec<String> {
     text
 }
 
-fn draw_help(frame: &mut Frame, area: Rect, ascii: bool) {
-    let lines = help_lines(ascii);
+fn draw_help(frame: &mut Frame, area: Rect, ascii: bool, keymap: Option<&Keymap>) {
+    let keymap = keymap.cloned().unwrap_or_default();
+    let lines = help_lines(&keymap, ascii);
     let height = area.height.min(lines.len() as u16 + 2);
     let text = fit_help(lines, height.saturating_sub(2) as usize);
     let content = text
@@ -2453,6 +2487,7 @@ mod tests {
     use crate::commands::install::Preflight;
     use crate::frontier::Observed;
     use crate::gate::Gate;
+    use crate::keymap::{Action, Keymap};
     use crate::post_install::Receipt;
     use crate::report::PostInstall;
     use crate::report::{
@@ -2715,7 +2750,7 @@ mod tests {
         for (width, height) in [(40u16, 15u16), (80, 24), (120, 40)] {
             for ascii in [false, true] {
                 // The repair footer is the tall case: up to five rows.
-                let footer = showcase_footer(&card, ascii);
+                let footer = showcase_footer(&card);
                 let plan = super::plan_frame(
                     &snapshot,
                     Some(&run),
@@ -3631,14 +3666,37 @@ mod tests {
         run
     }
 
+    // The fixture key hints, as actions plus labels. No key letters live here;
+    // `footer_lines` resolves them through the one keymap.
+    const REPAIR_HINTS: &[(Action, &str)] = &[
+        (Action::Back, "dismiss"),
+        (Action::Fetch, "fetch again"),
+        (Action::Ledger, "ledger"),
+        (Action::Quit, "quit"),
+        (Action::Help, "help"),
+    ];
+    const LEDGER_HINTS: &[(Action, &str)] = &[
+        (Action::Quit, "quit"),
+        (Action::Ledger, "tree"),
+        (Action::Help, "help"),
+        (Action::Refresh, "refresh"),
+    ];
+    const SHOWCASE_HINTS: &[(Action, &str)] = &[
+        (Action::Back, "dismiss"),
+        (Action::Fetch, "fetch again"),
+        (Action::Ledger, "ledger"),
+        (Action::Log, "log"),
+        (Action::Help, "help"),
+        (Action::Quit, "quit"),
+    ];
+
     /// A session's footer, built from the session's own keys: this file owns
     /// the fixture's status and card, never a second copy of the key line.
     fn fetch_footer() -> Footer<'static> {
         Footer {
             status: Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm"),
-            keys: Some(footer_keys(&Phase::Running, false)),
-            failed: false,
-            repair: None,
+            keys: Some(footer_keys(&Phase::Running)),
+            ..Footer::default()
         }
     }
 
@@ -3655,18 +3713,17 @@ mod tests {
     fn repair_footer(card: &RepairCard) -> Footer<'_> {
         Footer {
             status: Some("fetch failed: exit 2: error: target not found: go"),
-            keys: Some("esc dismiss · F fetch again · g ledger · q quit · ? help"),
+            keys: Some(REPAIR_HINTS),
             failed: true,
             repair: Some(card),
+            ..Footer::default()
         }
     }
 
     fn ledger_footer() -> Footer<'static> {
         Footer {
-            status: None,
-            keys: Some("q quit · g tree · ? help · r refresh"),
-            failed: false,
-            repair: None,
+            keys: Some(LEDGER_HINTS),
+            ..Footer::default()
         }
     }
 
@@ -3928,17 +3985,13 @@ mod tests {
         run
     }
 
-    fn showcase_footer(card: &RepairCard, ascii: bool) -> Footer<'_> {
-        let keys = if ascii {
-            "esc dismiss | F fetch again | g ledger | l log | ? help | q quit"
-        } else {
-            "esc dismiss · F fetch again · g ledger · l log · ? help · q quit"
-        };
+    fn showcase_footer(card: &RepairCard) -> Footer<'_> {
         Footer {
             status: Some("fetch: exit 2 after 6s"),
-            keys: Some(keys),
+            keys: Some(SHOWCASE_HINTS),
             failed: true,
             repair: Some(card),
+            ..Footer::default()
         }
     }
 
@@ -3975,7 +4028,7 @@ mod tests {
             for (width, height) in [(80u16, 24u16), (120, 40), (40, 15)] {
                 for ascii in [false, true] {
                     let footer = if *failing {
-                        showcase_footer(&card, ascii)
+                        showcase_footer(&card)
                     } else {
                         Footer::default()
                     };
@@ -4079,7 +4132,7 @@ mod tests {
         let frame = render_live_frame_status(
             &snapshot,
             &run,
-            showcase_footer(&card, false),
+            showcase_footer(&card),
             120,
             40,
             ctx(false, false),
@@ -4100,7 +4153,7 @@ mod tests {
         let narrow = render_live_frame_status(
             &snapshot,
             &run,
-            showcase_footer(&card, false),
+            showcase_footer(&card),
             80,
             24,
             ctx(false, false),
@@ -4190,7 +4243,7 @@ mod tests {
         let ascii = render_live_frame_status(
             &snapshot,
             &run,
-            showcase_footer(&card, true),
+            showcase_footer(&card),
             120,
             40,
             ctx(true, false),
@@ -4425,9 +4478,13 @@ mod tests {
             &prefetch_snapshot(),
             Footer {
                 status: Some("fetch blocked: pacman is running"),
-                keys: Some("r refresh · q quit · ? help"),
+                keys: Some(&[
+                    (Action::Refresh, "refresh"),
+                    (Action::Quit, "quit"),
+                    (Action::Help, "help"),
+                ]),
                 failed: true,
-                repair: None,
+                ..Footer::default()
             },
             120,
             40,
@@ -4804,9 +4861,15 @@ mod tests {
                 status: Some(
                     "fetch blocked: not enough free space on /: need 5.0 GiB, have 1000 B",
                 ),
-                keys: Some("F retry · g ledger · r refresh · q quit · ? help"),
+                keys: Some(&[
+                    (Action::Fetch, "retry"),
+                    (Action::Ledger, "ledger"),
+                    (Action::Refresh, "refresh"),
+                    (Action::Quit, "quit"),
+                    (Action::Help, "help"),
+                ]),
                 failed: true,
-                repair: None,
+                ..Footer::default()
             },
             120,
             40,
@@ -5607,7 +5670,7 @@ mod tests {
                 render_live_frame_status(
                     &snapshot,
                     &run,
-                    showcase_footer(&card, true),
+                    showcase_footer(&card),
                     width,
                     height,
                     ctx(true, false),
@@ -5624,9 +5687,12 @@ mod tests {
             with_failure.push(Gate::fail("space", "allowlist · 2 maintainer(s)"));
             let separator = Footer {
                 status: Some("fetch: running sudo -n pacman -Syuw · install blocked"),
-                keys: Some("esc detach | g ledger | l log"),
-                failed: false,
-                repair: None,
+                keys: Some(&[
+                    (Action::Back, "detach"),
+                    (Action::Ledger, "ledger"),
+                    (Action::Log, "log"),
+                ]),
+                ..Footer::default()
             };
             let separator_frame = render_live_frame_status(
                 &snapshot,
@@ -6006,37 +6072,96 @@ mod tests {
         assert!(frame.contains("ctrl-z  suspend"));
     }
 
-    /// Every default binding has a help row, and every help row is a binding.
-    /// The keymap is the one table, so the overlay cannot drift from the
-    /// handler it documents.
+    /// One source of truth: a rebound key is named by the footer and the help
+    /// overlay with the key that is actually dispatched.
     #[test]
-    fn every_bound_key_has_a_help_row() {
-        let bound: Vec<String> = crate::keymap::DEFAULTS
+    fn a_rebound_key_is_advertised_in_the_footer_and_the_help_overlay() {
+        let keymap = Keymap::parse("[keys]\nquit = x\nfetch = f\n").expect("keymap");
+        let frame = super::render_frame_status(
+            &snapshot(),
+            Footer {
+                keys: Some(super::DEFAULT_HINTS),
+                keymap: Some(&keymap),
+                ..Footer::default()
+            },
+            80,
+            24,
+            ctx(false, false),
+            true,
+            false,
+            None,
+            Selection::none(),
+        );
+
+        assert!(
+            frame.contains("x quit"),
+            "the footer names the bound quit key"
+        );
+        assert!(
+            !frame.contains("q quit"),
+            "the old quit key is not advertised"
+        );
+        let help = super::help_lines(&keymap, false);
+        assert!(
+            help.iter()
+                .any(|row| row.starts_with("f ") && row.contains("fetch downloads")),
+            "the help overlay names the bound fetch key: {help:?}"
+        );
+        assert!(frame.contains("fetch downloads"), "the overlay is drawn");
+        assert!(
+            !frame.contains("F       fetch"),
+            "the old fetch key is not advertised"
+        );
+    }
+
+    /// With nothing rebound the resolved keymap prints exactly the v1 bytes.
+    #[test]
+    fn the_default_keymap_renders_the_same_footer_and_help() {
+        let frame = super::render_frame_status(
+            &snapshot(),
+            Footer {
+                keys: Some(super::DEFAULT_HINTS),
+                keymap: Some(&Keymap::default()),
+                ..Footer::default()
+            },
+            80,
+            24,
+            ctx(false, false),
+            true,
+            false,
+            None,
+            Selection::none(),
+        );
+
+        assert_eq!(
+            frame,
+            render_frame(&snapshot(), 80, 24, ctx(false, false), true)
+        );
+    }
+
+    /// Every default action has a help row, and every help row is an action.
+    /// The keymap is the one table, so the overlay cannot drift from the
+    /// handler it documents, and a rebound key still has its row.
+    #[test]
+    fn every_bound_action_has_a_help_row() {
+        let bound: Vec<Action> = crate::keymap::DEFAULTS
             .iter()
-            .map(|(_, _, key)| key.to_string())
+            .map(|(_, action, _)| *action)
             .collect();
-        for known in [
-            "q", "esc", "j", "k", "space", "enter", "F", "ctrl-c", "ctrl-z",
-        ] {
+        let advertised: Vec<Action> = super::HELP_ROWS
+            .iter()
+            .flat_map(|(actions, _)| actions.iter().copied())
+            .collect();
+        for action in &bound {
             assert!(
-                bound.contains(&known.to_string()),
-                "missing {known}: {bound:?}"
+                advertised.contains(action),
+                "{action:?} is bound but has no help row: {advertised:?}"
             );
         }
-        let labels: Vec<&str> = super::HELP_ROWS
-            .iter()
-            .flat_map(|(keys, _)| keys.split_whitespace())
-            .collect();
-        for key in &bound {
+        for action in &advertised {
             assert!(
-                labels.contains(&key.as_str()),
-                "`{key}` is bound but has no help row: {bound:?}"
-            );
-        }
-        for label in &labels {
-            assert!(
-                bound.iter().any(|key| key == label),
-                "help row `{label}` names a key nothing binds: {bound:?}"
+                bound.contains(action),
+                "help row names {action:?}, which nothing binds: {bound:?}"
             );
         }
     }
@@ -6044,19 +6169,28 @@ mod tests {
     #[test]
     fn fit_help_names_the_rows_it_cannot_show() {
         let rows = super::HELP_ROWS.len();
-        let none = super::fit_help(super::help_lines(false), 1);
+        let none = super::fit_help(super::help_lines(&Keymap::default(), false), 1);
         assert_eq!(none, vec![format!("{rows} rows, taller window")]);
-        let one = super::fit_help(super::help_lines(false), 2);
+        let one = super::fit_help(super::help_lines(&Keymap::default(), false), 2);
         assert_eq!(one.len(), 2);
         assert_eq!(one[1], format!("+{} more rows, taller window", rows - 1));
-        assert_eq!(super::fit_help(super::help_lines(false), rows).len(), rows);
+        assert_eq!(
+            super::fit_help(super::help_lines(&Keymap::default(), false), rows).len(),
+            rows
+        );
     }
 
     #[test]
     fn the_help_popup_grows_to_its_rows() {
         // The old 12-row cap clipped the thirteenth row; every one is on screen.
         let frame = render_frame(&snapshot(), 80, 24, ctx(false, false), true);
-        for (keys, action) in super::HELP_ROWS {
+        let keymap = Keymap::default();
+        for (actions, action) in super::HELP_ROWS {
+            let keys = actions
+                .iter()
+                .map(|action| keymap.label(*action))
+                .collect::<Vec<_>>()
+                .join(" ");
             assert!(
                 frame.contains(&format!("{keys} ")),
                 "help row `{keys}` is clipped"
@@ -6399,7 +6533,7 @@ mod tests {
             render_live_frame_status(
                 &showcase_snapshot(),
                 &showcase_run(),
-                showcase_footer(&showcase_card(), false),
+                showcase_footer(&showcase_card()),
                 120,
                 40,
                 ctx(false, false),
@@ -6415,7 +6549,7 @@ mod tests {
             render_live_frame_status(
                 &showcase_snapshot(),
                 &showcase_run(),
-                showcase_footer(&showcase_card(), false),
+                showcase_footer(&showcase_card()),
                 80,
                 24,
                 ctx(false, false),
@@ -6431,7 +6565,7 @@ mod tests {
             render_live_frame_status(
                 &showcase_snapshot(),
                 &showcase_run(),
-                showcase_footer(&showcase_card(), true),
+                showcase_footer(&showcase_card()),
                 80,
                 24,
                 ctx(true, false),
@@ -6447,7 +6581,7 @@ mod tests {
             render_live_frame_status(
                 &showcase_snapshot(),
                 &showcase_run(),
-                showcase_footer(&showcase_card(), true),
+                showcase_footer(&showcase_card()),
                 120,
                 40,
                 ctx(true, false),
