@@ -101,9 +101,10 @@ fn the_frame_budget_holds_with_two_thousand_packages() {
     let run = LiveRun::plan(&tree, now()).expect("the frontier plans");
     let footer = Footer {
         status: Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm"),
-        keys: Some("esc detach | g ledger | l log | ? help"),
-        failed: false,
-        repair: None,
+        keys: Some(aepm::tui::fetch_session::footer_keys(
+            &aepm::tui::fetch_session::Phase::Running,
+        )),
+        ..Footer::default()
     };
 
     // One warm-up frame so the measurement excludes first-touch allocation.
