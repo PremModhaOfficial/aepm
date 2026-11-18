@@ -188,6 +188,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   reports nothing, because that head has its own run and a verdict about it from
   an older review would be a lie; the check it left on the older commit is read
   by no rollup, because checks are per-commit.
+- **Required:** `Review Gate` is a required status check on `main` since
+  `#115` made a push review its own head. The context that gates a PR is the
+  check-run written onto that head, not the job's own check, which is anchored
+  to the default branch (`PR-AGENT.md` D32).
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
   the verdict, and it is requireable because every head with a review run of its
   own gets a `Review Gate` conclusion on itself.
