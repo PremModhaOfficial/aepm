@@ -75,6 +75,12 @@ jobs:
           [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
           head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
+          # An unreadable head is not "superseded": the stale branch below would
+          # then skip the gate and report a pass. Fail loudly instead.
+          if [[ -z "$head" ]]; then
+            echo "::error::cannot read the head of PR $pr; refusing to report a pass"
+            exit 1
+          fi
           # Required checks are per commit, so a run whose SHA is no longer the
           # PR head can neither pass nor fail for the current head: GitHub does
           # not attach it there. Failing it only punished a force-push, which
