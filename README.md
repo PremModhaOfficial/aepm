@@ -134,8 +134,8 @@ character (`F` and `f` are different keys), `esc`, `enter`, `space`, `tab`, one 
 the arrows, or `ctrl-c` / `^c`. A line that is not in `[keys]`, an unknown action
 name, a key it cannot read, and a key another action already uses all stop the TUI
 at startup with the file and line, instead of being ignored. The file is optional
-and the TUI never writes it. The footer and the help overlay still print the
-default keys.
+and the TUI never writes it. The footer and the help overlay print the key
+actually bound, so a rebound key is advertised where it fires.
 
 Exit codes follow `check`: `0` healthy or done, `1` actionable, `2` a terminal
 or collection error, and `130` when Ctrl-C ends the interactive tree.

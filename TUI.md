@@ -765,8 +765,8 @@ All keys come from the keymap; every one is rebindable in `tui.conf`. The v1
 action names, in `src/keymap.rs`, are `quit`, `interrupt`, `suspend`, `help`,
 `back`, `ledger`, `down`, `up`, `log`, `install`, `refresh`, `fetch`, `confirm`
 and `attest`. The footer shows only keys valid in the current context, in
-priority order, and truncates at the right edge rather than wrapping. It still
-prints the defaults: a rebound key is dispatched but not advertised.
+priority order, and truncates at the right edge rather than wrapping. It prints the resolved
+binding from the same keymap, so a rebound key is dispatched and advertised.
 
 Raw mode means Ctrl-C and Ctrl-Z arrive as key events, not signals. The app
 handles both and restores the terminal before exiting or suspending. No action

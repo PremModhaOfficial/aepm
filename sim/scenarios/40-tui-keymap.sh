@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# `tui.conf`'s [keys] section is the keymap: a rebound key acts and the old one
-# stops, and a keymap that does not parse stops the binary instead of being
-# ignored.
+# `tui.conf`'s [keys] section is the keymap: a rebound key acts, the old one
+# stops, and the footer and help overlay name the key actually bound. A keymap
+# that does not parse stops the binary instead of being ignored.
 source /usr/local/lib/sim/lib.sh
 
 echo "scenario: key overrides are dispatched, and a bad keymap fails loudly"
@@ -48,6 +48,29 @@ else
         | timeout 10 runuser -l builder -c 'script -qec "stty rows 40 cols 120; aepm tui" /dev/null' \
         >"$screen" 2>&1
     assert_eq "$?" "0" "the rebound key quits with exit 0"
+
+    # 2b. The advertisement follows the binding. A `--render-once` frame
+    #     names `x quit`, and a refused fetch's footer offers `f retry` for
+    #     `fetch = f`; neither prints the default key the user replaced.
+    printf '[keys]\nquit = x\nfetch = f\n' >"$conf"
+    chown builder:builder "$conf"
+    out=$(runuser -l builder -c 'aepm tui --render-once' 2>&1)
+    assert_contains "$out" "x quit" "the footer names the rebound quit key"
+    assert_false "the footer no longer names the default quit key" \
+        bash -c 'printf "%s" "$1" | grep -q "q quit"' _ "$out"
+
+    # The lock gate refuses without running pacman, so the notice footer is the
+    # only thing that changed. It must name the rebound fetch key.
+    touch /var/lib/pacman/db.lck
+    (sleep 1; printf 'f'; sleep 1; printf 'x'; sleep 1) \
+        | timeout 10 runuser -l builder -c 'script -qec "stty rows 40 cols 120; aepm tui" /dev/null' \
+        >"$screen" 2>&1
+    assert_eq "$?" "0" "the rebound key quit after the refused fetch"
+    rm -f /var/lib/pacman/db.lck
+    clean=$(sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][A-Za-z0-9]//g' "$screen" | tr -d '\r')
+    assert_contains "$clean" "f retry" "the notice footer names the rebound fetch key"
+    assert_false "the notice footer no longer names the default fetch key" \
+        bash -c 'printf "%s" "$1" | grep -q "F retry"' _ "$clean"
 
     # 3. No file means the defaults, so `q` quits again.
     rm -f "$conf"

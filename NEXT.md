@@ -592,8 +592,8 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
       2,000-package test in `src/tui/tree.rs`.
 - [x] Keymap overrides for the v1 keys: one table in `src/keymap.rs`, the
       `[keys]` section of `tui.conf` (`AEPM_TUI_CONFIG`), and a load error that
-      names the file, the line and the action. Sim 40 proves a rebound key acts
-      and the old one stops.
+      names the file, the line and the action. Sim 40 proves a rebound key acts,
+      the old one stops, and the footer and help overlay name the new one.
 - [ ] No mouse or themes in v1. `tui.conf` exists, but `[keys]` is the only
       section it reads.
 
