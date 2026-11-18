@@ -36,7 +36,7 @@ release notes.
 | item | why it is open |
 |---|---|
 | #93 C3 | the palette / `ascii: bool` sweep, 52 call sites, 35 functions taking both, 14 `#[allow(clippy::too_many_arguments)]` in `src/tui/render.rs`. Deferred out of `v0.1.0`: mechanical, no user-visible change, and the highest conflict surface in the tree |
-| #41, #47 | partial upgrade and the remaining implicit state machines. `docs/STATE-MACHINES.md` lists what is declared and unreachable; `scripts/gate-state-machines.sh` holds 22 line anchors so the document cannot drift |
+| #41, report side | the refusal shipped: `install` compares the last fetch's pending names with `pacman -Qu` and exits 2, `sim 54`. `check` still derives `PartialUpgrade` from `pacman.log`, so the two evidence paths can disagree | one source: `check` reading `State::last_fetch_pending_names` the way `install` does |
 | #29 | the TUI v2 shell. Not planned: the tree pays for panels nobody asked for |
 
 ## Housekeeping

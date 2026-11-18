@@ -4,6 +4,12 @@
 # The simulation cannot prompt for a password. sudoers lets `installer` run
 # exactly this file, and the file accepts no arguments and always performs the
 # one upgrade install needs. Nothing else about pacman is allowed through sudo.
+#
+# Fault injection: a name in /etc/sim/sim-upgrade-ignore is held back from the
+# upgrade with pacman's own `--ignore`, so the helper exits 0 having upgraded
+# everything else. That is a partial upgrade the helper calls a success, which
+# is the state scenario 54 needs; the file is absent in every other scenario,
+# so their transactions are unchanged.
 set -euo pipefail
 
 if (($# != 0)); then
@@ -11,4 +17,11 @@ if (($# != 0)); then
     exit 64
 fi
 
-exec /usr/bin/pacman -Syu --noconfirm
+ignore=()
+if [[ -s /etc/sim/sim-upgrade-ignore ]]; then
+    while IFS= read -r name; do
+        [[ -n $name ]] && ignore+=("--ignore=$name")
+    done </etc/sim/sim-upgrade-ignore
+fi
+
+exec /usr/bin/pacman -Syu --noconfirm "${ignore[@]}"

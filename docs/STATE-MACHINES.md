@@ -341,6 +341,28 @@ Three typed failures, mapped once.
 nothing but hand it to `ExitCode`. A command that wants a different code must
 return a different error, not compute one.
 
+## M9. Partial upgrade (`State::last_fetch_pending_names`)
+
+A partial upgrade is a name the last successful `fetch` planned that is still
+pending after `yay -Syuu` exits 0. The two sets are package names, never
+counts: a count cannot tell a finished upgrade from a different unfinished one.
+
+| planned ∩ still pending (`pacman -Qu`) | state after `install` | writes |
+|---|---|---|
+| empty | the upgrade is complete: the install time is recorded | the state file, as today |
+| non-empty | `Failed`, exit 2, one sentence naming the packages | **nothing**: no state, no package DB, no `/usr` |
+| the fetch recorded no names | `Ok` with a warning that it cannot be told | the state file, as today |
+
+**Who owns precedence:** `install::check_partial_upgrade`. It runs only after
+the helper returned 0, and it is the only place that decides. `check`'s
+`PartialUpgrade` reads `pacman.log` as evidence and refuses nothing, so the two
+never contradict each other: one writes nothing, the other is the refusal.
+
+**Known and inherent:** the set is the last fetch's, so a `pacman -Sy` in
+between can make new packages pending that the set never named. Those are the
+next fetch's business, not a partial upgrade, and `install` is right to leave
+them to it.
+
 ## Declared but unreachable
 
 States the model declares and no path produces. Each is a documentation fact
@@ -350,7 +372,6 @@ until its issue closes it; none is a bug in a transition.
 |---|---|---|
 | `Cached` | only `Unknown` exists; `Yes`/`No` deleted, no producer could set them | 66 |
 | `Counts.held` | no IgnorePkg or IgnoreGroup parser | 67 |
-| partial-upgrade transitions | declared, transitions unimplemented | 41 |
 
 ## Anchors
 
@@ -370,7 +391,8 @@ purpose, so this table cannot quietly describe an older tree.
 | the modal action allow-list | `src/tui/mod.rs:512` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:61` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:355` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
-| the fetch gate order | `src/commands/fetch.rs:102` | `pub fn plan_observed(` |
+| the fetch gate order | `src/commands/fetch.rs:103` | `pub fn plan_observed(` |
+| the partial-upgrade refusal | `src/commands/install.rs:339` | `fn check_partial_upgrade(` |
 | the install gate order | `src/commands/install.rs:53` | `pub fn preflight(config: &Config, runner: &dyn CommandRunner) -> Preflight {` |
 | the install arming verdict | `src/commands/install.rs:44` | `pub fn blocked(&self) -> bool {` |
 | the lock probe | `src/lock.rs:17` | `pub fn running(runner: &dyn CommandRunner) -> Result<Option<String>, Error> {` |
