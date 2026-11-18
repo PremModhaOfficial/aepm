@@ -723,15 +723,27 @@ mod tests {
             ..Snapshot::default()
         };
         let frame_start = Instant::now();
-        let mut frame_text =
-            crate::tui::render::render_live_frame(&snapshot, &run, 120, 40, false, true, false);
+        let mut frame_text = crate::tui::render::render_live_frame(
+            &snapshot,
+            &run,
+            120,
+            40,
+            crate::tui::render::RenderCtx::new(false, true),
+            false,
+        );
         let mut frame = frame_start.elapsed();
         // The suite runs in parallel, so the frame is the best of three: the
         // minimum is the least polluted sample and the bound stays honest.
         for _ in 0..2 {
             let start = Instant::now();
-            frame_text =
-                crate::tui::render::render_live_frame(&snapshot, &run, 120, 40, false, true, false);
+            frame_text = crate::tui::render::render_live_frame(
+                &snapshot,
+                &run,
+                120,
+                40,
+                crate::tui::render::RenderCtx::new(false, true),
+                false,
+            );
             frame = frame.min(start.elapsed());
         }
 

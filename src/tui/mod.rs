@@ -45,6 +45,7 @@ pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
     // silently on the first keypress.
     let keymap = config.keymap()?;
     let color = use_color(ascii, std::env::var_os("NO_COLOR").is_some());
+    let ctx = render::RenderCtx::new(ascii, color);
 
     if render_once {
         // A pipe diagnostic must work without a tty. Fall back to the compact
@@ -64,8 +65,7 @@ pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
                 footer,
                 width,
                 height,
-                ascii,
-                color,
+                ctx,
                 false,
                 false,
                 None,
@@ -83,7 +83,7 @@ pub fn run(render_once: bool, ascii: bool, motion: bool) -> Result<(), Error> {
         stdout().is_terminal(),
         std::env::var("TERM").ok().as_deref(),
     )?;
-    run_interactive(&config, &keymap, ascii, color, motion)
+    run_interactive(&config, &keymap, ctx, motion)
 }
 
 /// ASCII mode is a no-color mode: the glyph fallback is the signal, and the
@@ -109,8 +109,7 @@ fn ensure_interactive(stdin_tty: bool, stdout_tty: bool, term: Option<&str>) -> 
 fn run_interactive(
     config: &Config,
     keymap: &Keymap,
-    ascii: bool,
-    color: bool,
+    ctx: render::RenderCtx,
     motion: bool,
 ) -> Result<(), Error> {
     guard::install_panic_hook();
@@ -188,8 +187,7 @@ fn run_interactive(
                                 .expect("BodyKind::Live is only returned with a session")
                                 .live(),
                             footer,
-                            ascii,
-                            color,
+                            ctx,
                             help,
                             ledger,
                             gates,
@@ -199,8 +197,7 @@ fn run_interactive(
                             frame,
                             &snapshot,
                             footer,
-                            ascii,
-                            color,
+                            ctx,
                             help,
                             ledger,
                             gates,
@@ -209,20 +206,14 @@ fn run_interactive(
                     }
                     if log_open {
                         if let Some(live) = session.as_ref() {
-                            render::draw_log(frame, live.lines(), ascii, color);
+                            render::draw_log(frame, live.lines(), ctx);
                         }
                     }
                     if let Some(open) = install_gate.as_ref() {
-                        render::draw_install_gate(
-                            frame,
-                            &open.preflight,
-                            news_attested,
-                            ascii,
-                            color,
-                        );
+                        render::draw_install_gate(frame, &open.preflight, news_attested, ctx);
                     }
                     if let Some(receipt) = post_install.as_ref() {
-                        render::draw_post_install(frame, receipt, ascii, color);
+                        render::draw_post_install(frame, receipt, ctx);
                     }
                 })
                 .map_err(|err| Error::failed(format!("cannot draw the terminal: {err}")))?;
@@ -400,8 +391,7 @@ fn run_interactive(
                             footer,
                             width,
                             height,
-                            ascii,
-                            color,
+                            ctx,
                             gates,
                         );
                         // The forest the cursor walks is the one the plan

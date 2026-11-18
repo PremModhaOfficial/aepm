@@ -35,7 +35,7 @@ release notes.
 
 | item | why it is open |
 |---|---|
-| #93 C3 | the palette / `ascii: bool` sweep, 52 call sites, 35 functions taking both, 14 `#[allow(clippy::too_many_arguments)]` in `src/tui/render.rs`. Deferred out of `v0.1.0`: mechanical, no user-visible change, and the highest conflict surface in the tree |
+| #93 C3 | the palette / `ascii: bool` pair is gone: one `RenderCtx` replaces it in 33 signatures and 212 call sites, and 4 of the 14 `#[allow(clippy::too_many_arguments)]` went with it (`grep -c too_many_arguments src/tui/render.rs` → 10). The 10 left are not a face-flag problem: `render_live_frame_status` carries 10 arguments and the rest 8 to 11, because each carries the frame's own layout inputs (`width`, `room`, `slots`, `selection`). Folding those is a second input type, not this sweep |
 | #41, report side | the refusal shipped: `install` compares the last fetch's pending names with `pacman -Qu` and exits 2, `sim 54`. `check` still derives `PartialUpgrade` from `pacman.log`, so the two evidence paths can disagree | one source: `check` reading `State::last_fetch_pending_names` the way `install` does |
 | #29 | the TUI v2 shell. Not planned: the tree pays for panels nobody asked for |
 

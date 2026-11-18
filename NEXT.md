@@ -594,6 +594,11 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
       `[keys]` section of `tui.conf` (`AEPM_TUI_CONFIG`), and a load error that
       names the file, the line and the action. Sim 40 proves a rebound key acts,
       the old one stops, and the footer and help overlay name the new one.
+- [x] The palette and the glyph flag travel as one `RenderCtx` instead of an
+      `(ascii, color)` pair: 33 signatures and 212 call sites, the 35 golden
+      frames byte-identical, and 4 of the 14
+      `#[allow(clippy::too_many_arguments)]` removed. The 10 left carry layout
+      inputs, not face flags, and stay named in `PENDING.md` under #93 C3.
 - [ ] No mouse or themes in v1. `tui.conf` exists, but `[keys]` is the only
       section it reads.
 

@@ -98,6 +98,27 @@ fn palette(ascii: bool, color: bool) -> bool {
     color && !ascii
 }
 
+/// The two face flags a frame is drawn with: the glyph set and the palette.
+///
+/// They were passed as a `(ascii, color)` pair through every layer, which is
+/// one argument of noise per call and one place per function to get the order
+/// wrong. `color` is the gated value, not the caller's request: [`palette`] is
+/// applied once here, so no renderer below can paint the ASCII tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderCtx {
+    pub ascii: bool,
+    pub color: bool,
+}
+
+impl RenderCtx {
+    pub fn new(ascii: bool, color: bool) -> Self {
+        Self {
+            ascii,
+            color: palette(ascii, color),
+        }
+    }
+}
+
 /// The optional action line above the key hint.
 ///
 /// The static frame passes [`Footer::default`], so its bytes never change.
@@ -172,8 +193,7 @@ pub fn render_frame(
     snapshot: &Snapshot,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
 ) -> String {
     render_with(
@@ -182,8 +202,7 @@ pub fn render_frame(
         Footer::default(),
         width,
         height,
-        ascii,
-        color,
+        ctx,
         help,
         false,
         None,
@@ -198,8 +217,7 @@ pub fn render_live_frame(
     run: &LiveRun,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
 ) -> String {
     render_with(
@@ -208,8 +226,7 @@ pub fn render_live_frame(
         Footer::default(),
         width,
         height,
-        ascii,
-        color,
+        ctx,
         help,
         false,
         None,
@@ -226,8 +243,7 @@ pub fn render_live_frame_status(
     footer: Footer<'_>,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
@@ -239,8 +255,7 @@ pub fn render_live_frame_status(
         footer,
         width,
         height,
-        ascii,
-        color,
+        ctx,
         help,
         ledger,
         gates,
@@ -251,21 +266,19 @@ pub fn render_live_frame_status(
 /// Render the static frame with a status line, for a refused action that has
 /// no live run to show.
 #[allow(clippy::too_many_arguments)] // the ledger goldens read the flat frame inputs
-#[allow(clippy::too_many_arguments)] // one call site per renderer entry point
 pub fn render_frame_status(
     snapshot: &Snapshot,
     footer: Footer<'_>,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
     selection: Selection,
 ) -> String {
     render_with(
-        snapshot, None, footer, width, height, ascii, color, help, ledger, gates, selection,
+        snapshot, None, footer, width, height, ctx, help, ledger, gates, selection,
     )
 }
 
@@ -276,8 +289,7 @@ fn render_with(
     footer: Footer<'_>,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
@@ -292,7 +304,7 @@ fn render_with(
     terminal
         .draw(|frame| {
             draw_with(
-                frame, snapshot, run, footer, ascii, color, help, ledger, gates, selection,
+                frame, snapshot, run, footer, ctx, help, ledger, gates, selection,
             )
         })
         .expect("draw frame");
@@ -316,8 +328,7 @@ fn buffer_text(buffer: &Buffer, width: u16) -> String {
 
 /// Draw the captured fetch log over the frame. The newest lines that fit are
 /// shown; every line crosses the same untrusted-cell gate as the tree.
-pub fn draw_log(frame: &mut Frame, lines: &VecDeque<StreamLine>, ascii: bool, color: bool) {
-    let color = palette(ascii, color);
+pub fn draw_log(frame: &mut Frame, lines: &VecDeque<StreamLine>, ctx: RenderCtx) {
     let area = frame.area();
     if area.width < 24 || area.height < 6 {
         return;
@@ -331,7 +342,7 @@ pub fn draw_log(frame: &mut Frame, lines: &VecDeque<StreamLine>, ascii: bool, co
         height,
     );
     frame.render_widget(Clear, popup);
-    let block = frame_block("fetch log", ascii);
+    let block = frame_block("fetch log", ctx.ascii);
     frame.render_widget(block, popup);
     let inner = Rect::new(
         popup.x.saturating_add(1),
@@ -339,13 +350,7 @@ pub fn draw_log(frame: &mut Frame, lines: &VecDeque<StreamLine>, ascii: bool, co
         popup.width.saturating_sub(2),
         popup.height.saturating_sub(2),
     );
-    let text = log_lines(
-        lines,
-        inner.width as usize,
-        inner.height as usize,
-        ascii,
-        color,
-    );
+    let text = log_lines(lines, inner.width as usize, inner.height as usize, ctx);
     frame.render_widget(Paragraph::new(text), inner);
 }
 
@@ -353,9 +358,9 @@ fn log_lines(
     lines: &VecDeque<StreamLine>,
     width: usize,
     height: usize,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     if lines.is_empty() {
         return vec![Line::styled(
             cell_text("(no output yet)", width, ascii),
@@ -381,14 +386,7 @@ fn log_lines(
 /// It shows the checks that actually ran, the exact command the CLI would run,
 /// and the session-local news attestation. The action key arrives with the
 /// attached-install slice; this overlay never runs `yay`.
-pub fn draw_install_gate(
-    frame: &mut Frame,
-    preflight: &Preflight,
-    attested: bool,
-    ascii: bool,
-    color: bool,
-) {
-    let color = palette(ascii, color);
+pub fn draw_install_gate(frame: &mut Frame, preflight: &Preflight, attested: bool, ctx: RenderCtx) {
     let area = frame.area();
     if area.width < 40 || area.height < 12 {
         return;
@@ -396,12 +394,12 @@ pub fn draw_install_gate(
     // The gate is a screen, not a small modal: it covers the frame so no stale
     // footer advertises keys that the modal does not accept.
     frame.render_widget(Clear, area);
-    let separator = if ascii { "|" } else { "·" };
+    let separator = if ctx.ascii { "|" } else { "·" };
     let title = format!(
         " Install {separator} {} ",
         package_count(preflight.official + preflight.aur)
     );
-    let block = frame_block(title, ascii);
+    let block = frame_block(title, ctx.ascii);
     frame.render_widget(block, area);
     let inner = Rect::new(
         area.x.saturating_add(2),
@@ -409,7 +407,7 @@ pub fn draw_install_gate(
         area.width.saturating_sub(4),
         area.height.saturating_sub(2),
     );
-    let text = install_gate_lines(preflight, attested, inner.width as usize, ascii, color);
+    let text = install_gate_lines(preflight, attested, inner.width as usize, ctx);
     frame.render_widget(Paragraph::new(text), inner);
 }
 
@@ -417,9 +415,9 @@ fn install_gate_lines(
     preflight: &Preflight,
     attested: bool,
     width: usize,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let mut lines = vec![Line::styled(cell_text("PRE-FLIGHT", width, ascii), bold())];
     for gate in &preflight.gates {
@@ -427,11 +425,10 @@ fn install_gate_lines(
             lines.push(gate_line(
                 &Gate::pass("news", "attested for this session"),
                 width,
-                ascii,
-                color,
+                ctx,
             ));
         } else {
-            lines.push(gate_line(gate, width, ascii, color));
+            lines.push(gate_line(gate, width, ctx));
         }
     }
     if !attested {
@@ -490,8 +487,7 @@ pub fn render_install_gate(
     attested: bool,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
 ) -> String {
     if width == 0 || height == 0 {
         return String::new();
@@ -499,7 +495,7 @@ pub fn render_install_gate(
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
     terminal
-        .draw(|frame| draw_install_gate(frame, preflight, attested, ascii, color))
+        .draw(|frame| draw_install_gate(frame, preflight, attested, ctx))
         .expect("draw install gate");
     buffer_text(terminal.backend().buffer(), width)
 }
@@ -507,17 +503,16 @@ pub fn render_install_gate(
 /// Draw the post-install receipt. Read-only: it reports the real exit, the
 /// kernel on disk, the `.pacnew` count and the reboot advice, and never edits
 /// `/etc`.
-pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ascii: bool, color: bool) {
-    let color = palette(ascii, color);
+pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ctx: RenderCtx) {
     let area = frame.area();
     if area.width < 40 || area.height < 12 {
         return;
     }
     frame.render_widget(Clear, area);
-    let separator = if ascii { "|" } else { "·" };
+    let separator = if ctx.ascii { "|" } else { "·" };
     let mode = if receipt.failed { "failure" } else { "success" };
     let title = format!(" Post-install {separator} {mode} ");
-    let block = frame_block(title, ascii);
+    let block = frame_block(title, ctx.ascii);
     frame.render_widget(block, area);
     let inner = Rect::new(
         area.x.saturating_add(2),
@@ -525,16 +520,12 @@ pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ascii: bool, colo
         area.width.saturating_sub(4),
         area.height.saturating_sub(2),
     );
-    let text = post_install_lines(receipt, inner.width as usize, ascii, color);
+    let text = post_install_lines(receipt, inner.width as usize, ctx);
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-fn post_install_lines(
-    receipt: &Receipt,
-    width: usize,
-    ascii: bool,
-    color: bool,
-) -> Vec<Line<'static>> {
+fn post_install_lines(receipt: &Receipt, width: usize, ctx: RenderCtx) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let ok = if ascii { "+" } else { "✓" };
     let fail = if ascii { "x" } else { "✖" };
@@ -623,20 +614,14 @@ fn post_install_lines(
 }
 
 /// The receipt in a test backend, for goldens.
-pub fn render_post_install(
-    receipt: &Receipt,
-    width: u16,
-    height: u16,
-    ascii: bool,
-    color: bool,
-) -> String {
+pub fn render_post_install(receipt: &Receipt, width: u16, height: u16, ctx: RenderCtx) -> String {
     if width == 0 || height == 0 {
         return String::new();
     }
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
     terminal
-        .draw(|frame| draw_post_install(frame, receipt, ascii, color))
+        .draw(|frame| draw_post_install(frame, receipt, ctx))
         .expect("draw post-install");
     buffer_text(terminal.backend().buffer(), width)
 }
@@ -646,8 +631,7 @@ pub fn render_log_frame(
     lines: &VecDeque<StreamLine>,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
 ) -> String {
     if width == 0 || height == 0 {
         return String::new();
@@ -655,19 +639,18 @@ pub fn render_log_frame(
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
     terminal
-        .draw(|frame| draw_log(frame, lines, ascii, color))
+        .draw(|frame| draw_log(frame, lines, ctx))
         .expect("draw log");
     buffer_text(terminal.backend().buffer(), width)
 }
 
-pub fn draw(frame: &mut Frame, snapshot: &Snapshot, ascii: bool, color: bool, help: bool) {
+pub fn draw(frame: &mut Frame, snapshot: &Snapshot, ctx: RenderCtx, help: bool) {
     draw_with(
         frame,
         snapshot,
         None,
         Footer::default(),
-        ascii,
-        color,
+        ctx,
         help,
         false,
         None,
@@ -679,8 +662,7 @@ pub fn draw_live(
     frame: &mut Frame,
     snapshot: &Snapshot,
     run: &LiveRun,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
 ) {
     draw_with(
@@ -688,8 +670,7 @@ pub fn draw_live(
         snapshot,
         Some(run),
         Footer::default(),
-        ascii,
-        color,
+        ctx,
         help,
         false,
         None,
@@ -703,8 +684,7 @@ pub fn draw_live_status(
     snapshot: &Snapshot,
     run: &LiveRun,
     footer: Footer<'_>,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
@@ -715,8 +695,7 @@ pub fn draw_live_status(
         snapshot,
         Some(run),
         footer,
-        ascii,
-        color,
+        ctx,
         help,
         ledger,
         gates,
@@ -729,15 +708,14 @@ pub fn draw_status(
     frame: &mut Frame,
     snapshot: &Snapshot,
     footer: Footer<'_>,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
     selection: Selection,
 ) {
     draw_with(
-        frame, snapshot, None, footer, ascii, color, help, ledger, gates, selection,
+        frame, snapshot, None, footer, ctx, help, ledger, gates, selection,
     );
 }
 
@@ -859,22 +837,20 @@ fn plan_slots(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // the frame carries the full view state
 pub fn plan_frame(
     snapshot: &Snapshot,
     run: Option<&LiveRun>,
     footer: Footer<'_>,
     width: u16,
     height: u16,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     gates: Option<&[Gate]>,
 ) -> FramePlan {
     if width < MIN_WIDTH || height < MIN_HEIGHT {
         return FramePlan::empty(0, Vec::new());
     }
 
-    let footer = footer_lines(footer, width as usize, ascii, color);
+    let footer = footer_lines(footer, width as usize, ctx);
     let footer_height = (footer.len() as u16).max(2);
     // header(2) + body + footer, exactly as `draw_with` lays it out.
     let body_height = height.saturating_sub(2).saturating_sub(footer_height);
@@ -935,17 +911,15 @@ fn draw_with(
     snapshot: &Snapshot,
     run: Option<&LiveRun>,
     footer: Footer<'_>,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     help: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
     selection: Selection,
 ) {
-    let color = palette(ascii, color);
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        let message = if ascii {
+        let message = if ctx.ascii {
             "terminal too small (40x12 minimum)"
         } else {
             "terminal too small (40×12 minimum)"
@@ -957,16 +931,7 @@ fn draw_with(
     // One owner for the layout. `plan_frame` is also what the `j`/`k` handler
     // calls, so the cursor walks exactly the slots this frame draws. It has to
     // run before `footer` is shadowed by the rendered lines.
-    let plan = plan_frame(
-        snapshot,
-        run,
-        footer,
-        area.width,
-        area.height,
-        ascii,
-        color,
-        gates,
-    );
+    let plan = plan_frame(snapshot, run, footer, area.width, area.height, ctx, gates);
     // The body height comes from the plan. A footer measured twice is a second
     // layout owner, and the two owners have diverged before.
     let chunks = Layout::default()
@@ -991,8 +956,7 @@ fn draw_with(
         live,
         window,
         chunks[0].width as usize,
-        ascii,
-        color,
+        ctx,
         ledger,
     );
     frame.render_widget(Paragraph::new(header), chunks[0]);
@@ -1001,9 +965,8 @@ fn draw_with(
         snapshot,
         tree,
         live,
-        ascii,
+        ctx,
         chunks[1].width as usize,
-        color,
         ledger,
         gates,
         selection,
@@ -1019,16 +982,17 @@ fn draw_with(
     frame.render_widget(Paragraph::new(plan.footer), chunks[2]);
 
     if help {
-        draw_help(frame, area, ascii, footer.keymap);
+        draw_help(frame, area, ctx.ascii, footer.keymap);
     }
 }
 
-fn footer_lines(footer: Footer<'_>, width: usize, ascii: bool, color: bool) -> Vec<Line<'static>> {
+fn footer_lines(footer: Footer<'_>, width: usize, ctx: RenderCtx) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let keymap = footer.keymap.cloned().unwrap_or_default();
     let keys = key_hints(&keymap, ascii, footer.keys.unwrap_or(DEFAULT_HINTS));
     let mut lines = Vec::new();
     if let Some(card) = footer.repair {
-        lines.extend(repair_lines(card, width, ascii, color));
+        lines.extend(repair_lines(card, width, ctx));
     } else if let Some(status) = footer.status {
         let style = if footer.failed {
             accent_bold(color, FAILURE)
@@ -1054,7 +1018,8 @@ fn key_hints(keymap: &Keymap, ascii: bool, hints: &[(Action, &str)]) -> String {
 
 /// Three observed lines above the keys. The hint is a suggestion, not proof
 /// that anything was repaired; the evidence stays verbatim.
-fn repair_lines(card: &RepairCard, width: usize, ascii: bool, color: bool) -> Vec<Line<'static>> {
+fn repair_lines(card: &RepairCard, width: usize, ctx: RenderCtx) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let warning = if ascii { "!" } else { "⚠" };
     let separator = if ascii { "|" } else { "·" };
     let head = match &card.node {
@@ -1090,17 +1055,16 @@ fn repair_lines(card: &RepairCard, width: usize, ascii: bool, color: bool) -> Ve
     lines
 }
 
-#[allow(clippy::too_many_arguments)] // the frame carries the full view state
 fn header_lines(
     snapshot: &Snapshot,
     tree: Option<&Result<Tree, TreeError>>,
     live: Option<&LiveView>,
     window: Option<&Window>,
     width: usize,
-    ascii: bool,
-    color: bool,
+    ctx: RenderCtx,
     ledger: bool,
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     if snapshot.fatal.is_some() {
         // The body is the error. A graph title here would name roots the
@@ -1237,9 +1201,8 @@ fn body_lines(
     snapshot: &Snapshot,
     tree: Option<&Result<Tree, TreeError>>,
     live: Option<&LiveView>,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
     ledger: bool,
     gates: Option<&[Gate]>,
     selection: Selection,
@@ -1247,6 +1210,7 @@ fn body_lines(
     block_room: usize,
     slots: &[WindowSlot],
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let mut lines = Vec::new();
 
     if let Some(error) = &snapshot.fatal {
@@ -1259,7 +1223,7 @@ fn body_lines(
     }
 
     if let Some(gates) = gates {
-        lines.extend(gate_lines(gates, width, ascii, color, gate_room));
+        lines.extend(gate_lines(gates, width, ctx, gate_room));
     }
 
     if let Some(error) = snapshot.prefetch.error() {
@@ -1328,13 +1292,8 @@ fn body_lines(
 /// is short the block keeps whole gates and one row saying how many it left
 /// out. The overflow row is inside the budget, not extra: a block that overruns
 /// by one row is what pushed the summary off the bottom.
-fn gate_lines(
-    gates: &[Gate],
-    width: usize,
-    ascii: bool,
-    color: bool,
-    room: usize,
-) -> Vec<Line<'static>> {
+fn gate_lines(gates: &[Gate], width: usize, ctx: RenderCtx, room: usize) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     if gates.is_empty() || room == 0 {
         return Vec::new();
     }
@@ -1352,7 +1311,7 @@ fn gate_lines(
         gates
             .iter()
             .take(whole)
-            .map(|gate| gate_line(gate, width, ascii, color)),
+            .map(|gate| gate_line(gate, width, ctx)),
     );
     if whole < gates.len() {
         let hidden = gates.len() - whole;
@@ -1362,7 +1321,8 @@ fn gate_lines(
     lines
 }
 
-fn gate_line(gate: &Gate, width: usize, ascii: bool, color: bool) -> Line<'static> {
+fn gate_line(gate: &Gate, width: usize, ctx: RenderCtx) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let (glyph, style) = match gate.state {
         GateState::Pass => (if ascii { "+" } else { "✓" }, accent_bold(color, DONE)),
         GateState::Warn => (if ascii { "!" } else { "▲" }, accent_bold(color, PLANNED)),
@@ -1389,6 +1349,7 @@ fn prefetch_lines(
         width,
         color,
     } = style;
+    let ctx = RenderCtx::new(ascii, color);
     let mut lines = Vec::new();
     let now = at.unwrap_or(UNIX_EPOCH);
     let separator = if ascii { "|" } else { "·" };
@@ -1434,9 +1395,9 @@ fn prefetch_lines(
                             // frame only knows the run is hidden.
                             match static_hidden {
                                 Some(hidden) => {
-                                    lines.push(hidden_line(hidden, width, ascii, color));
+                                    lines.push(hidden_line(hidden, width, ctx));
                                 }
-                                None => lines.push(clipped_line(width, ascii, color)),
+                                None => lines.push(clipped_line(width, ctx)),
                             }
                         }
                         WindowSlot::Row(id) => {
@@ -1455,9 +1416,8 @@ fn prefetch_lines(
                                                     row,
                                                     live_row,
                                                     &prefix,
-                                                    ascii,
+                                                    ctx,
                                                     width,
-                                                    color,
                                                     geometry,
                                                     spinner,
                                                     selection.is_selected(&row.name),
@@ -1468,9 +1428,8 @@ fn prefetch_lines(
                                                     row,
                                                     live_row,
                                                     &prefix,
-                                                    ascii,
+                                                    ctx,
                                                     width,
-                                                    color,
                                                     lead,
                                                     spinner,
                                                     selection.is_selected(&row.name),
@@ -1485,9 +1444,8 @@ fn prefetch_lines(
                                 row,
                                 &prefix,
                                 now,
-                                ascii,
+                                ctx,
                                 width,
-                                color,
                                 lead,
                                 selection.is_selected(&row.name),
                             ));
@@ -1504,8 +1462,8 @@ fn prefetch_lines(
     }
 
     match live {
-        Some(live) => lines.extend(live_summary_lines(report, live, ascii, width, color)),
-        None => lines.extend(static_summary_lines(report, separator, ascii, width, color)),
+        Some(live) => lines.extend(live_summary_lines(report, live, ctx, width)),
+        None => lines.extend(static_summary_lines(report, separator, ctx, width)),
     }
 
     // The notes are the last rows and share the block with the slots, the
@@ -1543,10 +1501,10 @@ fn prefetch_lines(
 fn static_summary_lines(
     report: &PrefetchReport,
     separator: &str,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let counts = &report.counts;
     let host = report.host.as_deref().unwrap_or("unknown");
     // The same rule as the live summary: only whole segments are printed.
@@ -1629,10 +1587,10 @@ fn prefetch_saving(report: &PrefetchReport, ascii: bool) -> Option<String> {
 fn live_summary_lines(
     report: &PrefetchReport,
     live: &LiveView,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
 ) -> Vec<Line<'static>> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let running = live.summary.builds.running + live.summary.downloads.running;
     let done = live.summary.builds.done + live.summary.downloads.done;
@@ -1899,17 +1857,16 @@ fn row_line(row: &TreeRow, paint: RowPaint<'_>, ascii: bool, width: usize) -> Li
     Line::from(spans)
 }
 
-#[allow(clippy::too_many_arguments)] // the frame carries the full view state
 fn static_row_line(
     row: &TreeRow,
     prefix: &str,
     now: SystemTime,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
     lead: usize,
     cursor: bool,
 ) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let artifact = row.artifact.unwrap_or(ArtifactState::Unknown);
     let (glyph, label) = artifact_glyph(artifact, ascii);
@@ -1950,13 +1907,13 @@ fn live_row_line(
     row: &TreeRow,
     live: &super::live::LiveRow,
     prefix: &str,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
     lead: usize,
     spinner: usize,
     cursor: bool,
 ) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let glyph = live_glyph_at(live, ascii, spinner);
     let state_label = live_state_label(live);
@@ -2188,13 +2145,13 @@ fn progress_row_line(
     row: &TreeRow,
     live: &super::live::LiveRow,
     prefix: &str,
-    ascii: bool,
+    ctx: RenderCtx,
     width: usize,
-    color: bool,
     geometry: &ProgressGeometry,
     spinner: usize,
     cursor: bool,
 ) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { " | " } else { " · " };
     let glyph = live_glyph_at(live, ascii, spinner);
     let hue = live_color(live.state);
@@ -2337,13 +2294,15 @@ fn progress_fill(progress: Progress, bar_width: usize) -> (usize, usize, usize) 
     (full, half, bar_width.saturating_sub(full + half))
 }
 
-fn clipped_line(width: usize, ascii: bool, color: bool) -> Line<'static> {
+fn clipped_line(width: usize, ctx: RenderCtx) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let marker = if ascii { "  :" } else { "  ⋮" };
     Line::styled(cell_text(marker, width, ascii), dim(color))
 }
 
 /// The counted overflow row: how many rows this frame dropped.
-fn hidden_line(hidden: usize, width: usize, ascii: bool, color: bool) -> Line<'static> {
+fn hidden_line(hidden: usize, width: usize, ctx: RenderCtx) -> Line<'static> {
+    let RenderCtx { ascii, color } = ctx;
     let marker = if ascii { "  :" } else { "  ⋮" };
     let text = format!("{marker} {hidden} more");
     Line::styled(cell_text(&text, width, ascii), dim(color))
@@ -2521,7 +2480,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     use super::{
-        Footer, RepairCard, Selection, display_width, render_frame, render_install_gate,
+        Footer, RenderCtx, RepairCard, Selection, display_width, render_frame, render_install_gate,
         render_live_frame, render_live_frame_status, render_log_frame, render_post_install,
         repair_hint,
     };
@@ -2542,6 +2501,11 @@ mod tests {
 
     fn at() -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(1_760_000_000)
+    }
+
+    /// The face flags every golden is drawn with, in one word.
+    fn ctx(ascii: bool, color: bool) -> RenderCtx {
+        RenderCtx::new(ascii, color)
     }
 
     fn update(raw: &str) -> Update {
@@ -2735,15 +2699,21 @@ mod tests {
                 }
             }
             let footer = Footer::default();
-            let plan =
-                super::plan_frame(&snapshot, None, footer, width, height, false, false, None);
+            let plan = super::plan_frame(
+                &snapshot,
+                None,
+                footer,
+                width,
+                height,
+                ctx(false, false),
+                None,
+            );
             let frame = super::render_frame_status(
                 &snapshot,
                 footer,
                 width,
                 height,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -2787,8 +2757,7 @@ mod tests {
                     footer,
                     width,
                     height,
-                    ascii,
-                    false,
+                    ctx(ascii, false),
                     Some(&gates),
                 );
                 let frame = render_live_frame_status(
@@ -2797,8 +2766,7 @@ mod tests {
                     footer,
                     width,
                     height,
-                    ascii,
-                    false,
+                    ctx(ascii, false),
                     false,
                     false,
                     Some(&gates),
@@ -2862,8 +2830,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             Some(&gates),
         );
         assert!(
@@ -2877,8 +2844,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -2909,8 +2875,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             Some(&gates),
         );
         assert_eq!(
@@ -2938,8 +2903,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -2965,15 +2929,22 @@ mod tests {
         }
         let gates = fetch_gates();
         let footer = Footer::default();
-        let plan = super::plan_frame(&snapshot, None, footer, 40, 12, false, false, Some(&gates));
+        let plan = super::plan_frame(
+            &snapshot,
+            None,
+            footer,
+            40,
+            12,
+            ctx(false, false),
+            Some(&gates),
+        );
         assert!(plan.slots.is_empty());
         let frame = super::render_frame_status(
             &snapshot,
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -3007,8 +2978,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -3031,7 +3001,15 @@ mod tests {
         let tree = tree_of(&snapshot);
         let gates = fetch_gates();
         let footer = Footer::default();
-        let plan = super::plan_frame(&snapshot, None, footer, 40, 12, false, false, Some(&gates));
+        let plan = super::plan_frame(
+            &snapshot,
+            None,
+            footer,
+            40,
+            12,
+            ctx(false, false),
+            Some(&gates),
+        );
         assert!(
             plan.slots.is_empty(),
             "no tree room, yet the plan names {:?}",
@@ -3048,8 +3026,7 @@ mod tests {
             footer,
             40,
             12,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -3067,7 +3044,7 @@ mod tests {
     fn a_clipped_static_frame_reports_the_roots_it_shows() {
         let snapshot = wide_snapshot(40);
         let footer = Footer::default();
-        let plan = super::plan_frame(&snapshot, None, footer, 40, 15, false, false, None);
+        let plan = super::plan_frame(&snapshot, None, footer, 40, 15, ctx(false, false), None);
         let window = plan
             .window
             .as_ref()
@@ -3078,8 +3055,7 @@ mod tests {
             footer,
             40,
             15,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -3114,8 +3090,7 @@ mod tests {
                 Footer::default(),
                 width,
                 height,
-                false,
-                false,
+                ctx(false, false),
                 None,
             );
             assert!(
@@ -3137,8 +3112,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             None,
         );
         assert!(
@@ -3151,8 +3125,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -3192,8 +3165,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -3217,7 +3189,7 @@ mod tests {
         let snapshot = showcase_snapshot();
         let forests_before = crate::tui::tree::tree_builds();
         let views_before = crate::tui::live::live_builds();
-        let frame = super::render_frame(&snapshot, 80, 24, false, false, false);
+        let frame = super::render_frame(&snapshot, 80, 24, ctx(false, false), false);
         let forests = crate::tui::tree::tree_builds() - forests_before;
         let views = crate::tui::live::live_builds() - views_before;
         assert!(!frame.is_empty(), "the frame drew nothing");
@@ -3242,8 +3214,7 @@ mod tests {
             Footer::default(),
             40,
             15,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -3266,7 +3237,7 @@ mod tests {
     #[test]
     fn a_narrow_static_summary_keeps_ready_and_missing() {
         let snapshot = prefetch_snapshot();
-        let frame = render_frame(&snapshot, 40, 15, false, false, false);
+        let frame = render_frame(&snapshot, 40, 15, ctx(false, false), false);
         assert!(frame.contains("ready"), "ready survives:\n{frame}");
         assert!(frame.contains("missing"), "missing survives:\n{frame}");
         assert!(
@@ -3315,8 +3286,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            true,
-            false,
+            ctx(true, false),
             false,
             false,
             None,
@@ -3336,8 +3306,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -3384,8 +3353,7 @@ mod tests {
                 Footer::default(),
                 width,
                 height,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -3408,7 +3376,7 @@ mod tests {
 
     #[test]
     fn a_tall_forest_keeps_its_summary_and_counts_what_it_hides() {
-        let short = render_frame(&wide_snapshot(18), 80, 24, false, false, false);
+        let short = render_frame(&wide_snapshot(18), 80, 24, ctx(false, false), false);
         assert!(
             short.contains("mirror.example.org"),
             "a short forest keeps the summary"
@@ -3419,7 +3387,13 @@ mod tests {
         );
 
         for (count, width, height) in [(20, 80, 24), (500, 80, 24), (2_000, 120, 40)] {
-            let frame = render_frame(&wide_snapshot(count), width, height, false, false, false);
+            let frame = render_frame(
+                &wide_snapshot(count),
+                width,
+                height,
+                ctx(false, false),
+                false,
+            );
             assert!(
                 frame.contains("mirror.example.org"),
                 "{count} packages at {width}x{height} lost the summary:\n{frame}"
@@ -3441,13 +3415,13 @@ mod tests {
         }
 
         // The tail of the bottom-up order is the roots and the goal.
-        let frame = render_frame(&wide_snapshot(500), 80, 24, false, false, false);
+        let frame = render_frame(&wide_snapshot(500), 80, 24, ctx(false, false), false);
         assert!(
             frame.contains("pkg-0000") || frame.contains("pkg-0004"),
             "a root survives the clip:\n{frame}"
         );
 
-        let ascii = render_frame(&wide_snapshot(500), 80, 24, true, false, false);
+        let ascii = render_frame(&wide_snapshot(500), 80, 24, ctx(true, false), false);
         assert!(
             ascii.lines().all(|line| line.is_ascii()),
             "ASCII stays ASCII"
@@ -4064,8 +4038,7 @@ mod tests {
                         footer,
                         width,
                         height,
-                        ascii,
-                        false,
+                        ctx(ascii, false),
                         false,
                         false,
                         Some(&gates),
@@ -4092,8 +4065,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4112,8 +4084,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4164,8 +4135,7 @@ mod tests {
             showcase_footer(&card),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -4186,8 +4156,7 @@ mod tests {
             showcase_footer(&card),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -4277,8 +4246,7 @@ mod tests {
             showcase_footer(&card),
             120,
             40,
-            true,
-            false,
+            ctx(true, false),
             false,
             false,
             Some(&gates),
@@ -4310,15 +4278,14 @@ mod tests {
         run: Option<&LiveRun>,
         width: u16,
         height: u16,
-        ascii: bool,
-        color: bool,
+        ctx: RenderCtx,
     ) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test backend");
         terminal
             .draw(|frame| match run {
-                Some(run) => super::draw_live(frame, snapshot, run, ascii, color, false),
-                None => super::draw(frame, snapshot, ascii, color, false),
+                Some(run) => super::draw_live(frame, snapshot, run, ctx, false),
+                None => super::draw(frame, snapshot, ctx, false),
             })
             .expect("draw");
         terminal.backend().buffer().clone()
@@ -4365,7 +4332,7 @@ mod tests {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
         assert_eq!(
-            render_live_frame(&snapshot, &run, 120, 40, false, false, false),
+            render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false),
             include_str!("../../tests/golden/tui-live-diamond-120x40.txt")
         );
     }
@@ -4375,7 +4342,7 @@ mod tests {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
         assert_eq!(
-            render_live_frame(&snapshot, &run, 80, 24, false, false, false),
+            render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false),
             include_str!("../../tests/golden/tui-live-diamond-80x24.txt")
         );
     }
@@ -4384,7 +4351,7 @@ mod tests {
     fn live_diamond_ascii_frame_is_stable() {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
-        let frame = render_live_frame(&snapshot, &run, 80, 24, true, false, false);
+        let frame = render_live_frame(&snapshot, &run, 80, 24, ctx(true, false), false);
         assert!(
             frame.is_ascii(),
             "ascii live frame had non-ASCII bytes\n{frame}"
@@ -4399,7 +4366,7 @@ mod tests {
     fn live_timer_stays_hidden_below_one_second() {
         let snapshot = diamond_snapshot();
         let run = subsecond_run();
-        let frame = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         assert!(!frame.contains("⏱"), "no timer under one second\n{frame}");
         assert!(!frame.contains("0s"), "no zero-second timer\n{frame}");
         assert_eq!(
@@ -4412,7 +4379,7 @@ mod tests {
     fn live_two_roots_frame_is_stable_at_120x40() {
         let snapshot = roots_snapshot();
         let run = roots_run();
-        let frame = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         assert_eq!(
             frame,
             include_str!("../../tests/golden/tui-live-roots-120x40.txt")
@@ -4423,7 +4390,7 @@ mod tests {
     fn live_two_roots_frame_is_stable_at_80x24() {
         let snapshot = roots_snapshot();
         let run = roots_run();
-        let frame = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         assert_eq!(
             frame,
             include_str!("../../tests/golden/tui-live-roots-80x24.txt")
@@ -4434,12 +4401,12 @@ mod tests {
     fn live_failure_frames_are_stable() {
         let snapshot = failure_snapshot();
         let run = failure_run();
-        let wide = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let wide = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         assert_eq!(
             wide,
             include_str!("../../tests/golden/tui-live-failure-120x40.txt")
         );
-        let compact = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let compact = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         assert_eq!(
             compact,
             include_str!("../../tests/golden/tui-live-failure-80x24.txt")
@@ -4456,8 +4423,7 @@ mod tests {
             fetch_footer(),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4492,8 +4458,7 @@ mod tests {
             fetch_footer(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4523,8 +4488,7 @@ mod tests {
             },
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4542,7 +4506,7 @@ mod tests {
     fn live_frames_read_as_the_frontier_without_invented_state() {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
-        let frame = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
 
         for needle in [
             "[|] left",
@@ -4576,7 +4540,7 @@ mod tests {
         run.unprove_all_running(live_at(), "artifact not observed")
             .expect("unproven batch");
 
-        let frame = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
 
         assert!(
             frame.contains("[×] left"),
@@ -4596,7 +4560,7 @@ mod tests {
     fn a_failure_blocks_downstream_without_blanking_the_screen() {
         let snapshot = failure_snapshot();
         let run = failure_run();
-        let frame = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
 
         assert!(
             frame.contains("[×] base"),
@@ -4655,8 +4619,7 @@ mod tests {
             repair_footer(&card),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4695,8 +4658,7 @@ mod tests {
             repair_footer(&card),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4713,8 +4675,7 @@ mod tests {
             repair_footer(&card),
             120,
             40,
-            true,
-            false,
+            ctx(true, false),
             false,
             false,
             None,
@@ -4743,8 +4704,7 @@ mod tests {
             repair_footer(&card),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             None,
@@ -4770,8 +4730,7 @@ mod tests {
             ledger_footer(),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             true,
             None,
@@ -4797,8 +4756,7 @@ mod tests {
             ledger_footer(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             true,
             None,
@@ -4812,14 +4770,13 @@ mod tests {
 
     #[test]
     fn the_static_prefetch_frame_is_unchanged_by_the_ledger() {
-        let tree = render_frame(&prefetch_snapshot(), 120, 40, false, false, false);
+        let tree = render_frame(&prefetch_snapshot(), 120, 40, ctx(false, false), false);
         let ledger = super::render_frame_status(
             &prefetch_snapshot(),
             ledger_footer(),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             true,
             None,
@@ -4841,8 +4798,7 @@ mod tests {
             fetch_footer(),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -4876,8 +4832,7 @@ mod tests {
             fetch_footer(),
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -4918,8 +4873,7 @@ mod tests {
             },
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             false,
             Some(&gates),
@@ -4955,8 +4909,7 @@ mod tests {
             fetch_footer(),
             120,
             40,
-            false,
-            false,
+            ctx(false, false),
             false,
             true,
             Some(&gates),
@@ -4976,7 +4929,7 @@ mod tests {
 
     #[test]
     fn the_log_shows_the_newest_lines_through_the_untrusted_gate() {
-        let frame = render_log_frame(&long_log_fixture(), 120, 40, false, false);
+        let frame = render_log_frame(&long_log_fixture(), 120, 40, ctx(false, false));
 
         assert!(frame.contains("fetch log"), "{frame}");
         assert!(
@@ -4994,7 +4947,7 @@ mod tests {
 
     #[test]
     fn the_log_sanitizes_child_output_and_names_an_empty_log() {
-        let frame = render_log_frame(&log_fixture(), 120, 40, false, false);
+        let frame = render_log_frame(&log_fixture(), 120, 40, ctx(false, false));
         assert!(frame.contains("downloading"), "{frame}");
         assert!(
             frame.contains("downloading simapp-2.0.0-1"),
@@ -5002,13 +4955,13 @@ mod tests {
         );
         assert!(!frame.contains('\x1b'), "ESC is dropped\n{frame}");
 
-        let empty = render_log_frame(&VecDeque::new(), 80, 24, false, false);
+        let empty = render_log_frame(&VecDeque::new(), 80, 24, ctx(false, false));
         assert!(empty.contains("(no output yet)"), "{empty}");
     }
 
     #[test]
     fn the_install_gate_shows_the_checks_and_the_exact_command() {
-        let frame = render_install_gate(&install_preflight(), false, 120, 40, false, false);
+        let frame = render_install_gate(&install_preflight(), false, 120, 40, ctx(false, false));
 
         for needle in [
             "Install · 1 package",
@@ -5037,7 +4990,7 @@ mod tests {
 
     #[test]
     fn attestation_marks_the_news_gate_for_this_session() {
-        let frame = render_install_gate(&install_preflight(), true, 120, 40, false, false);
+        let frame = render_install_gate(&install_preflight(), true, 120, 40, ctx(false, false));
 
         assert!(frame.contains("✓  news"), "{frame}");
         assert!(frame.contains("attested for this session"), "{frame}");
@@ -5052,7 +5005,7 @@ mod tests {
 
     #[test]
     fn the_success_receipt_reports_the_exit_kernel_pacnew_and_reboot() {
-        let frame = render_post_install(&success_receipt(), 120, 40, false, false);
+        let frame = render_post_install(&success_receipt(), 120, 40, ctx(false, false));
 
         for needle in [
             "Post-install · success",
@@ -5074,7 +5027,7 @@ mod tests {
 
     #[test]
     fn the_failure_receipt_names_the_exit_and_the_repair() {
-        let frame = render_post_install(&failure_receipt(), 120, 40, false, false);
+        let frame = render_post_install(&failure_receipt(), 120, 40, ctx(false, false));
 
         assert!(frame.contains("Post-install · failure"), "{frame}");
         assert!(frame.contains("✖  yay -Syuu exited 1"), "{frame}");
@@ -5096,7 +5049,7 @@ mod tests {
         receipt.ran = false;
         receipt.failed = true;
         receipt.reason = Some("stale lock db.lck".to_string());
-        let frame = render_post_install(&receipt, 120, 40, false, false);
+        let frame = render_post_install(&receipt, 120, 40, ctx(false, false));
 
         assert!(
             frame.contains("yay -Syuu not run: stale lock db.lck"),
@@ -5108,7 +5061,7 @@ mod tests {
 
     #[test]
     fn the_receipt_is_ascii_safe() {
-        let frame = render_post_install(&success_receipt(), 120, 40, true, false);
+        let frame = render_post_install(&success_receipt(), 120, 40, ctx(true, false));
 
         assert!(frame.contains("Post-install | success"), "{frame}");
         assert!(frame.contains("+  yay -Syuu exited 0"), "{frame}");
@@ -5123,7 +5076,7 @@ mod tests {
             "trust",
             "trusted-users is empty; aurto would trust no one; fix the file first",
         ));
-        let frame = render_install_gate(&preflight, true, 120, 40, false, false);
+        let frame = render_install_gate(&preflight, true, 120, 40, ctx(false, false));
 
         assert!(frame.contains("a gate blocks install"), "{frame}");
         assert!(!frame.contains("enter install"), "{frame}");
@@ -5131,7 +5084,7 @@ mod tests {
 
     #[test]
     fn the_install_gate_is_ascii_safe() {
-        let frame = render_install_gate(&install_preflight(), false, 120, 40, true, false);
+        let frame = render_install_gate(&install_preflight(), false, 120, 40, ctx(true, false));
 
         assert!(frame.contains("Install | 1 package"), "{frame}");
         assert!(frame.contains("!  news"), "{frame}");
@@ -5143,7 +5096,7 @@ mod tests {
     fn a_skipped_node_is_dim_and_never_a_success() {
         let snapshot = skipped_snapshot();
         let run = skipped_run();
-        let frame = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         let row = frame
             .lines()
             .find(|line| line.contains("cached-pkg"))
@@ -5165,7 +5118,7 @@ mod tests {
         let snapshot = progress_snapshot();
         let run = progress_run();
 
-        let wide = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let wide = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         let row = wide
             .lines()
             .find(|line| line.contains("downloading"))
@@ -5190,7 +5143,7 @@ mod tests {
             include_str!("../../tests/golden/tui-live-progress-120x40.txt")
         );
 
-        let compact = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let compact = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         let row = compact
             .lines()
             .find(|line| line.contains("downloading"))
@@ -5212,7 +5165,7 @@ mod tests {
         let run = unknown_progress_run();
 
         for (width, height) in [(120, 40), (80, 24)] {
-            let frame = render_live_frame(&snapshot, &run, width, height, false, false, false);
+            let frame = render_live_frame(&snapshot, &run, width, height, ctx(false, false), false);
             let row = frame
                 .lines()
                 .find(|line| line.contains("downloading"))
@@ -5228,11 +5181,11 @@ mod tests {
         }
 
         assert_eq!(
-            render_live_frame(&snapshot, &run, 120, 40, false, false, false),
+            render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false),
             include_str!("../../tests/golden/tui-live-progress-unknown-120x40.txt")
         );
         assert_eq!(
-            render_live_frame(&snapshot, &run, 80, 24, false, false, false),
+            render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false),
             include_str!("../../tests/golden/tui-live-progress-unknown-80x24.txt")
         );
     }
@@ -5242,7 +5195,7 @@ mod tests {
         let snapshot = progress_snapshot();
         let run = progress_run();
 
-        let wide = render_live_frame(&snapshot, &run, 120, 40, true, false, false);
+        let wide = render_live_frame(&snapshot, &run, 120, 40, ctx(true, false), false);
         assert!(wide.is_ascii(), "ascii frame had non-ASCII bytes\n{wide}");
         let wide_row = wide
             .lines()
@@ -5259,7 +5212,7 @@ mod tests {
             include_str!("../../tests/golden/tui-live-progress-ascii-120x40.txt")
         );
 
-        let frame = render_live_frame(&snapshot, &run, 80, 24, true, false, false);
+        let frame = render_live_frame(&snapshot, &run, 80, 24, ctx(true, false), false);
         assert!(frame.is_ascii(), "ascii frame had non-ASCII bytes\n{frame}");
 
         let row = frame
@@ -5284,7 +5237,7 @@ mod tests {
     fn a_progress_row_at_40_columns_does_not_overflow() {
         let snapshot = progress_snapshot();
         let run = progress_run();
-        let frame = render_live_frame(&snapshot, &run, 40, 24, false, false, false);
+        let frame = render_live_frame(&snapshot, &run, 40, 24, ctx(false, false), false);
 
         for line in frame.lines() {
             assert!(
@@ -5309,11 +5262,11 @@ mod tests {
     fn progress_no_color_keeps_the_text_and_drops_the_palette() {
         let snapshot = progress_snapshot();
         let run = progress_run();
-        let colored = render_live_frame(&snapshot, &run, 120, 40, false, true, false);
-        let plain = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let colored = render_live_frame(&snapshot, &run, 120, 40, ctx(false, true), false);
+        let plain = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         assert_eq!(colored, plain, "color never changes the text");
 
-        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, false, true);
+        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, ctx(false, true));
         let row = find_row(&buffer, 120, "81.9%");
         let percent = text_column(&buffer, 120, row, "81.9%").expect("percent");
         assert_eq!(cell_at(&buffer, 120, row, percent).fg, Color::Yellow);
@@ -5328,7 +5281,7 @@ mod tests {
         let empty = text_column(&buffer, 120, row, "□").expect("empty cell");
         assert_eq!(cell_at(&buffer, 120, row, empty).fg, Color::DarkGray);
 
-        let plain_buffer = buffer_of(&snapshot, Some(&run), 120, 40, false, false);
+        let plain_buffer = buffer_of(&snapshot, Some(&run), 120, 40, ctx(false, false));
         assert!(
             plain_buffer
                 .content()
@@ -5351,7 +5304,7 @@ mod tests {
         let snapshot = window_snapshot();
         let run = window_run();
 
-        let wide = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let wide = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         assert!(
             wide.contains("Dependency Graph showing 31 of 197 roots:"),
             "the header names the clipped root count\n{wide}"
@@ -5376,7 +5329,7 @@ mod tests {
             include_str!("../../tests/golden/tui-live-window-120x40.txt")
         );
 
-        let compact = render_live_frame(&snapshot, &run, 80, 24, false, false, false);
+        let compact = render_live_frame(&snapshot, &run, 80, 24, ctx(false, false), false);
         assert!(
             compact.contains("Dependency Graph showing 15 of 197 roots:"),
             "the compact header names the clipped root count\n{compact}"
@@ -5402,11 +5355,11 @@ mod tests {
     fn no_color_keeps_the_exact_text_and_drops_every_color() {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
-        let colored = render_live_frame(&snapshot, &run, 120, 40, false, true, false);
-        let plain = render_live_frame(&snapshot, &run, 120, 40, false, false, false);
+        let colored = render_live_frame(&snapshot, &run, 120, 40, ctx(false, true), false);
+        let plain = render_live_frame(&snapshot, &run, 120, 40, ctx(false, false), false);
         assert_eq!(colored, plain, "color never changes the text");
 
-        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, false, false);
+        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, ctx(false, false));
         assert!(
             buffer.content().iter().all(|cell| cell.fg == Color::Reset),
             "NO_COLOR leaves no foreground color"
@@ -5461,8 +5414,7 @@ mod tests {
                 &snapshot,
                 &run,
                 Footer::default(),
-                true,
-                true,
+                ctx(true, true),
                 false,
                 false,
                 None,
@@ -5474,8 +5426,7 @@ mod tests {
                 frame,
                 &snapshot,
                 Footer::default(),
-                true,
-                true,
+                ctx(true, true),
                 false,
                 false,
                 None,
@@ -5483,13 +5434,13 @@ mod tests {
             )
         });
         let log = buffer_rendered(120, 40, |frame| {
-            super::draw_log(frame, &log_fixture(), true, true)
+            super::draw_log(frame, &log_fixture(), ctx(true, true))
         });
         let gate = buffer_rendered(120, 40, |frame| {
-            super::draw_install_gate(frame, &install_preflight(), true, true, true)
+            super::draw_install_gate(frame, &install_preflight(), true, ctx(true, true))
         });
         let receipt = buffer_rendered(120, 40, |frame| {
-            super::draw_post_install(frame, &success_receipt(), true, true)
+            super::draw_post_install(frame, &success_receipt(), ctx(true, true))
         });
 
         assert_no_palette(&live, "live frame");
@@ -5517,23 +5468,23 @@ mod tests {
 
         // Probes stay under the one-second timer floor: a label that crosses it
         // is a measurement, and `--no-motion` keeps measurements.
-        let animated = render_live_frame(&snapshot, &moving, 120, 40, false, true, false);
+        let animated = render_live_frame(&snapshot, &moving, 120, 40, ctx(false, true), false);
         moving.advance(live_at() + Duration::from_millis(700));
         assert_ne!(
             animated,
-            render_live_frame(&snapshot, &moving, 120, 40, false, true, false),
+            render_live_frame(&snapshot, &moving, 120, 40, ctx(false, true), false),
             "the fixture animates on the clock alone"
         );
 
         let mut settled = still.clone();
         settled.advance(live_at() + Duration::from_millis(500));
-        let expected = render_live_frame(&snapshot, &settled, 120, 40, false, true, false);
+        let expected = render_live_frame(&snapshot, &settled, 120, 40, ctx(false, true), false);
         for ms in [500u64, 700, 900] {
             let mut probe = still.clone();
             probe.advance(live_at() + Duration::from_millis(ms));
             assert_eq!(
                 expected,
-                render_live_frame(&snapshot, &probe, 120, 40, false, true, false),
+                render_live_frame(&snapshot, &probe, 120, 40, ctx(false, true), false),
                 "the no-motion frame changed at {ms} ms"
             );
         }
@@ -5543,7 +5494,7 @@ mod tests {
     fn the_palette_speaks_through_glyphs_and_words_not_color_alone() {
         let snapshot = diamond_snapshot();
         let run = diamond_run();
-        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, false, true);
+        let buffer = buffer_of(&snapshot, Some(&run), 120, 40, ctx(false, true));
 
         let planned = find_row(&buffer, 120, "planned");
         let planned_glyph =
@@ -5595,7 +5546,13 @@ mod tests {
                 .contains(Modifier::BOLD)
         );
 
-        let roots = buffer_of(&roots_snapshot(), Some(&roots_run()), 120, 40, false, true);
+        let roots = buffer_of(
+            &roots_snapshot(),
+            Some(&roots_run()),
+            120,
+            40,
+            ctx(false, true),
+        );
         let download = find_row(&roots, 120, "downloading");
         let down_glyph =
             text_column(&roots, 120, download, "[|]").expect("the running marker is on the row");
@@ -5610,8 +5567,7 @@ mod tests {
             Some(&failure_run()),
             120,
             40,
-            false,
-            true,
+            ctx(false, true),
         );
         let failed = find_row(&failure, 120, "failed");
         let warning = text_column(&failure, 120, failed, "[×]").expect("the failure glyph");
@@ -5633,8 +5589,7 @@ mod tests {
             Some(&skipped_run()),
             80,
             24,
-            false,
-            true,
+            ctx(false, true),
         );
         let skipped_row = find_row(&skipped, 80, "cached-pkg");
         let skipped_glyph =
@@ -5654,20 +5609,18 @@ mod tests {
                     &failure_run(),
                     120,
                     40,
-                    false,
-                    true,
+                    ctx(false, true),
                     false
                 )
                 .contains(word)
-                    || render_live_frame(&snapshot, &run, 120, 40, false, true, false)
+                    || render_live_frame(&snapshot, &run, 120, 40, ctx(false, true), false)
                         .contains(word)
                     || render_live_frame(
                         &skipped_snapshot(),
                         &skipped_run(),
                         120,
                         40,
-                        false,
-                        true,
+                        ctx(false, true),
                         false
                     )
                     .contains(word),
@@ -5678,19 +5631,19 @@ mod tests {
 
     #[test]
     fn the_tree_frame_is_stable_at_80x24() {
-        let frame = render_frame(&snapshot(), 80, 24, false, false, false);
+        let frame = render_frame(&snapshot(), 80, 24, ctx(false, false), false);
         assert_eq!(frame, include_str!("../../tests/golden/tui-80x24.txt"));
     }
 
     #[test]
     fn the_tree_frame_is_stable_at_120x40() {
-        let frame = render_frame(&snapshot(), 120, 40, false, false, false);
+        let frame = render_frame(&snapshot(), 120, 40, ctx(false, false), false);
         assert_eq!(frame, include_str!("../../tests/golden/tui-120x40.txt"));
     }
 
     #[test]
     fn ascii_mode_has_no_non_ascii_bytes() {
-        let frame = render_frame(&snapshot(), 80, 24, true, false, false);
+        let frame = render_frame(&snapshot(), 80, 24, ctx(true, false), false);
         assert!(
             frame.is_ascii(),
             "ascii frame contained a non-ASCII character"
@@ -5720,8 +5673,7 @@ mod tests {
                     showcase_footer(&card),
                     width,
                     height,
-                    true,
-                    false,
+                    ctx(true, false),
                     false,
                     ledger,
                     Some(&gates),
@@ -5748,8 +5700,7 @@ mod tests {
                 separator,
                 width,
                 height,
-                true,
-                false,
+                ctx(true, false),
                 false,
                 false,
                 Some(&with_failure),
@@ -5772,34 +5723,34 @@ mod tests {
             frames.push((format!("separators {size}"), separator_frame));
             frames.push((
                 format!("tree {size}"),
-                render_frame(&snapshot, width, height, true, false, false),
+                render_frame(&snapshot, width, height, ctx(true, false), false),
             ));
             frames.push((
                 format!("help {size}"),
-                render_frame(&snapshot, width, height, true, false, true),
+                render_frame(&snapshot, width, height, ctx(true, false), true),
             ));
             frames.push((format!("live {size}"), live(false)));
             frames.push((format!("ledger {size}"), live(true)));
             frames.push((
                 format!("log {size}"),
-                render_log_frame(&log, width, height, true, false),
+                render_log_frame(&log, width, height, ctx(true, false)),
             ));
             frames.push((
                 format!("install gate {size}"),
-                render_install_gate(&preflight, true, width, height, true, false),
+                render_install_gate(&preflight, true, width, height, ctx(true, false)),
             ));
             frames.push((
                 format!("success receipt {size}"),
-                render_post_install(&success_receipt(), width, height, true, false),
+                render_post_install(&success_receipt(), width, height, ctx(true, false)),
             ));
             frames.push((
                 format!("failure receipt {size}"),
-                render_post_install(&failure_receipt(), width, height, true, false),
+                render_post_install(&failure_receipt(), width, height, ctx(true, false)),
             ));
             // A screen with no prefetch data is a sentence, not a tree.
             frames.push((
                 format!("empty {size}"),
-                render_frame(&Snapshot::default(), width, height, true, false, false),
+                render_frame(&Snapshot::default(), width, height, ctx(true, false), false),
             ));
             let unavailable = Snapshot {
                 prefetch: Section::failed("pacman -Qu failed", at()),
@@ -5807,16 +5758,16 @@ mod tests {
             };
             frames.push((
                 format!("unavailable {size}"),
-                render_frame(&unavailable, width, height, true, false, false),
+                render_frame(&unavailable, width, height, ctx(true, false), false),
             ));
         }
         // The 40x12 floor is a size notice: text, not glyphs.
         frames.push((
             "notice 40x12".to_string(),
-            render_frame(&snapshot, 40, 12, true, false, false),
+            render_frame(&snapshot, 40, 12, ctx(true, false), false),
         ));
         // A clipped forest, where the hidden-run marker is `:` in ASCII.
-        let clipped = render_frame(&wide_snapshot(2_000), 80, 24, true, false, false);
+        let clipped = render_frame(&wide_snapshot(2_000), 80, 24, ctx(true, false), false);
         assert!(
             clipped.contains(':'),
             "the clipped marker is drawn\n{clipped}"
@@ -5830,8 +5781,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            true,
-            false,
+            ctx(true, false),
             None,
         );
         let selection = Selection::none().moved(&tree, &plan.slots, 1);
@@ -5841,8 +5791,7 @@ mod tests {
             Footer::default(),
             80,
             24,
-            true,
-            false,
+            ctx(true, false),
             false,
             false,
             None,
@@ -5862,7 +5811,7 @@ mod tests {
 
     #[test]
     fn prefetch_badges_name_each_package_once() {
-        let frame = render_frame(&prefetch_snapshot(), 80, 24, false, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 80, 24, ctx(false, false), false);
         for label in ["cached", "stale", "build-pending", "missing"] {
             assert!(frame.contains(label), "missing {label} in\n{frame}");
         }
@@ -5874,7 +5823,7 @@ mod tests {
 
     #[test]
     fn prefetch_ascii_has_no_non_ascii_bytes() {
-        let frame = render_frame(&prefetch_snapshot(), 80, 24, true, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 80, 24, ctx(true, false), false);
         assert!(
             frame.is_ascii(),
             "ascii prefetch frame contained a non-ASCII character"
@@ -5883,7 +5832,7 @@ mod tests {
 
     #[test]
     fn the_prefetch_forest_is_bottom_up_with_nom_branches() {
-        let frame = render_frame(&prefetch_snapshot(), 120, 40, false, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 120, 40, ctx(false, false), false);
         let lines: Vec<&str> = frame.lines().collect();
 
         assert!(lines[1].contains("Dependency Graph:"));
@@ -5941,7 +5890,7 @@ mod tests {
 
     #[test]
     fn the_prefetch_forest_ascii_uses_ascii_branches() {
-        let frame = render_frame(&prefetch_snapshot(), 80, 24, true, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 80, 24, ctx(true, false), false);
         assert!(frame.is_ascii(), "ascii frame had non-ASCII bytes\n{frame}");
         assert!(
             frame.contains("`--") || frame.contains("|--"),
@@ -5953,7 +5902,7 @@ mod tests {
 
     #[test]
     fn the_prefetch_forest_truncates_safely_at_40_columns() {
-        let frame = render_frame(&prefetch_snapshot(), 40, 24, false, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 40, 24, ctx(false, false), false);
         for line in frame.lines() {
             assert!(
                 line.chars().count() <= 40,
@@ -5984,7 +5933,7 @@ mod tests {
                 &[],
             ),
         ]);
-        let frame = render_frame(&snapshot, 80, 24, false, false, false);
+        let frame = render_frame(&snapshot, 80, 24, ctx(false, false), false);
         let lines: Vec<&str> = frame.lines().collect();
 
         assert!(lines[1].contains("Dependency Graph:"));
@@ -6037,7 +5986,7 @@ mod tests {
                 &["a"],
             ),
         ]);
-        let frame = render_frame(&snapshot, 80, 24, false, false, false);
+        let frame = render_frame(&snapshot, 80, 24, ctx(false, false), false);
 
         assert!(frame.contains("error: dependency cycle has no root: a, b"));
         assert!(
@@ -6089,7 +6038,7 @@ mod tests {
         // 80x12 gives the cycle error, the summary and seven notes one row
         // fewer than they need. The error line is a row like any other, so
         // the notes must be counted, never silently dropped off the bottom.
-        let frame = render_frame(&snapshot, 80, 12, false, false, false);
+        let frame = render_frame(&snapshot, 80, 12, ctx(false, false), false);
 
         assert!(frame.contains("error: dependency cycle has no root: a, b"));
         assert!(
@@ -6100,7 +6049,7 @@ mod tests {
 
     #[test]
     fn prefetch_frames_are_stable_at_80x24() {
-        let frame = render_frame(&prefetch_snapshot(), 80, 24, false, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 80, 24, ctx(false, false), false);
         assert_eq!(
             frame,
             include_str!("../../tests/golden/tui-prefetch-80x24.txt")
@@ -6109,7 +6058,7 @@ mod tests {
 
     #[test]
     fn prefetch_frames_are_stable_at_120x40() {
-        let frame = render_frame(&prefetch_snapshot(), 120, 40, false, false, false);
+        let frame = render_frame(&prefetch_snapshot(), 120, 40, ctx(false, false), false);
         assert_eq!(
             frame,
             include_str!("../../tests/golden/tui-prefetch-120x40.txt")
@@ -6118,7 +6067,7 @@ mod tests {
 
     #[test]
     fn help_opens_over_the_tree() {
-        let frame = render_frame(&snapshot(), 80, 24, false, false, true);
+        let frame = render_frame(&snapshot(), 80, 24, ctx(false, false), true);
         assert!(frame.contains("help"));
         assert!(frame.contains("ctrl-z  suspend"));
     }
@@ -6137,8 +6086,7 @@ mod tests {
             },
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             true,
             false,
             None,
@@ -6178,15 +6126,17 @@ mod tests {
             },
             80,
             24,
-            false,
-            false,
+            ctx(false, false),
             true,
             false,
             None,
             Selection::none(),
         );
 
-        assert_eq!(frame, render_frame(&snapshot(), 80, 24, false, false, true));
+        assert_eq!(
+            frame,
+            render_frame(&snapshot(), 80, 24, ctx(false, false), true)
+        );
     }
 
     /// Every default action has a help row, and every help row is an action.
@@ -6233,7 +6183,7 @@ mod tests {
     #[test]
     fn the_help_popup_grows_to_its_rows() {
         // The old 12-row cap clipped the thirteenth row; every one is on screen.
-        let frame = render_frame(&snapshot(), 80, 24, false, false, true);
+        let frame = render_frame(&snapshot(), 80, 24, ctx(false, false), true);
         let keymap = Keymap::default();
         for (actions, action) in super::HELP_ROWS {
             let keys = actions
@@ -6248,14 +6198,14 @@ mod tests {
             assert!(frame.contains(action), "help text `{action}` is clipped");
         }
         // `--ascii` replaces the row separators, as the footers do.
-        let ascii = render_frame(&snapshot(), 80, 24, true, false, true);
+        let ascii = render_frame(&snapshot(), 80, 24, ctx(true, false), true);
         assert!(ascii.contains("install | dismiss receipt"));
     }
 
     #[test]
     fn a_short_terminal_says_the_help_is_a_subset() {
         // 12 rows cannot hold 13, and a silent cut is what #62 reported.
-        let frame = render_frame(&snapshot(), 40, 12, false, false, true);
+        let frame = render_frame(&snapshot(), 40, 12, ctx(false, false), true);
         let hidden = super::HELP_ROWS.len() - 9;
         assert!(frame.contains(&format!("+{hidden} more rows, taller window")));
         assert!(
@@ -6270,14 +6220,20 @@ mod tests {
 
     #[test]
     fn a_tiny_terminal_gets_one_centered_line() {
-        let frame = render_frame(&snapshot(), 20, 5, false, false, false);
+        let frame = render_frame(&snapshot(), 20, 5, ctx(false, false), false);
         assert!(frame.contains("terminal too small"));
     }
 
     #[test]
     fn zero_size_does_not_panic() {
-        assert_eq!(render_frame(&snapshot(), 0, 0, false, false, false), "");
-        assert_eq!(render_frame(&snapshot(), 80, 0, false, false, false), "");
+        assert_eq!(
+            render_frame(&snapshot(), 0, 0, ctx(false, false), false),
+            ""
+        );
+        assert_eq!(
+            render_frame(&snapshot(), 80, 0, ctx(false, false), false),
+            ""
+        );
     }
 
     #[test]
@@ -6286,22 +6242,22 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
         std::fs::write(
             dir.join("tui-80x24.txt"),
-            render_frame(&snapshot(), 80, 24, false, false, false),
+            render_frame(&snapshot(), 80, 24, ctx(false, false), false),
         )
         .expect("write 80x24");
         std::fs::write(
             dir.join("tui-120x40.txt"),
-            render_frame(&snapshot(), 120, 40, false, false, false),
+            render_frame(&snapshot(), 120, 40, ctx(false, false), false),
         )
         .expect("write 120x40");
         std::fs::write(
             dir.join("tui-prefetch-80x24.txt"),
-            render_frame(&prefetch_snapshot(), 80, 24, false, false, false),
+            render_frame(&prefetch_snapshot(), 80, 24, ctx(false, false), false),
         )
         .expect("write prefetch 80x24");
         std::fs::write(
             dir.join("tui-prefetch-120x40.txt"),
-            render_frame(&prefetch_snapshot(), 120, 40, false, false, false),
+            render_frame(&prefetch_snapshot(), 120, 40, ctx(false, false), false),
         )
         .expect("write prefetch 120x40");
 
@@ -6309,22 +6265,22 @@ mod tests {
         let diamond_run = diamond_run();
         std::fs::write(
             dir.join("tui-live-diamond-120x40.txt"),
-            render_live_frame(&diamond, &diamond_run, 120, 40, false, false, false),
+            render_live_frame(&diamond, &diamond_run, 120, 40, ctx(false, false), false),
         )
         .expect("write live diamond 120x40");
         std::fs::write(
             dir.join("tui-live-diamond-80x24.txt"),
-            render_live_frame(&diamond, &diamond_run, 80, 24, false, false, false),
+            render_live_frame(&diamond, &diamond_run, 80, 24, ctx(false, false), false),
         )
         .expect("write live diamond 80x24");
         std::fs::write(
             dir.join("tui-live-diamond-ascii-80x24.txt"),
-            render_live_frame(&diamond, &diamond_run, 80, 24, true, false, false),
+            render_live_frame(&diamond, &diamond_run, 80, 24, ctx(true, false), false),
         )
         .expect("write live diamond ascii");
         std::fs::write(
             dir.join("tui-live-subsecond-80x24.txt"),
-            render_live_frame(&diamond, &subsecond_run(), 80, 24, false, false, false),
+            render_live_frame(&diamond, &subsecond_run(), 80, 24, ctx(false, false), false),
         )
         .expect("write live subsecond");
         std::fs::write(
@@ -6334,15 +6290,21 @@ mod tests {
                 &roots_run(),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
             ),
         )
         .expect("write live roots 120x40");
         std::fs::write(
             dir.join("tui-live-roots-80x24.txt"),
-            render_live_frame(&roots_snapshot(), &roots_run(), 80, 24, false, false, false),
+            render_live_frame(
+                &roots_snapshot(),
+                &roots_run(),
+                80,
+                24,
+                ctx(false, false),
+                false,
+            ),
         )
         .expect("write live roots 80x24");
         std::fs::write(
@@ -6352,8 +6314,7 @@ mod tests {
                 &failure_run(),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
             ),
         )
@@ -6365,8 +6326,7 @@ mod tests {
                 &failure_run(),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
             ),
         )
@@ -6376,34 +6336,34 @@ mod tests {
         let progress_run = progress_run();
         std::fs::write(
             dir.join("tui-live-progress-120x40.txt"),
-            render_live_frame(&progress, &progress_run, 120, 40, false, false, false),
+            render_live_frame(&progress, &progress_run, 120, 40, ctx(false, false), false),
         )
         .expect("write live progress 120x40");
         std::fs::write(
             dir.join("tui-live-progress-80x24.txt"),
-            render_live_frame(&progress, &progress_run, 80, 24, false, false, false),
+            render_live_frame(&progress, &progress_run, 80, 24, ctx(false, false), false),
         )
         .expect("write live progress 80x24");
         std::fs::write(
             dir.join("tui-live-progress-ascii-80x24.txt"),
-            render_live_frame(&progress, &progress_run, 80, 24, true, false, false),
+            render_live_frame(&progress, &progress_run, 80, 24, ctx(true, false), false),
         )
         .expect("write live progress ascii 80x24");
         std::fs::write(
             dir.join("tui-live-progress-ascii-120x40.txt"),
-            render_live_frame(&progress, &progress_run, 120, 40, true, false, false),
+            render_live_frame(&progress, &progress_run, 120, 40, ctx(true, false), false),
         )
         .expect("write live progress ascii 120x40");
 
         let unknown = unknown_progress_run();
         std::fs::write(
             dir.join("tui-live-progress-unknown-120x40.txt"),
-            render_live_frame(&progress, &unknown, 120, 40, false, false, false),
+            render_live_frame(&progress, &unknown, 120, 40, ctx(false, false), false),
         )
         .expect("write live unknown progress 120x40");
         std::fs::write(
             dir.join("tui-live-progress-unknown-80x24.txt"),
-            render_live_frame(&progress, &unknown, 80, 24, false, false, false),
+            render_live_frame(&progress, &unknown, 80, 24, ctx(false, false), false),
         )
         .expect("write live unknown progress 80x24");
 
@@ -6411,12 +6371,12 @@ mod tests {
         let window_run = window_run();
         std::fs::write(
             dir.join("tui-live-window-120x40.txt"),
-            render_live_frame(&window, &window_run, 120, 40, false, false, false),
+            render_live_frame(&window, &window_run, 120, 40, ctx(false, false), false),
         )
         .expect("write live window 120x40");
         std::fs::write(
             dir.join("tui-live-window-80x24.txt"),
-            render_live_frame(&window, &window_run, 80, 24, false, false, false),
+            render_live_frame(&window, &window_run, 80, 24, ctx(false, false), false),
         )
         .expect("write live window 80x24");
 
@@ -6430,8 +6390,7 @@ mod tests {
                 fetch_footer(),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -6447,8 +6406,7 @@ mod tests {
                 fetch_footer(),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -6466,8 +6424,7 @@ mod tests {
                 repair_footer(&card),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -6483,8 +6440,7 @@ mod tests {
                 repair_footer(&card),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 None,
@@ -6501,8 +6457,7 @@ mod tests {
                 ledger_footer(),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 true,
                 None,
@@ -6518,8 +6473,7 @@ mod tests {
                 ledger_footer(),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 true,
                 None,
@@ -6537,8 +6491,7 @@ mod tests {
                 fetch_footer(),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 Some(&gates),
@@ -6554,8 +6507,7 @@ mod tests {
                 fetch_footer(),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 Some(&gates),
@@ -6566,13 +6518,13 @@ mod tests {
 
         std::fs::write(
             dir.join("tui-log-120x40.txt"),
-            render_log_frame(&long_log_fixture(), 120, 40, false, false),
+            render_log_frame(&long_log_fixture(), 120, 40, ctx(false, false)),
         )
         .expect("write log 120x40");
 
         std::fs::write(
             dir.join("tui-install-gate-120x40.txt"),
-            render_install_gate(&install_preflight(), false, 120, 40, false, false),
+            render_install_gate(&install_preflight(), false, 120, 40, ctx(false, false)),
         )
         .expect("write install gate 120x40");
 
@@ -6584,8 +6536,7 @@ mod tests {
                 showcase_footer(&showcase_card()),
                 120,
                 40,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 Some(&fetch_gates()),
@@ -6601,8 +6552,7 @@ mod tests {
                 showcase_footer(&showcase_card()),
                 80,
                 24,
-                false,
-                false,
+                ctx(false, false),
                 false,
                 false,
                 Some(&fetch_gates()),
@@ -6618,8 +6568,7 @@ mod tests {
                 showcase_footer(&showcase_card()),
                 80,
                 24,
-                true,
-                false,
+                ctx(true, false),
                 false,
                 false,
                 Some(&fetch_gates()),
@@ -6635,8 +6584,7 @@ mod tests {
                 showcase_footer(&showcase_card()),
                 120,
                 40,
-                true,
-                false,
+                ctx(true, false),
                 false,
                 false,
                 Some(&fetch_gates()),
@@ -6647,7 +6595,7 @@ mod tests {
 
         std::fs::write(
             dir.join("tui-post-install-120x40.txt"),
-            render_post_install(&success_receipt(), 120, 40, false, false),
+            render_post_install(&success_receipt(), 120, 40, ctx(false, false)),
         )
         .expect("write post-install 120x40");
     }
