@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use aepm::report::{ArtifactState, PackageView, PrefetchReport, Repo, Section, Snapshot};
 use aepm::tui::live::{LiveRun, Selection};
-use aepm::tui::render::{Footer, render_frame, render_live_frame_status};
+use aepm::tui::render::{Footer, RenderCtx, render_frame, render_live_frame_status};
 use aepm::tui::tree::Tree;
 
 const PACKAGES: usize = 2_000;
@@ -113,8 +113,7 @@ fn the_frame_budget_holds_with_two_thousand_packages() {
         footer,
         120,
         40,
-        false,
-        true,
+        RenderCtx::new(false, true),
         false,
         false,
         None,
@@ -125,7 +124,7 @@ fn the_frame_budget_holds_with_two_thousand_packages() {
     let mut live_samples = Vec::with_capacity(SAMPLES);
     for _ in 0..SAMPLES {
         let started = Instant::now();
-        let frame = render_frame(&snapshot, 120, 40, false, true, false);
+        let frame = render_frame(&snapshot, 120, 40, RenderCtx::new(false, true), false);
         static_samples.push(started.elapsed());
         assert!(frame.contains("Dependency Graph"), "a real frame drew");
 
@@ -136,8 +135,7 @@ fn the_frame_budget_holds_with_two_thousand_packages() {
             footer,
             120,
             40,
-            false,
-            true,
+            RenderCtx::new(false, true),
             false,
             false,
             None,
