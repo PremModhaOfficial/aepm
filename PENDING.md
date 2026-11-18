@@ -35,7 +35,6 @@ release notes.
 
 | item | why it is open |
 |---|---|
-| #99 | a red `Review` check means "no review happened", but nothing fails the build for that. The PR exists, unmerged, and its checks have not run since it was opened before the rename |
 | #93 C3 | the palette / `ascii: bool` sweep, 52 call sites, 35 functions taking both, 14 `#[allow(clippy::too_many_arguments)]` in `src/tui/render.rs`. Deferred out of `v0.1.0`: mechanical, no user-visible change, and the highest conflict surface in the tree |
 | #41, #47 | partial upgrade and the remaining implicit state machines. `docs/STATE-MACHINES.md` lists what is declared and unreachable; `scripts/gate-state-machines.sh` holds 22 line anchors so the document cannot drift |
 | #29 | the TUI v2 shell. Not planned: the tree pays for panels nobody asked for |
