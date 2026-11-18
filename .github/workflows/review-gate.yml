@@ -75,11 +75,17 @@ jobs:
           [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
           head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
-          # A run that named its own PR must agree with it: a green check may
-          # never describe a different commit than the run that asked for it.
+          # Required checks are per commit, so a run whose SHA is no longer the
+          # PR head can neither pass nor fail for the current head: GitHub does
+          # not attach it there. Failing it only punished a force-push, which
+          # strict branch protection makes routine: a rebase left a permanent
+          # red `Review Gate` on `main` (run 44247662200). A superseded run
+          # reports that it was superseded and gates nothing; the new head has
+          # its own review run, and that one is the gate.
           if [[ "$RUN_EVENT" != "issue_comment" && -n "${RUN_SHA:-}" && "$head" != "$RUN_SHA" ]]; then
-            echo "::error::PR $pr head $head is not this run's head $RUN_SHA"
-            exit 1
+            echo "::notice::PR $pr is at $head; this run reviewed $RUN_SHA, so it is superseded and gates nothing"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "head=$head" >> "$GITHUB_OUTPUT"
       # The script comes from the default branch, never from the PR head and
@@ -91,6 +97,9 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Review must exist for this head
+        # A superseded run has nothing to say about the current head; the run
+        # for that head is the one that gates it.
+        if: steps.target.outputs.stale != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.target.outputs.pr }}
