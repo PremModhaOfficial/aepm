@@ -3,7 +3,7 @@
 # schema, pre-computed aggregates, definitive empty state, structured errors.
 set -uo pipefail
 
-VERSION="0.2.0"
+VERSION="0.4.0"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 case "$BIN" in "$HOME"/*) BIN="~${BIN#"$HOME"}" ;; esac
@@ -14,21 +14,31 @@ bin: $BIN
 description: Compact PR review state for agents
 
 usage:
-  scripts/review-state.sh [<pr>] [--findings] [--full]
+  scripts/review-state.sh [<pr>] [--findings] [--full] [--gate]
   scripts/review-state.sh --help
   scripts/review-state.sh --version
 
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
+  --gate      exit 1 when the review is missing, older than the PR head, or
+              does not clear the merge
   --help      this reference
   --version   print the version only
+
+env:
+  REVIEW_BOT_LOGIN  comma-separated logins whose comments count as the review
+                    (default: github-actions[bot],github-actions, because
+                    `gh pr view` drops the [bot] suffix the API keeps)
+  REVIEW_GATE_VERDICT  the merge verdict `--gate` accepts, snake_case
+                    (default: no_concerns_found)
 
 examples:
   scripts/review-state.sh
   scripts/review-state.sh 20
   scripts/review-state.sh 20 --findings
   scripts/review-state.sh 20 --full
+  scripts/review-state.sh 20 --gate
 EOF
 }
 
@@ -40,6 +50,7 @@ err() {
 pr=""
 full=0
 show_findings=0
+gate=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -47,7 +58,8 @@ for arg in "$@"; do
     --version|-v|-V) printf '%s\n' "$VERSION"; exit 0 ;;
     --full) full=1 ;;
     --findings) show_findings=1 ;;
-    -*) err "unknown flag $arg" "valid flags: --findings, --full, --help, --version" 2 ;;
+    --gate) gate=1 ;;
+    -*) err "unknown flag $arg" "valid flags: --findings, --full, --gate, --help, --version" 2 ;;
     *)
       [[ -z "$pr" ]] || err "unexpected argument $arg" "pass one PR number" 2
       pr="$arg"
@@ -66,6 +78,10 @@ if [[ -z "$pr" ]]; then
   if [[ -z "$pr" ]]; then
     if grep -qi "no pull requests found" "$GERR"; then
       branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+      if [[ "$gate" -eq 1 ]]; then
+        printf 'gate: fail\npr: 0\nreason: no open pull request for branch %s\nhelp: open a PR and run `/review`\n' "$branch"
+        exit 1
+      fi
       printf 'pr: 0 open pull requests for branch %s\n' "$branch"
       printf 'help[1]: push the branch and open a PR to get a review\n'
       exit 0
@@ -87,24 +103,40 @@ head="$(jq -r '.headRefOid[0:7]' <<<"$meta")"
 head_full="$(jq -r '.headRefOid' <<<"$meta")"
 url="$(jq -r '.url' <<<"$meta")"
 
-checks="$(gh pr checks "$pr" --json name,state 2>"$GERR")"
-if [[ -z "$checks" ]]; then
-  if grep -qi "no checks reported" "$GERR"; then
-    checks='[]'
-  else
-    err "gh pr checks failed: $(head -1 "$GERR")" "run \`gh auth status\`"
+# Checks are read for the full report only. `--gate` decides on the review alone,
+# so it needs no Checks API permission: a workflow can grant it
+# `pull-requests: read` and nothing else.
+if [[ "$gate" == 0 ]]; then
+  checks="$(gh pr checks "$pr" --json name,state 2>"$GERR")"
+  if [[ -z "$checks" ]]; then
+    if grep -qi "no checks reported" "$GERR"; then
+      checks='[]'
+    else
+      err "gh pr checks failed: $(head -1 "$GERR")" "run \`gh auth status\`"
+    fi
   fi
+  jq -e . >/dev/null 2>&1 <<<"$checks" || err "gh pr checks returned invalid JSON" "rerun the command"
+
+  total="$(jq 'length' <<<"$checks")"
+  passed="$(jq '[.[] | select(.state == "SUCCESS")] | length' <<<"$checks")"
+  failed="$(jq '[.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ERROR" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")] | length' <<<"$checks")"
+  pending="$(jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING" or .state == "REQUESTED" or .state == "EXPECTED")] | length' <<<"$checks")"
+  skipped="$(jq '[.[] | select(.state == "SKIPPED" or .state == "NEUTRAL")] | length' <<<"$checks")"
 fi
-jq -e . >/dev/null 2>&1 <<<"$checks" || err "gh pr checks returned invalid JSON" "rerun the command"
 
-total="$(jq 'length' <<<"$checks")"
-passed="$(jq '[.[] | select(.state == "SUCCESS")] | length' <<<"$checks")"
-failed="$(jq '[.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ERROR" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")] | length' <<<"$checks")"
-pending="$(jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING" or .state == "REQUESTED" or .state == "EXPECTED")] | length' <<<"$checks")"
-skipped="$(jq '[.[] | select(.state == "SKIPPED" or .state == "NEUTRAL")] | length' <<<"$checks")"
-
+# The marker text is forgeable: any commenter can paste a typed block carrying
+# the current head SHA, and `last` would then pick the forgery over the bot's
+# review. Author first, marker second. The marker is the typed block alone:
+# `Risk level`, `Merge recommendation` and the guide header are all emitted by
+# other bot commands too, and the newest of those shadowed the review.
+REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
+[[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
+  || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
 if ! review="$(gh pr view "$pr" --json comments \
-  --jq '[.comments[] | select(.body | test("pr-agent-review-state|Risk level|Merge recommendation|PR Reviewer Guide"))] | last // {}' \
+  --jq "[.comments[]
+    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
+    | select(.body | contains(\"pr-agent-review-state:v1\"))]
+    | last // {}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
@@ -114,7 +146,9 @@ review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
 review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
 
 # Typed state block pr-agent embeds in the review comment (multi-line HTML comment).
-state_json="$(printf '%s\n' "$review_body" | awk '/pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
+# The start rule must fire once: the marker is also quoted inside finding bodies,
+# and a start rule that re-triggers on those lines swallows the JSON line.
+state_json="$(printf '%s\n' "$review_body" | awk '!f && /pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   complete="$(jq -r '.last_run.complete // false' <<<"$state_json")"
   excluded="$(jq -r '(.last_run.excluded_files // []) | length' <<<"$state_json")"
@@ -128,6 +162,7 @@ if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   fi
 else
   state_json=""
+  complete="false"
   findings_total="0"
   findings_active="0"
   review_head=""
@@ -152,6 +187,37 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 [[ -n "$risk" ]] || risk="unknown"
 [[ -n "$verdict" ]] || verdict="unknown"
 [[ -n "$review_body" ]] && present="true" || present="false"
+
+if [[ "$gate" -eq 1 ]]; then
+  if [[ "$present" != "true" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
+    exit 1
+  fi
+  if [[ "$stale" != "false" ]]; then
+    if [[ "$stale" == "true" ]]; then
+      printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review is older than the PR head\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
+    else
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
+    fi
+    exit 1
+  fi
+  # A truncated or timed-out run can still print a clean recommendation, so a
+  # partial review never counts.
+  if [[ "$complete" != "true" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    exit 1
+  fi
+  # The verdict is the merge decision, not a footnote. A review that says
+  # `changes required` or `needs review` did not clear the merge, and merging
+  # it anyway is the failure this gate exists to catch.
+  GATE_VERDICT="${REVIEW_GATE_VERDICT:-no_concerns_found}"
+  if [[ "$verdict" != "$GATE_VERDICT" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
+    exit 1
+  fi
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\n' "$number" "$head" "$verdict"
+  exit 0
+fi
 
 printf 'bin: %s\n' "$BIN"
 printf 'description: Compact PR review state for agents\n'

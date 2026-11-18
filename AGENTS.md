@@ -151,12 +151,33 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment.
-- **Authority:** the bot advises. `CI` and `Sim` are the gates. A merge verdict
-  is input to a human decision, not permission to merge.
+- **Gate:** the check is evaluated when a review run finishes, which is the only
+  trustworthy trigger. A push starts no review (`pr-agent` has no `synchronize`
+  trigger, `PR-AGENT.md` N9), so the new head gets no `Review Gate` check at
+  all: with the check required, that absence blocks the merge button; without
+  it required, nothing does. It fails when the review comment is missing, older
+  than the PR head, incomplete (`last_run.complete` not true), or did not clear
+  the merge (verdict other than `No concerns found`, override with
+  `REVIEW_GATE_VERDICT`). It makes no model call, so it spends no credits, and
+  it runs only the default branch's copy of the script. Only a comment authored
+  by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed block identifies
+  one: every other marker is forgeable or shared with `/describe`. A `/review`
+  refresh does not move the check onto the PR, because GitHub anchors it to the
+  commit the review run checked out and a `/review` run checks out the default
+  branch.
+- **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
+  the verdict. A red `Review Gate` blocks a merge only once it is a required
+  status check in the `main` ruleset, which is a one-time repository setting and
+  not something this repo can assert (`PR-AGENT.md` N5). Until that setting
+  exists the gate reports and the verdict stays advisory. A human override is an
+  admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
   the rules it is judged by.
+- **Usage:** the review comment's run-details section carries model, tokens
+  in/out, duration, and AI calls (`output_run_details = true`). The job log
+  prints prompt tokens only, so that section is the usage record.
 - **Decisions and measurements:** `.github/PR-AGENT.md`.
 
 ## Layout

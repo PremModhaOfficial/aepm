@@ -28,6 +28,12 @@ echo "=== state machines (docs match code) ==="
 bash scripts/gate-state-machines.sh --self-test
 bash scripts/gate-state-machines.sh
 
+echo "=== review gate (current, stale, missing, untracked) ==="
+# The review gate fails closed when no review exists or the head moved. This
+# self-test pins the four outcomes with a fake gh, so the gate cannot silently
+# pass everything.
+bash scripts/check-review-gate.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

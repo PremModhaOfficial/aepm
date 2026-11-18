@@ -274,7 +274,8 @@ Every PR gets an automated review from a self-hosted
 CodeRabbit. It runs from
 [`.github/workflows/pr-agent.yml`](.github/workflows/pr-agent.yml) on PR
 open/reopen/ready-for-review and on `/` commands in PR comments. `CI` and `Sim`
-remain the merge gate; this is the review layer on top.
+remain the behaviour gates; `Review Gate` checks that a review exists for the
+head.
 
 - Policy lives in [`.pr_agent.toml`](.pr_agent.toml). The reviewer reads
   `AGENTS.md`, `NEXT.md`, and `context.md` from `main`, so the safety and honesty
@@ -288,6 +289,20 @@ remain the merge gate; this is the review layer on top.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
+- The `Review Gate` check is evaluated after every review run, the only
+  trigger that cannot be forged, and fails when the review is missing, older
+  than the PR head, incomplete, or its verdict is anything but
+  `No concerns found`. It reads the review only: CI and `Sim` stay the behaviour
+  gates. It makes no model call, so it is free; make it a required check so
+  neither a force push nor an open finding merges — a push starts no review, so
+  the new head simply has no check, and a required check that never runs blocks
+  the button. Only the bot's own comment counts, and only its typed block
+  identifies one, so pasting a marker by hand does not pass it. A `/review`
+  refresh does not move the check onto the PR: GitHub anchors it to the commit
+  the review run checked out, which for a `/review` run is the default branch.
+- Each review carries a run-details section: model, tokens in/out, duration, and
+  AI calls. That is the only usage record; the job log prints prompt tokens
+  only.
 - A review that cannot run fails the check. It never reports green.
 - Fork PRs are skipped because GitHub does not expose secrets to them.
 
