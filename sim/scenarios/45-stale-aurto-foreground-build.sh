@@ -50,6 +50,22 @@ assert_contains "$(cat "$check_log")" "check: aur updates: 1" \
     "check sees the pending AUR update, so install can see it too"
 assert_eq "$(installed_version)" "1.0.0-1" "nothing has been installed yet"
 
+# The artifact the local repo holds is 1.0.0 and the AUR offers 2.0.0, so the
+# only honest badge for it is an older build. aurto builds into its own cache,
+# so that is where the stale artifact goes; "built" would claim the update is
+# satisfied when the repo cannot satisfy it.
+cache=/var/cache/pacman/aurto
+mkdir -p "$cache"
+cp "/srv/simrepo/$pkgname-1.0.0-1-x86_64.pkg.tar.zst" "$cache/"
+frame=$(mktemp)
+runuser -l builder -c 'aepm tui --render-once' >"$frame" 2>&1
+assert_contains "$(cat "$frame")" "older build 1.0.0-1" \
+    "the artifact the local repo holds reads as an older build"
+assert_false "a stale local repo is never reported as built" \
+    bash -c 'grep "$1" "$2" | grep -q built' _ "$pkgname" "$frame"
+assert_false "check never calls the AUR package built" \
+    bash -c 'grep -q "built" "$1"' _ "$check_log"
+
 # The install. It is legal and it succeeds: the risk is not a failure, it is
 # that a build may now hold the terminal and nothing said so.
 log=$(mktemp)

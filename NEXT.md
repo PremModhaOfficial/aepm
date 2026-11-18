@@ -121,10 +121,15 @@ Today the sim runs everything as root, so the real privilege path is untested.
       `paccache`, `pacdiff`.
 - [x] Real `pacman-conf` stays, but add fixture configs for:
       default, multiple CacheDir, empty CacheDir, moved CacheDir.
-- [ ] Fault fixtures:
+- [x] Fault fixtures:
       `db.lck` with no process, `db.lck` with a sleeping fake pacman, tiny
       tmpfs CacheDir, stale aurto repo, a `pacman.log` with an install after a
-      fetch.
+      fetch. Each names the scenario that asserts the refusal or the recorded
+      state: 06 (stale and live lock, the path named, the lock never stolen),
+      41 (the `ENOSPC` `.part` is a partial download, never cached), 45 (an
+      older local build is `older build`, never `built`), 44 (an install after
+      a fetch with updates still pending is the partial upgrade `check`
+      reports) and 55 (an install that finished the upgrade is not one).
 - [x] Scenario: `fetch` refuses while pacman holds the lock.
 - [x] Scenario: `fetch` refuses below the free-space floor.
 - [x] Scenario: `fetch` uses only the allowed argv.

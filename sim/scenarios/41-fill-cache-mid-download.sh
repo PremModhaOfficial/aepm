@@ -50,6 +50,20 @@ assert_eq "$(cache_files)" "$(printf '%s\n%s' "$package.part" "$package.part.fil
     "the cache holds only the aborted transfer and the filler"
 assert_false "no final artifact was written" test -e "$cache/$package"
 
+# 2b. The aborted `.part` sits on disk, and no read-only reader may call it
+#     cached. The filler is the harness's own device for filling the disk (a
+#     package-named file whose extension is not an archive), so it goes first:
+#     the cache a real ENOSPC leaves behind holds the `.part` and nothing else.
+rm -f "$cache"/*.filler
+frame=$(mktemp)
+runuser -l builder -c 'aepm tui --render-once' >"$frame" 2>&1
+assert_contains "$(cat "$frame")" "partial download" \
+    "the aborted .part reads as a partial download"
+assert_contains "$(cat "$frame")" "0 ready" "a partial file is not ready to install"
+assert_false "the aborted .part is not counted as cached" \
+    bash -c 'grep simapp "$1" | grep -q cached' _ "$frame"
+assert_eq "$(usr_state)" "$before_usr" "the prefetch view wrote nothing to /usr"
+
 # 3. A pacman that exits on its own removes its lock; only a kill leaves one.
 assert_false "the ENOSPC failure left no lock" test -f /var/lib/pacman/db.lck
 
@@ -75,11 +89,13 @@ assert_true "the fetched bytes match the real repo artifact" \
     cmp -s "$cache/$package" "/srv/simrepo/$package"
 
 # 6. Invariants: one escalation per fetch, the same allowed argv each time, no
-#    AUR helper, no build, and /usr still untouched.
+#    AUR helper reaching a transaction, no build, and /usr still untouched. The
+#    read-only prefetch view in 2b is the only thing that asked yay at all, and
+#    it asked for the AUR list.
 assert_eq "$(grep -c . /var/log/sim-sudo.log)" "2" "each fetch escalated once"
 assert_eq "$(grep -vc '^-n /usr/bin/pacman -Syuw --noconfirm$' /var/log/sim-sudo.log)" "0" \
     "both escalations are the exact fetch argv"
-assert_eq "$(yay_log)" "" "no fetch reached yay"
+assert_eq "$(yay_log)" "-Qua" "only the prefetch view reached yay, and only for the AUR list"
 assert_false "nothing ran an AUR build" yay_built_something
 assert_eq "$(usr_state)" "$before_usr" "the retried fetch wrote nothing to /usr"
 assert_eq "$(pkg_state)" "$before_pkgs" "the retried fetch installed nothing"
