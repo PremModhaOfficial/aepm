@@ -244,9 +244,7 @@ mod tests {
         assert_eq!(loaded.last_fetch_pending_names, Some(Vec::new()));
         assert_eq!(
             loaded.last_fetch_pending_names,
-            State::load(&path)
-                .expect("load")
-                .last_fetch_pending_names
+            State::load(&path).expect("load").last_fetch_pending_names
         );
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
