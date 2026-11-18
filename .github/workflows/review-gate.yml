@@ -7,7 +7,7 @@ name: Review Gate
 # stale, or its verdict is not the clean pass. It never calls a model and never
 # spends credits.
 #
-# Two triggers only, both of which load this file and the gate script from the
+# One trigger only, and it loads both this file and the gate script from the
 # default branch, so a PR can neither rewrite the check nor hand it a script.
 # `workflow_run` is the review run rather than the review comment: the bot posts
 # with `GITHUB_TOKEN`, and GitHub does not start workflows for events that token

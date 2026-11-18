@@ -207,6 +207,12 @@ if [[ "$gate" -eq 1 ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
+  # Chunking caps how much of a large PR is reviewed and lists what it skipped.
+  # A clean verdict over part of the diff is not a clean verdict over the diff.
+  if [[ "${excluded:0}" -gt 0 ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nexcluded: %s\nreason: the review excluded files it did not read\nhelp: narrow the PR, then comment `/review`\n' "$number" "$head" "$excluded"
+    exit 1
+  fi
   # The verdict is the merge decision, not a footnote. A review that says
   # `changes required` or `needs review` did not clear the merge, and merging
   # it anyway is the failure this gate exists to catch.

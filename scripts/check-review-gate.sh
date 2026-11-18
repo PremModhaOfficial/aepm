@@ -56,12 +56,14 @@ comment() {
 }
 
 typed_body() {
-  local head="$1" verdict="${2:-No concerns found}"
-  printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: %s\n' "$head" "$verdict"
+  local head="$1" verdict="${2:-No concerns found}" excluded="${3:-[]}"
+  printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":%s,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: %s\n' "$excluded" "$head" "$verdict"
 }
 
 export FAKE_META="{\"number\":21,\"state\":\"OPEN\",\"title\":\"t\",\"headRefOid\":\"$HEAD\",\"url\":\"u\"}"
 export FAKE_CHECKS='[]'
+
+CASES=0
 
 run() {
   local name="$1" want_exit="$2" want="$3" assign="${4:-}" out rc
@@ -78,10 +80,16 @@ run() {
     exit 1
   fi
   printf 'ok %s\n' "$name"
+  CASES=$((CASES + 1))
 }
 
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
 run current 0 'gate: pass'
+
+# Chunking skipped part of the diff; a clean verdict over the rest is not clean.
+excluded_body="$(typed_body "$HEAD" 'No concerns found' '["src/big.rs"]')"
+export FAKE_COMMENTS="[$(comment "$excluded_body")]"
+run excluded 1 'excluded files it did not read'
 
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")")]"
 run stale 1 'gate: fail'
@@ -150,4 +158,4 @@ quoted="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[{"body":"the marke
 export FAKE_COMMENTS="[$(comment "$quoted")]"
 run marker-quoted 0 'gate: pass'
 
-printf 'review gate: 15/15\n'
+printf 'review gate: %s/%s\n' "$CASES" "$CASES"
