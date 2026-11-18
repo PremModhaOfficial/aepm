@@ -38,7 +38,7 @@ Modules declared in `lib.rs`: `commands`, `config`, `error`, `fetch_source`,
 | `lock.rs` | `PATTERN = "pacman\|yay\|makepkg\|aurto"`, `running(runner)`, `check(config, runner, action)` [lock.rs:PATTERN] [lock.rs:check] |
 | `gate.rs` | `GateState { Pass, Warn, Fail }`, `Gate { name, state, detail }` with `pass`/`warn`/`fail` constructors [gate.rs:Gate] [gate.rs:GateState] |
 | `config.rs` | `Config` (all paths and limits), `from_env()`, `from_lookup(..)` [config.rs:Config] |
-| `state.rs` | `State { last_fetch_unix, last_fetch_pending, last_fetch_pending_names, last_install_unix }`, `load`, `save` [state.rs:State] |
+| `state.rs` | `State { last_fetch_unix, last_fetch_pending, last_fetch_pending_names: Option<Vec<String>>, last_install_unix }`, `load`, `save` [state.rs:State] |
 | `error.rs` | `Error { Blocked, Failed, Interrupted }`, `blocked(..)`, `failed(..)`, `exit_code()` [error.rs:Error] |
 | `json.rs` | `check(&Snapshot) -> Result<String, Error>`, `doctor(&DoctorReport, problems, error)` [json.rs:check] [json.rs:doctor] |
 | `util.rs` | `human_bytes`, `parse_size`, `path_str`, `resolve_cache_dir` [util.rs:human_bytes] [util.rs:resolve_cache_dir] |

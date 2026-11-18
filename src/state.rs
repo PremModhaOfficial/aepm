@@ -12,8 +12,10 @@ pub struct State {
     pub last_fetch_pending: Option<u64>,
     /// The names behind `last_fetch_pending`. `install` compares this set with
     /// what is still pending afterwards; a count cannot tell a finished
-    /// upgrade from a different unfinished one.
-    pub last_fetch_pending_names: Vec<String>,
+    /// upgrade from a different unfinished one. `None` is "no fetch recorded
+    /// a set" (an older state file, or no fetch at all); `Some` of an empty
+    /// list is a fetch that planned nothing, which is a real answer.
+    pub last_fetch_pending_names: Option<Vec<String>>,
     pub last_install_unix: Option<u64>,
 }
 
@@ -120,18 +122,23 @@ fn json_number(value: Option<u64>) -> String {
 /// and a full JSON string encoder would be code no input can exercise.
 /// `shortcut: no escaping, upgrade if a name can contain a quote or a reverse
 /// solidus`.
-fn json_strings(values: &[String]) -> String {
+fn json_strings(values: &Option<Vec<String>>) -> String {
+    let Some(values) = values else {
+        return "null".to_string();
+    };
     let quoted: Vec<String> = values.iter().map(|value| format!("\"{value}\"")).collect();
     format!("[{}]", quoted.join(","))
 }
 
-/// A JSON array of strings, or empty when the key is absent or null. A value
+/// A JSON array of strings, or `None` when the key is absent or null. A value
 /// that starts with neither is an error: reading a broken list as "nothing"
-/// would make `install` believe no upgrade was ever planned.
-fn strings(text: &str, key: &str) -> Result<Vec<String>, Error> {
+/// would make `install` believe no upgrade was ever planned. The difference
+/// between `None` and an empty list matters: an empty list is a fetch that
+/// planned nothing, `None` is a record that does not exist.
+fn strings(text: &str, key: &str) -> Result<Option<Vec<String>>, Error> {
     let quoted = format!("\"{key}\"");
     let Some(start) = text.find(&quoted) else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
 
     let rest = text[start + quoted.len()..].trim_start();
@@ -140,7 +147,7 @@ fn strings(text: &str, key: &str) -> Result<Vec<String>, Error> {
     };
     let rest = rest.trim_start();
     if rest.starts_with("null") {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let Some(rest) = rest.strip_prefix('[') else {
         return Err(Error::failed(format!("state file: {key} is not a list")));
@@ -158,7 +165,7 @@ fn strings(text: &str, key: &str) -> Result<Vec<String>, Error> {
             values.push(name.to_string());
         }
     }
-    Ok(values)
+    Ok(Some(values))
 }
 
 #[cfg(test)]
@@ -186,7 +193,7 @@ mod tests {
         let state = State {
             last_fetch_unix: Some(1_760_000_000),
             last_fetch_pending: Some(2),
-            last_fetch_pending_names: vec!["glibc".to_string(), "firefox".to_string()],
+            last_fetch_pending_names: Some(vec!["glibc".to_string(), "firefox".to_string()]),
             last_install_unix: Some(1_759_000_000),
         };
 
@@ -194,7 +201,7 @@ mod tests {
         assert_eq!(State::load(&path).expect("load"), state);
         assert_eq!(
             State::load(&path).expect("load").last_fetch_pending_names,
-            vec!["glibc".to_string(), "firefox".to_string()]
+            Some(vec!["glibc".to_string(), "firefox".to_string()])
         );
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
@@ -210,7 +217,37 @@ mod tests {
         let state = State::load(&path).expect("an older state file still loads");
 
         assert_eq!(state.last_fetch_pending, Some(3));
-        assert!(state.last_fetch_pending_names.is_empty());
+        assert!(
+            state.last_fetch_pending_names.is_none(),
+            "no recorded set is not the same as a set of nothing"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_fetch_that_planned_nothing_is_a_recorded_empty_set() {
+        let dir = temp_dir();
+        let path = dir.join("state.json");
+        let state = State {
+            last_fetch_unix: Some(7),
+            last_fetch_pending: Some(0),
+            last_fetch_pending_names: Some(Vec::new()),
+            last_install_unix: None,
+        };
+
+        state.save(&path).expect("save");
+        let loaded = State::load(&path).expect("load");
+
+        // A round trip must not turn "planned nothing" into "never recorded":
+        // `install` warns on the second and stays quiet on the first.
+        assert_eq!(loaded.last_fetch_pending_names, Some(Vec::new()));
+        assert_eq!(
+            loaded.last_fetch_pending_names,
+            State::load(&path)
+                .expect("load")
+                .last_fetch_pending_names
+        );
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }
@@ -228,7 +265,7 @@ mod tests {
                 "last_fetch_pending_names"
             )
             .expect("an empty list is a value"),
-            Vec::<String>::new()
+            Some(Vec::<String>::new())
         );
     }
 
@@ -273,7 +310,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.join("state.json");
         let state = State {
-            last_fetch_pending_names: vec!["glibc".to_string(), "firefox".to_string()],
+            last_fetch_pending_names: Some(vec!["glibc".to_string(), "firefox".to_string()]),
             ..State::default()
         };
 

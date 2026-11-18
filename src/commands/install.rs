@@ -341,18 +341,20 @@ fn check_partial_upgrade(
     config: &Config,
     runner: &dyn CommandRunner,
 ) -> Result<(), Error> {
-    if state.last_fetch_pending_names.is_empty() {
+    let Some(planned) = state.last_fetch_pending_names.as_deref() else {
         // An older state file, or no fetch at all: the set this refusal needs
         // was never recorded. Say so instead of reporting a clean upgrade.
+        // A fetch that planned nothing is `Some([])`, which is an answer and
+        // stays quiet.
         eprintln!(
             "install: warning: the last fetch recorded no pending set, so whether this \
              upgrade was partial cannot be told"
         );
         return Ok(());
-    }
+    };
 
     let still_pending = pending_names(config, runner)?;
-    let left = partial_upgrade(&state.last_fetch_pending_names, &still_pending);
+    let left = partial_upgrade(planned, &still_pending);
     if left.is_empty() {
         return Ok(());
     }
@@ -365,9 +367,12 @@ fn pending_names(config: &Config, runner: &dyn CommandRunner) -> Result<Vec<Stri
     let pacman = path_str(&config.pacman)?;
     let output = runner.run(pacman, &["-Qu"])?;
     match output.code {
-        // pacman -Qu exits 1 when nothing is pending and 0 when it listed
-        // updates; both answer the question.
-        0 | 1 => Ok(package_names(&output.stdout)),
+        // pacman -Qu exits 0 when it listed updates, and 1 when there was
+        // nothing to list -- but it also exits 1 on a corrupt or unreadable
+        // database. Only the silent exit 1 is "nothing pending": an empty
+        // list would read as "nothing left" and clear a partial upgrade.
+        0 => Ok(package_names(&output.stdout)),
+        1 if output.stdout.trim().is_empty() && output.stderr.trim().is_empty() => Ok(Vec::new()),
         code => {
             let detail = output.stderr.trim();
             let suffix = if detail.is_empty() {
@@ -1170,7 +1175,7 @@ mod tests {
         let state = State {
             last_fetch_unix: Some(1_760_000_000),
             last_fetch_pending: Some(names.len() as u64),
-            last_fetch_pending_names: names.iter().map(|name| name.to_string()).collect(),
+            last_fetch_pending_names: Some(names.iter().map(|name| name.to_string()).collect()),
             last_install_unix: None,
         };
         state.save(&config.state_file).expect("seed state");
@@ -1231,7 +1236,7 @@ mod tests {
         assert!(state.last_install_unix.is_some(), "the install is recorded");
         assert_eq!(
             state.last_fetch_pending_names,
-            vec!["simapp".to_string(), "bigpkg".to_string()],
+            Some(vec!["simapp".to_string(), "bigpkg".to_string()]),
             "the recorded fetch set is left alone"
         );
 
@@ -1263,6 +1268,84 @@ mod tests {
             fs::read_to_string(&config.state_file).expect("state text"),
             before,
             "nothing is recorded when the answer is unknown"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_query_that_exits_one_with_an_error_is_a_failure_not_an_empty_list() {
+        // pacman exits 1 both for "nothing pending" and for a corrupt or
+        // unreadable database. Reading the second as "nothing left" would
+        // clear exactly the partial upgrade this refusal exists to catch.
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        let before = seed_fetch(&dir, &config, &["simapp"]);
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "");
+        runner.push_interactive(0);
+        runner.push_output(CommandOutput {
+            code: 1,
+            stdout: String::new(),
+            stderr: "error: could not open database".to_string(),
+        });
+
+        let error = run_with(&config, &runner, options(true, false, false))
+            .expect_err("an exit 1 that carries an error must fail");
+
+        let message = error.to_string();
+        assert!(message.contains("pacman -Qu"), "message was: {message}");
+        assert!(
+            message.contains("could not open database"),
+            "the reason is kept: {message}"
+        );
+        assert_eq!(
+            fs::read_to_string(&config.state_file).expect("state text"),
+            before,
+            "a failure records nothing"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_fetch_that_planned_nothing_does_not_warn() {
+        // Some([]) is a fetch that found nothing to do, not a missing record:
+        // warning there would tell a user with a clean system that the tool
+        // cannot tell whether their upgrade was partial.
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        let state = State {
+            last_fetch_unix: Some(1_760_000_000),
+            last_fetch_pending: Some(0),
+            last_fetch_pending_names: Some(Vec::new()),
+            last_install_unix: None,
+        };
+        state.save(&config.state_file).expect("seed state");
+        fs::write(dir.join("pacman.log"), "[ALPM] upgraded glibc\n").expect("log");
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "");
+        runner.push_interactive(0);
+        runner.push_output(CommandOutput {
+            code: 1,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+
+        run_with(&config, &runner, options(true, false, false))
+            .expect("an empty planned set cannot be partial");
+
+        let after = State::load(&config.state_file).expect("state");
+        assert!(
+            after.last_install_unix.is_some(),
+            "the install is still recorded"
+        );
+        assert_eq!(
+            after.last_fetch_pending_names,
+            Some(Vec::new()),
+            "the recorded empty set survives the run"
         );
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
