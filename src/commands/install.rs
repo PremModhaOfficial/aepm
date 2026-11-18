@@ -216,6 +216,8 @@ pub fn run_with_status(
         return Ok(code);
     }
 
+    check_partial_upgrade(&state, config, runner)?;
+
     if let Some(warning) = record_install(&mut state, config, now_unix()) {
         eprintln!("install: warning: {warning}");
     }
@@ -326,6 +328,94 @@ fn check_trust(config: &Config, options: &Options) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// Refuse the upgrade when the helper reported success and left part of the
+/// set the last `fetch` planned still pending.
+///
+/// Nothing is written here: no state file, no package database, no `/usr`. The
+/// refusal is the whole action, so the next run compares against the same
+/// recorded fetch.
+fn check_partial_upgrade(
+    state: &State,
+    config: &Config,
+    runner: &dyn CommandRunner,
+) -> Result<(), Error> {
+    if state.last_fetch_pending_names.is_empty() {
+        // An older state file, or no fetch at all: the set this refusal needs
+        // was never recorded. Say so instead of reporting a clean upgrade.
+        eprintln!(
+            "install: warning: the last fetch recorded no pending set, so whether this \
+             upgrade was partial cannot be told"
+        );
+        return Ok(());
+    }
+
+    let still_pending = pending_names(config, runner)?;
+    let left = partial_upgrade(&state.last_fetch_pending_names, &still_pending);
+    if left.is_empty() {
+        return Ok(());
+    }
+    Err(partial_upgrade_refusal(&left))
+}
+
+/// The names `pacman -Qu` still reports. A query that cannot answer is a
+/// failure, never an empty list: an empty list would read as "nothing left".
+fn pending_names(config: &Config, runner: &dyn CommandRunner) -> Result<Vec<String>, Error> {
+    let pacman = path_str(&config.pacman)?;
+    let output = runner.run(pacman, &["-Qu"])?;
+    match output.code {
+        // pacman -Qu exits 1 when nothing is pending and 0 when it listed
+        // updates; both answer the question.
+        0 | 1 => Ok(package_names(&output.stdout)),
+        code => {
+            let detail = output.stderr.trim();
+            let suffix = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            };
+            Err(Error::failed(format!(
+                "pacman -Qu exited {code}; cannot tell whether the upgrade was partial{suffix}"
+            )))
+        }
+    }
+}
+
+/// `name oldver -> newver`, one per line, as pacman prints it.
+fn package_names(stdout: &str) -> Vec<String> {
+    let mut names: Vec<String> = stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The planned names that are still pending, sorted. A finished upgrade leaves
+/// this empty; a partial one names exactly the packages that did not move.
+fn partial_upgrade(planned: &[String], still_pending: &[String]) -> Vec<String> {
+    let mut left: Vec<String> = planned
+        .iter()
+        .filter(|name| still_pending.iter().any(|pending| pending == *name))
+        .cloned()
+        .collect();
+    left.sort();
+    left.dedup();
+    left
+}
+
+/// One sentence, the names, and the way out. `Failed` maps to exit 2, the same
+/// code a nonzero `yay` gets: the helper ran and the upgrade did not finish.
+fn partial_upgrade_refusal(left: &[String]) -> Error {
+    Error::failed(format!(
+        "partial upgrade: {} package(s) the last fetch planned are still pending ({}); \
+         the system is mixed, so run `aepm install` again until this list is empty",
+        left.len(),
+        left.join(", ")
+    ))
 }
 
 fn lines(stdout: &str) -> Vec<String> {
@@ -450,8 +540,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{
-        Options, check_trust, effective_uid, format_unix_utc, install_since, preflight,
-        record_install, run_with, run_with_status,
+        Options, check_trust, effective_uid, format_unix_utc, install_since, package_names,
+        partial_upgrade, partial_upgrade_refusal, preflight, record_install, run_with,
+        run_with_status,
     };
     use crate::config::Config;
     use crate::error::Error;
@@ -1072,5 +1163,173 @@ mod tests {
         assert!(ran_yay(&runner));
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The state a `fetch` leaves behind: two planned packages.
+    fn seed_fetch(dir: &Path, config: &Config, names: &[&str]) -> String {
+        let state = State {
+            last_fetch_unix: Some(1_760_000_000),
+            last_fetch_pending: Some(names.len() as u64),
+            last_fetch_pending_names: names.iter().map(|name| name.to_string()).collect(),
+            last_install_unix: None,
+        };
+        state.save(&config.state_file).expect("seed state");
+        fs::write(dir.join("pacman.log"), "[ALPM] upgraded glibc\n").expect("log");
+        fs::read_to_string(&config.state_file).expect("state text")
+    }
+
+    #[test]
+    fn a_partial_upgrade_is_refused_and_names_what_did_not_move() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        let before = seed_fetch(&dir, &config, &["simapp", "bigpkg"]);
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "simapp 1.0-1 -> 2.0-1\n");
+        runner.push_interactive(0);
+        // The re-query after the helper: one package of the two is still
+        // pending, which is exactly what a helper that exits 0 can leave.
+        runner.push_output(ok("bigpkg 1.0-1 -> 2.0-1\n"));
+
+        let error = run_with(&config, &runner, options(true, false, false))
+            .expect_err("a partial upgrade must refuse");
+
+        let message = error.to_string();
+        assert_eq!(error.exit_code(), 2, "a partial upgrade is exit 2");
+        assert!(
+            message.contains("partial upgrade"),
+            "message was: {message}"
+        );
+        assert!(message.contains("bigpkg"), "the name is printed: {message}");
+        assert!(
+            !message.contains("simapp"),
+            "a completed package is not named: {message}"
+        );
+        assert_eq!(
+            fs::read_to_string(&config.state_file).expect("state text"),
+            before,
+            "the refusal writes no state"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_complete_upgrade_records_the_install() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        seed_fetch(&dir, &config, &["simapp", "bigpkg"]);
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "simapp 1.0-1 -> 2.0-1\n");
+        runner.push_interactive(0);
+        runner.push_output(none_running());
+
+        run_with(&config, &runner, options(true, false, false)).expect("a complete upgrade passes");
+
+        let state = State::load(&config.state_file).expect("state");
+        assert!(state.last_install_unix.is_some(), "the install is recorded");
+        assert_eq!(
+            state.last_fetch_pending_names,
+            vec!["simapp".to_string(), "bigpkg".to_string()],
+            "the recorded fetch set is left alone"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn an_unreadable_pending_query_fails_instead_of_passing() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        let before = seed_fetch(&dir, &config, &["simapp"]);
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "");
+        runner.push_interactive(0);
+        runner.push_output(CommandOutput {
+            code: 2,
+            stdout: String::new(),
+            stderr: "error: could not open database".to_string(),
+        });
+
+        let error = run_with(&config, &runner, options(true, false, false))
+            .expect_err("a broken query must fail");
+
+        let message = error.to_string();
+        assert_eq!(error.exit_code(), 2);
+        assert!(message.contains("pacman -Qu"), "message was: {message}");
+        assert_eq!(
+            fs::read_to_string(&config.state_file).expect("state text"),
+            before,
+            "nothing is recorded when the answer is unknown"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn a_fetch_that_recorded_no_names_warns_and_does_not_refuse() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "maintainer\n").expect("trust file");
+        let runner = FakeRunner::new();
+        queue_lists(&runner, "simapp 1.0-1 -> 2.0-1\n");
+        runner.push_interactive(0);
+
+        run_with(&config, &runner, options(true, false, false))
+            .expect("an unrecorded fetch cannot be compared, so it is not a refusal");
+
+        let state = State::load(&config.state_file).expect("state");
+        assert!(state.last_install_unix.is_some());
+        let queries = runner
+            .calls()
+            .iter()
+            .filter(|(_, args)| args.len() == 1 && args[0] == "-Qu")
+            .count();
+        assert_eq!(queries, 1, "only the pre-install list query runs");
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    #[test]
+    fn the_comparison_is_over_names_not_counts() {
+        let planned = vec!["glibc".to_string(), "firefox".to_string()];
+
+        assert_eq!(
+            partial_upgrade(&planned, &["glibc".to_string(), "firefox".to_string()]),
+            vec!["firefox".to_string(), "glibc".to_string()]
+        );
+        // One of the two planned names is still pending: partial, even though
+        // the count of what came back is one.
+        assert_eq!(
+            partial_upgrade(&planned, &["firefox".to_string()]),
+            vec!["firefox".to_string()]
+        );
+        // Equal counts, different names: not a partial upgrade. A count
+        // comparison would refuse this.
+        assert_eq!(
+            partial_upgrade(&["glibc".to_string()], &["unrelated".to_string()]),
+            Vec::<String>::new(),
+        );
+    }
+
+    #[test]
+    fn the_refusal_names_every_package_once_and_the_way_out() {
+        let error = partial_upgrade_refusal(&["bigpkg".to_string(), "glibc".to_string()]);
+        let message = error.to_string();
+
+        assert!(message.starts_with("partial upgrade: 2 package(s)"));
+        assert!(message.contains("bigpkg, glibc"));
+        assert!(message.contains("aepm install"));
+        assert!(!message.contains('\n'), "one reason, one line: {message}");
+    }
+
+    #[test]
+    fn package_names_reads_the_first_field_of_every_line() {
+        let names = package_names("bigpkg 1.0-1 -> 2.0-1\nsimapp 1.0-1 -> 2.0-1\n");
+
+        assert_eq!(names, vec!["bigpkg".to_string(), "simapp".to_string()]);
+        assert!(package_names("").is_empty());
     }
 }

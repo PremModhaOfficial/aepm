@@ -82,6 +82,7 @@ pub fn record_success(config: &Config, plan: &FetchPlan, at: SystemTime) -> Opti
     let mut state = plan.state.clone();
     state.last_fetch_unix = Some(time);
     state.last_fetch_pending = Some(plan.pending.len() as u64);
+    state.last_fetch_pending_names = plan.pending.clone();
     state.save(&config.state_file).err().map(|err| {
         format!(
             "the download finished but {} was not updated: {err}",
@@ -582,6 +583,11 @@ mod tests {
 
         let state = State::load(&config.state_file).expect("state");
         assert_eq!(state.last_fetch_pending, Some(2));
+        assert_eq!(
+            state.last_fetch_pending_names,
+            vec!["bash".to_string(), "linux".to_string()],
+            "the names are recorded, not just the count"
+        );
         assert!(state.last_fetch_unix.is_some());
         assert_eq!(
             state.last_install_unix,

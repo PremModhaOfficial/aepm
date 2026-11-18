@@ -68,8 +68,8 @@ Test names, commit messages and issues use these words, not synonyms.
 | **aurto** | The background AUR builder. Builds as the user, installs with root. |
 | **trust** | Whether `aurto` will build a maintainer's package. |
 | **drift** | A built package whose cached artifact no longer matches the recipe. |
-| **partial upgrade** | An update that installed some packages and not others. `check` detects it from `pacman.log` and reports it; never resolved silently. |
-| **state file** | The only file this tool writes about itself. A failed write is a warning, never a failed download. |
+| **partial upgrade** | An update that installed some packages and not others. `install` refuses one: the names the last `fetch` planned are compared with `pacman -Qu` once `yay -Syuu` exits 0, and a name on both sides is exit 2 with the packages named and nothing written. `check` also reports one from `pacman.log`. Never resolved silently. |
+| **state file** | The only file this tool writes about itself. It carries the last fetch's pending **names**, so a later `install` can compare sets. A failed write is a warning, never a failed download. |
 | **invariant** | A rule proven by a test and a sim scenario, not by inspection. |
 
 ## State machines

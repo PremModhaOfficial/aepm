@@ -648,8 +648,11 @@ names them; `scripts/gate-state-machines.sh` keeps the tables true.
       `is_complete`, and the exit-code mapping.
 - [x] The gate: a dropped variant or a moved cited line fails `./ci.sh`, and
       `--self-test` proves the checker can fail.
-- [ ] #41 partial upgrade: the declared states and the transitions are still
-      undescribed; the table links to the issue rather than guessing.
+- [x] #41 partial upgrade: `fetch` records the pending names, and `install`
+      re-reads `pacman -Qu` after `yay -Syuu` exits 0 and refuses a name that is
+      still pending: exit 2, the packages named, nothing written. The machine is
+      M9 in `docs/STATE-MACHINES.md`; sim 54 proves the refusal and that the
+      same command completes once the set is empty.
 
 ---
 
