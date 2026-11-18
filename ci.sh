@@ -34,6 +34,10 @@ echo "=== review gate (current, stale, missing, untracked) ==="
 # pass everything.
 bash scripts/check-review-gate.sh
 
+echo "=== review gate workflow: a superseded run gates nothing, an unreadable head fails ==="
+# The workflow's own PR-resolution block, extracted and run against a fake gh.
+bash scripts/gate-review-selfcheck.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 
