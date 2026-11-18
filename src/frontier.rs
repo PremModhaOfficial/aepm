@@ -13,25 +13,63 @@ use std::time::SystemTime;
 
 pub type NodeId = String;
 
-// Settle walks, counted for tests that must state the work they demand instead
-// of timing it. One walk is one `recompute` call: the unit a rescan-until-
-// fixpoint bug inflates. It deliberately does not count the edge comparisons
-// inside a single walk. A test reads a delta around its own call, so the count
-// is deterministic under any machine load.
+// Settle work, counted for tests that must state what the reducer does instead
+// of how long it took: a wall-clock budget measured the host, and went red on a
+// loaded machine while the same tree passed idle (#100).
+//
+// One step is one node taken off the settle queue; one check is one required
+// dependency examined to derive that node's readiness. Those are the two inner
+// loops of a settle. The guarantee they express is that a settle walks only the
+// changed subgraph, so a burst of observations costs its own dependents, not
+// the plan; a reducer that re-derives the whole frontier per observation, or
+// rescans to a fixpoint, inflates steps towards nodes × observations instead.
+// The count is deterministic, so machine load cannot change it.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SettleWork {
+    steps: u64,
+    checks: u64,
+}
+
+#[cfg(test)]
+impl SettleWork {
+    fn since(self, earlier: Self) -> Self {
+        Self {
+            steps: self.steps.saturating_sub(earlier.steps),
+            checks: self.checks.saturating_sub(earlier.checks),
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
-    static SETTLE_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static SETTLE_WORK: std::cell::Cell<SettleWork> =
+        const { std::cell::Cell::new(SettleWork { steps: 0, checks: 0 }) };
 }
 
 #[cfg(test)]
-fn note_settle_walk() {
-    SETTLE_WALKS.with(|walks| walks.set(walks.get().saturating_add(1)));
+fn note_settle_work(count: fn(&mut SettleWork)) {
+    SETTLE_WORK.with(|work| {
+        let mut current = work.get();
+        count(&mut current);
+        work.set(current);
+    });
 }
 
-/// How many settle walks the reducer has started on this thread so far.
 #[cfg(test)]
-fn settle_walks() -> u64 {
-    SETTLE_WALKS.with(std::cell::Cell::get)
+fn note_settle_step() {
+    note_settle_work(|work| work.steps = work.steps.saturating_add(1));
+}
+
+#[cfg(test)]
+fn note_requirement_check() {
+    note_settle_work(|work| work.checks = work.checks.saturating_add(1));
+}
+
+/// The settle work counted on this thread so far.
+#[cfg(test)]
+fn settle_work() -> SettleWork {
+    SETTLE_WORK.with(std::cell::Cell::get)
 }
 
 /// Why `dependent` needs `dependency`. The reducer only gates on `required`;
@@ -493,8 +531,6 @@ impl GraphState {
     /// byte heartbeat (``moved = None``) changes no prerequisite, so it settles
     /// nothing. The graph is acyclic, so each node is visited once.
     fn recompute(&mut self, seq: u64, moved: Option<&NodeId>, transitions: &mut Vec<Transition>) {
-        #[cfg(test)]
-        note_settle_walk();
         let mut queue: VecDeque<NodeId> = VecDeque::new();
         let mut queued: BTreeSet<NodeId> = BTreeSet::new();
         if let Some(moved) = moved {
@@ -511,6 +547,8 @@ impl GraphState {
         }
 
         while let Some(id) = queue.pop_front() {
+            #[cfg(test)]
+            note_settle_step();
             queued.remove(&id);
             if self.nodes.get(&id) != Some(&NodeState::Pending) {
                 continue;
@@ -535,6 +573,8 @@ impl GraphState {
     fn next_state(&self, node: &str) -> NodeState {
         let mut all_satisfied = true;
         for dependency in self.requirements.get(node).into_iter().flatten() {
+            #[cfg(test)]
+            note_requirement_check();
             let Some(dependency) = self.nodes.get(dependency) else {
                 all_satisfied = false;
                 continue;
@@ -696,7 +736,7 @@ mod tests {
 
     use super::{
         Edge, EdgeKind, ExecutionMode, FrontierError, GraphState, NodeState, Observation, Observed,
-        Trace, settle_walks,
+        Trace, settle_work,
     };
 
     fn edge(dependency: &str, dependent: &str) -> Edge {
@@ -795,20 +835,21 @@ mod tests {
         for index in 0..count - 1 {
             edges.push(edge(&names[index], &names[index + 1]));
         }
-        let before = settle_walks();
+        let before = settle_work();
         let state = GraphState::seed(names.clone(), edges).expect("seed");
-        // The work, not the clock: seeding must start at most two walks per
-        // node. A settle loop that restarts the walk per node is quadratic in
-        // walks and cannot fit; a wall-clock budget passed or failed on load.
-        let walks = settle_walks() - before;
+        // The work, not the clock: seeding must settle each node once, so two
+        // steps per node at most. A settle loop that restarts the walk per node
+        // is quadratic in steps and cannot fit.
+        let work = settle_work().since(before);
         assert_eq!(
             state.nodes.get(&names[0]),
             Some(&NodeState::Ready),
             "the chain root is ready"
         );
         assert!(
-            walks <= 2 * count as u64,
-            "seeding {count} nodes started {walks} settle walks; a per-node rescan is {}",
+            work.steps <= 2 * count as u64,
+            "seeding {count} nodes took {} settle steps; a per-node rescan is {}",
+            work.steps,
             count as u64 * count as u64
         );
     }
@@ -1122,40 +1163,41 @@ mod tests {
         assert_eq!(observation.evidence, "test a");
     }
 
-    /// The T4 burst gate. `docs/ANIMATION.md` budgets 66 to 100 ms for a burst
-    /// the reducer coalesces into one frame, so the whole ingest of a real
-    /// 2,000-package pending set has to fit there in release.
-    ///
-    /// The fixture is the T4 shape: ten layers of two hundred, two required
-    /// dependencies each, and four thousand observations (start and finish per
-    /// package). Plan plus reduce is timed together because both run inside the
-    /// same coalescing window. The unoptimized test build gets ten times the
-    /// release budget.
-    #[test]
-    fn a_four_thousand_observation_burst_reduces_inside_the_animation_budget() {
-        use std::time::{Duration, Instant};
+    // The T4 burst fixture. `docs/ANIMATION.md` budgets 66 to 100 ms per frame
+    // and the reducer coalesces a queue into one frame, so a real pending set
+    // has to settle inside one window. The shape is ten layers of two hundred,
+    // two required dependencies each, and a start plus a finish per package.
+    const BURST_LAYER: usize = 200;
+    const BURST_PACKAGES: usize = 2_000;
 
-        const PACKAGES: usize = 2_000;
-        const LAYER: usize = 200;
-        const BUDGET: Duration = if cfg!(debug_assertions) {
-            Duration::from_millis(1_000)
-        } else {
-            Duration::from_millis(100)
-        };
-
-        let names: Vec<String> = (0..PACKAGES)
+    fn burst_names(packages: usize) -> Vec<String> {
+        (0..packages)
             .map(|index| format!("pkg-{index:04}"))
-            .collect();
-        let mut edges = Vec::new();
-        for index in LAYER..PACKAGES {
-            let below = (index / LAYER - 1) * LAYER;
-            edges.push(edge(&names[below + index % LAYER], &names[index]));
-            edges.push(edge(&names[below + (index * 7 + 3) % LAYER], &names[index]));
-        }
+            .collect()
+    }
 
-        let start = Instant::now();
-        let mut state = GraphState::seed_with_mode(names.clone(), edges, ExecutionMode::Concurrent)
-            .expect("the fixture is a DAG");
+    fn burst_edges(names: &[String]) -> Vec<Edge> {
+        let mut edges = Vec::new();
+        for index in BURST_LAYER..names.len() {
+            let below = (index / BURST_LAYER - 1) * BURST_LAYER;
+            edges.push(edge(&names[below + index % BURST_LAYER], &names[index]));
+            edges.push(edge(
+                &names[below + (index * 7 + 3) % BURST_LAYER],
+                &names[index],
+            ));
+        }
+        edges
+    }
+
+    /// Plan the fixture and fold a start plus a finish per package.
+    fn burst(packages: usize) -> GraphState {
+        let names = burst_names(packages);
+        let mut state = GraphState::seed_with_mode(
+            names.clone(),
+            burst_edges(&names),
+            ExecutionMode::Concurrent,
+        )
+        .expect("the fixture is a DAG");
         let mut seq = 0;
         for name in &names {
             for kind in [Observed::Started, Observed::Finished] {
@@ -1165,13 +1207,66 @@ mod tests {
                     .expect("the burst reduces");
             }
         }
-        let elapsed = start.elapsed();
-        println!("burst {elapsed:?} against the {BUDGET:?} budget");
+        state
+    }
+
+    /// The T4 burst gate, measured as work (#100).
+    ///
+    /// The guarantee this asserts is the reducer's, not the host's: a settle
+    /// walks the node that moved and its pending dependents, so the cost of a
+    /// burst is the plan plus the observations, never their product. The wall
+    /// clock is not read: it reported load, and went red at 1.003 s and 1.20 s
+    /// with a sim running beside it while the same tree passed idle.
+    #[test]
+    fn a_four_thousand_observation_burst_settles_in_linear_work() {
+        let before = settle_work();
+        let state = burst(BURST_PACKAGES);
+        let work = settle_work().since(before);
+
+        let nodes = state.nodes.len() as u64;
+        let edges = state.edges.len() as u64;
+        let observations = state.last_seq;
+        // Bound, not measurement: three settle steps per node, per edge and per
+        // observation. A settle that re-derives the whole frontier per
+        // observation instead costs `observations * nodes`, which is hundreds
+        // of times this, so the quadratic path cannot hide under it.
+        let bound = 3 * (nodes + edges + observations);
 
         assert!(state.is_complete(), "every package finished");
+        assert_eq!(
+            observations, 4_000,
+            "the burst is a start and a finish each"
+        );
         assert!(
-            elapsed < BUDGET,
-            "plan plus 4,000 observations took {elapsed:?}; the burst budget is {BUDGET:?}"
+            work.steps <= bound,
+            "4,000 observations over {nodes} packages took {} settle steps, over {bound}; \
+             a whole-frontier rescan per observation is {}",
+            work.steps,
+            observations * nodes
+        );
+        // One step pops one node, and it derives that node's readiness once
+        // over its two required dependencies, so a settle cannot check more.
+        assert!(
+            work.checks <= 2 * work.steps,
+            "{} requirement checks over {} settle steps; a scan of the plan's \
+             edges per step is far over",
+            work.checks,
+            work.steps
+        );
+
+        // Linear, not quadratic: double the burst and the steps at most double
+        // (plus the fixture's extra layer). A settle that rescans the frontier
+        // quadruples instead.
+        let before = settle_work();
+        let doubled = burst(2 * BURST_PACKAGES);
+        let twice = settle_work().since(before);
+        assert!(doubled.is_complete(), "every doubled package finished");
+        assert!(
+            twice.steps <= 3 * work.steps,
+            "double the burst took {} settle steps against {}; linear work doubles \
+             and a quadratic settle quadruples",
+            twice.steps,
+            work.steps
         );
     }
 }
