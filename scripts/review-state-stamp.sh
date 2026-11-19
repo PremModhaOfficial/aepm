@@ -52,7 +52,7 @@ if [[ -z "$pr" ]]; then
     # branch as its head, so its PR comes from its run name, exactly as the gate
     # resolves it.
     if [[ "${RUN_EVENT:-}" == "issue_comment" && "${RUN_BRANCH:-}" == "${DEFAULT_BRANCH:-}" ]]; then
-        pr="$(gh api "repos/$GH_REPO/actions/runs/${RUN_ID}" --jq .display_title 2>/dev/null \
+        pr="$(gh api "repos/$GH_REPO/actions/runs/${RUN_ID:-}" --jq .display_title 2>/dev/null \
             | grep -o 'PR #[0-9]\+' | tr -dc '0-9' || true)"
     fi
 fi
@@ -106,8 +106,11 @@ fi
 # `findings: []` over a real finding would pass a merge that should not. The
 # summary is matched on what the bot writes — "Issues found", "Resolved
 # findings" — not on the word "findings" alone.
+# Matched on the shapes the bot writes, not on the words: "No issues found" is a
+# clean review's own summary, and refusing it would fail the reviews this exists
+# to unblock.
 if grep -qE '^### .*:[0-9]' <<<"$body" \
-    || grep -qiE '<summary>[^<]*(finding|issues? found)' <<<"$body"; then
+    || grep -qE '<summary>[^<]*(⚠[^<]*Issues found|Resolved findings)' <<<"$body"; then
     skip "the review lists findings but carries no usable typed block; refusing to assert an empty list"
 fi
 

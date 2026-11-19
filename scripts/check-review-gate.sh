@@ -190,6 +190,14 @@ quoted="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[{"body":"the marke
 export FAKE_COMMENTS="[$(comment "$quoted")]"
 run marker-quoted 0 'gate: pass'
 
+# The same marker quoted in prose *before* the block: a review that writes about
+# the gate itself names it in a sentence. The block still starts at its own
+# comment line, not at the mention. Measured on PR #146, where the early start
+# swallowed the JSON and the gate read "no head recorded" at the real head.
+prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-agent-review-state:v1`, so the block is not rewritten.\n\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
+run marker-quoted-in-prose 0 'gate: pass'
+
 # `--sha` pins the commit the verdict is about. The workflow resolves the PR head
 # once and then reports on that exact commit, so a push mid-run cannot make the
 # verdict describe one commit and land on another.

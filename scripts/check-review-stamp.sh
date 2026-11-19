@@ -103,6 +103,23 @@ grep -q 'refusing to assert an empty list' <<<"$out" ||
     bad "a findings summary without headers said something else: $out"
 [[ ! -e "$FAKE_PATCH_OUT" ]] && ok "a findings summary without path:line headers is refused too"
 
+# 2c. A clean review's own summary can contain the words "issues found". The
+# refusal must key on the bot's findings summary shape, not on those words, or
+# the stamp skips exactly the reviews it exists for.
+clean_words="$(printf '\n<details><summary>No issues found</summary>\n\nNothing to report.\n</details>\n')"
+run "[$(comment "$(guide "$HEAD" "No concerns found" "$clean_words" "No issues found")")]" >/dev/null
+[[ -e "$FAKE_PATCH_OUT" ]] || bad "a clean summary saying 'No issues found' was refused"
+[[ $status == 0 ]] && ok "a clean summary that mentions issues found is still stamped"
+
+# 2d. A `/review` run whose RUN_ID is missing must warn, not die on `set -u`.
+rm -f "$FAKE_PATCH_OUT"
+out="$(export FAKE_COMMENTS="[$(comment "$(guide)")]" RUN_EVENT=issue_comment RUN_BRANCH=main DEFAULT_BRANCH=main
+    env -u RUN_ID "$ROOT/scripts/review-state-stamp.sh" 2>&1)" && rc=0 || rc=$?
+[[ $rc == 0 ]] || bad "a missing RUN_ID exited $rc: $out"
+grep -q '::warning::stamp: cannot tell which pull request' <<<"$out" ||
+    bad "a missing RUN_ID did not warn: $out"
+[[ $status == 0 ]] && ok "a /review run with no RUN_ID warns instead of dying"
+
 # 3. The coverage footer is the bot's own disclosure that files went unreviewed.
 # The block says so, and the gate then fails on it rather than on a missing block.
 footer="$(printf '\n---\nReview coverage: 3 of 9 files.\n')"
@@ -183,4 +200,4 @@ grep -q 'refreshed the typed block' <<<"$out" || bad "a refresh said something e
 [[ $status == 0 ]] && ok "a block naming another head is replaced with one for the head"
 
 ((status == 0)) || { printf 'review-state-stamp self-test FAILED\n' >&2; exit 1; }
-printf 'review-state-stamp self-test: 11 assertions hold\n'
+printf 'review-state-stamp self-test: 13 assertions hold\n'

@@ -173,7 +173,13 @@ review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
 # Typed state block pr-agent embeds in the review comment (multi-line HTML comment).
 # The start rule must fire once: the marker is also quoted inside finding bodies,
 # and a start rule that re-triggers on those lines swallows the JSON line.
-state_json="$(printf '%s\n' "$review_body" | awk '!f && /pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
+# The start rule is anchored on the marker being a whole HTML comment, because a
+# review that discusses this marker in prose (a finding about the gate itself
+# does) otherwise starts the block early and swallows the JSON line: measured on
+# PR #146, whose block parsed as nothing and read as "no head recorded" at a real
+# head. `<!--` at the start of the line is what a real block has and prose does
+# not.
+state_json="$(printf '%s\n' "$review_body" | awk '!f && /^[[:space:]]*<!-- pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   complete="$(jq -r '.last_run.complete // false' <<<"$state_json")"
   excluded="$(jq -r '(.last_run.excluded_files // []) | length' <<<"$state_json")"
