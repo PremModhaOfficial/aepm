@@ -1,0 +1,8 @@
+#!/bin/sh
+# Cheap local gate. CI already runs the same fmt check, but a rejected edit that
+# gets re-added with conflict markers is only caught before the commit exists.
+git diff --cached --check || exit 1
+cargo fmt --all --check || {
+  echo "run 'cargo fmt --all' once, then re-stage"
+  exit 1
+}

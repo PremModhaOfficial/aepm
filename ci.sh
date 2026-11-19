@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This box caps agent sessions at 9.6 of 16 cores; an uncapped ci.sh is what took
+# the machine down. CI runners are separate boxes, so there the defaults are right.
+# JOBS bounds rustc; TEST_THREADS bounds the suite, which JOBS does not reach.
+[ -n "${CI:-}" ] || export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}"
+[ -n "${CI:-}" ] || export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
+
 # F11 — Debug-only per-PR gate. `cargo test --release` (dropped) doubles
 # compile time and burns free-tier minutes for almost no extra signal;
 # release-only bugs are rare. Run `cargo test --release --all-targets
