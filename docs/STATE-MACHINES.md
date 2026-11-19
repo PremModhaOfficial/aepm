@@ -392,7 +392,7 @@ purpose, so this table cannot quietly describe an older tree.
 | the session phases | `src/tui/fetch_session.rs:61` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:355` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:103` | `pub fn plan_observed(` |
-| the partial-upgrade refusal | `src/commands/install.rs:339` | `fn check_partial_upgrade(` |
+| the partial-upgrade refusal | `src/commands/install.rs:350` | `fn check_partial_upgrade(` |
 | the install gate order | `src/commands/install.rs:53` | `pub fn preflight(config: &Config, runner: &dyn CommandRunner) -> Preflight {` |
 | the install arming verdict | `src/commands/install.rs:44` | `pub fn blocked(&self) -> bool {` |
 | the lock probe | `src/lock.rs:17` | `pub fn running(runner: &dyn CommandRunner) -> Result<Option<String>, Error> {` |

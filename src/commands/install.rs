@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::error::Error;
 use crate::gate::{Gate, GateState};
 use crate::lock;
-use crate::runner::{CommandRunner, SystemRunner};
+use crate::runner::{CommandOutput, CommandRunner, SystemRunner};
 use crate::state::State;
 use crate::util::path_str;
 
@@ -231,6 +231,10 @@ pub fn run_with_status(
 
 /// The two update queries the install gate needs. One implementation for the
 /// CLI and the overlay.
+///
+/// `Ok` is an answer and `Err` is a query that could not give one, so an empty
+/// `Ok` can only mean "nothing pending": a gate must never pass on a state it
+/// could not see.
 fn collect_lists(
     config: &Config,
     runner: &dyn CommandRunner,
@@ -238,10 +242,10 @@ fn collect_lists(
     let pacman = path_str(&config.pacman)?;
     let official_output = runner.run(pacman, &["-Qu"])?;
     let official = match official_output.code {
-        // pacman -Qu exits 1 when nothing is pending and 0 when it printed
-        // updates. Any other code means the query itself failed, and reading
-        // its empty stdout as "no updates" would be a silent skip.
-        0 | 1 => lines(&official_output.stdout),
+        // pacman -Qu exits 1 both for "nothing pending" and for a database it
+        // cannot open, so only the answerless exit 1 is an empty list.
+        0 => lines(&official_output.stdout),
+        1 if answered_nothing(&official_output) => Vec::new(),
         code => {
             let detail = official_output.stderr.trim();
             let suffix = if detail.is_empty() {
@@ -255,7 +259,8 @@ fn collect_lists(
         }
     };
     let aur = match runner.run("yay", &["-Qua"]) {
-        Ok(output) if output.code == 0 || output.code == 1 => lines(&output.stdout),
+        Ok(output) if output.code == 0 => lines(&output.stdout),
+        Ok(output) if output.code == 1 && answered_nothing(&output) => Vec::new(),
         Ok(output) => {
             let detail = output.stderr.trim();
             let suffix = if detail.is_empty() {
@@ -281,6 +286,12 @@ enum Trust {
     Missing,
     Empty,
     Count(usize),
+}
+
+/// A query that printed nothing at all: the one exit 1 that is an answer
+/// rather than a failure. `pending_names` reads `pacman -Qu` the same way.
+fn answered_nothing(output: &CommandOutput) -> bool {
+    output.stdout.trim().is_empty() && output.stderr.trim().is_empty()
 }
 
 fn trust_state(config: &Config) -> Result<Trust, Error> {
@@ -1150,6 +1161,120 @@ mod tests {
         run_with(&config, &runner, options(true, false, false)).expect("install");
 
         assert!(ran_yay(&runner), "exit 1 must continue to the upgrade");
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The legitimate case: `pacman -Qu` and `yay -Qua` exit 1 with no output
+    /// when nothing is pending, and that must still read as an empty list.
+    #[test]
+    fn an_exit_one_with_no_output_is_nothing_pending() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "alice\n").expect("trust file");
+        let runner = FakeRunner::new();
+        runner.push_output(ok("1000\n"));
+        runner.push_output(none_running());
+        // Both queries answer with exit 1 and print nothing at all.
+        runner.push_output(none_running());
+        runner.push_output(none_running());
+
+        let preflight = preflight(&config, &runner);
+
+        let lists = preflight
+            .gates
+            .iter()
+            .find(|gate| gate.name == "lists")
+            .expect("lists gate");
+        assert_eq!(lists.state, GateState::Pass);
+        assert_eq!(lists.detail, "0 official, 0 AUR update(s) pending");
+        assert_eq!((preflight.official, preflight.aur), (0, 0));
+        assert!(!preflight.blocked());
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// Exit 1 has two meanings and only one of them is "nothing". A query that
+    /// says why it failed must fail the gate instead of passing it with zeros.
+    #[test]
+    fn a_pacman_exit_one_with_an_error_fails_the_lists_gate() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "alice\n").expect("trust file");
+        let runner = FakeRunner::new();
+        runner.push_output(ok("1000\n"));
+        runner.push_output(none_running());
+        runner.push_output(CommandOutput {
+            code: 1,
+            stdout: String::new(),
+            stderr: "error: could not open database".to_string(),
+        });
+
+        let preflight = preflight(&config, &runner);
+
+        let lists = preflight
+            .gates
+            .iter()
+            .find(|gate| gate.name == "lists")
+            .expect("lists gate");
+        assert_eq!(lists.state, GateState::Fail);
+        assert!(
+            lists.detail.contains("pacman -Qu exited 1"),
+            "the gate names the query: {}",
+            lists.detail
+        );
+        assert!(
+            lists.detail.contains("could not open database"),
+            "the gate keeps the reason: {}",
+            lists.detail
+        );
+        assert!(preflight.blocked());
+        assert!(!ran_yay(&runner), "a failed list stops before yay -Qua");
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The AUR list is the same class: an unreadable one must not read as "no
+    /// AUR updates", which would silently drop the aurto staleness warning.
+    #[test]
+    fn an_aur_query_that_cannot_answer_fails_the_lists_gate() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(&config.trusted_users, "alice\n").expect("trust file");
+
+        for (code, stderr, needle) in [
+            (1, "error: could not read AUR list", "yay -Qua exited 1"),
+            (2, "AUR RPC error", "yay -Qua exited 2"),
+        ] {
+            let runner = FakeRunner::new();
+            runner.push_output(ok("1000\n"));
+            runner.push_output(none_running());
+            runner.push_output(ok(""));
+            runner.push_output(CommandOutput {
+                code,
+                stdout: String::new(),
+                stderr: stderr.to_string(),
+            });
+
+            let preflight = preflight(&config, &runner);
+
+            let lists = preflight
+                .gates
+                .iter()
+                .find(|gate| gate.name == "lists")
+                .expect("lists gate");
+            assert_eq!(lists.state, GateState::Fail, "code {code} must not pass");
+            assert!(
+                lists.detail.contains(needle),
+                "the gate names the query: {}",
+                lists.detail
+            );
+            assert!(
+                lists.detail.contains(stderr),
+                "the gate keeps the reason: {}",
+                lists.detail
+            );
+        }
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }
