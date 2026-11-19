@@ -14,23 +14,26 @@ bin: $BIN
 description: Compact PR review state for agents
 
 usage:
-  scripts/review-state.sh [<pr>] [--findings] [--full] [--gate]
+  scripts/review-state.sh [<pr>] [--findings] [--full] [--gate] [--reviewed] [--sha <hex>]
   scripts/review-state.sh --help
   scripts/review-state.sh --version
 
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
-  --gate      exit 1 when the review is missing, older than the PR head, or
-              does not clear the merge
+  --gate      exit 1 when the review is missing, older than the head, or does
+              not clear the merge
+  --reviewed  exit 0 when a complete review covers the head, whatever its
+              verdict: the "is another review worth a model call" question
+  --sha <hex> judge this 40-hex commit instead of the PR's current head
   --help      this reference
   --version   print the version only
 
 env:
   REVIEW_BOT_LOGIN  comma-separated logins whose comments count as the review
                     (default: github-actions[bot],github-actions, because
-                    `gh pr view` drops the [bot] suffix the API keeps)
-  REVIEW_GATE_VERDICT  the merge verdict `--gate` accepts, snake_case
+                    \`gh pr view\` drops the [bot] suffix the API keeps)
+  REVIEW_GATE_VERDICT  the merge verdict \`--gate\` accepts, snake_case
                     (default: no_concerns_found)
 
 examples:
@@ -51,21 +54,36 @@ pr=""
 full=0
 show_findings=0
 gate=0
+reviewed_mode=0
+sha=""
+want_sha=0
 
 for arg in "$@"; do
+  if [[ "$want_sha" -eq 1 ]]; then
+    sha="$arg"
+    want_sha=0
+    continue
+  fi
   case "$arg" in
     --help|-h) usage; exit 0 ;;
     --version|-v|-V) printf '%s\n' "$VERSION"; exit 0 ;;
     --full) full=1 ;;
     --findings) show_findings=1 ;;
     --gate) gate=1 ;;
-    -*) err "unknown flag $arg" "valid flags: --findings, --full, --gate, --help, --version" 2 ;;
+    --reviewed) reviewed_mode=1 ;;
+    --sha) want_sha=1 ;;
+    -*) err "unknown flag $arg" "valid flags: --findings, --full, --gate, --reviewed, --sha, --help, --version" 2 ;;
     *)
       [[ -z "$pr" ]] || err "unexpected argument $arg" "pass one PR number" 2
       pr="$arg"
       ;;
   esac
 done
+[[ "$want_sha" -eq 0 ]] || err "--sha needs a commit" "pass a full 40-hex SHA" 2
+# A short or non-hex SHA would compare unequal to every recorded head and read
+# as a stale review, which is a verdict about a typo rather than about the PR.
+[[ -z "$sha" || "$sha" =~ ^[0-9a-f]{40}$ ]] \
+  || err "--sha is not a 40-hex commit: $sha" "pass the full SHA from \`git rev-parse HEAD\`" 2
 
 command -v gh >/dev/null 2>&1 || err "gh is not installed" "install the GitHub CLI"
 command -v jq >/dev/null 2>&1 || err "jq is not installed" "install jq"
@@ -102,6 +120,13 @@ title="$(jq -r '.title' <<<"$meta")"
 head="$(jq -r '.headRefOid[0:7]' <<<"$meta")"
 head_full="$(jq -r '.headRefOid' <<<"$meta")"
 url="$(jq -r '.url' <<<"$meta")"
+
+# `--sha` pins the commit the verdict is about, so a push during the run cannot
+# move the target between the check the caller reports and the review it reads.
+if [[ -n "$sha" ]]; then
+  head="${sha:0:7}"
+  head_full="$sha"
+fi
 
 # Checks are read for the full report only. `--gate` decides on the review alone,
 # so it needs no Checks API permission: a workflow can grant it
@@ -188,6 +213,19 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 [[ -n "$verdict" ]] || verdict="unknown"
 [[ -n "$review_body" ]] && present="true" || present="false"
 
+# `--reviewed` is a different question from `--gate`: whether another review run
+# would be reviewing a commit that was not already reviewed, so a verdict that
+# asked for changes still counts as reviewed.
+if [[ "$reviewed_mode" -eq 1 ]]; then
+  covered="false"
+  if [[ "$present" == "true" && "$stale" == "false" && "$complete" == "true" ]]; then
+    covered="true"
+  fi
+  printf 'reviewed: %s\npr: %s\nhead: %s\n' "$covered" "$number" "$head"
+  [[ "$covered" == "true" ]] && exit 0
+  exit 1
+fi
+
 if [[ "$gate" -eq 1 ]]; then
   if [[ "$present" != "true" ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
@@ -195,7 +233,7 @@ if [[ "$gate" -eq 1 ]]; then
   fi
   if [[ "$stale" != "false" ]]; then
     if [[ "$stale" == "true" ]]; then
-      printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review is older than the PR head\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
+      printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review does not cover the head being judged\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
     else
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi

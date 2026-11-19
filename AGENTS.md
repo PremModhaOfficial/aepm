@@ -140,8 +140,13 @@ Every claim about this repo is anchored to a proof taken now, not remembered.
 
 The PR review is a machine surface first, human second. Read it, decide, act.
 
-- **Trigger:** PR open, reopen, or ready-for-review. One review per PR. No
-  review on push.
+- **Trigger:** PR open, reopen, ready-for-review, and push (`synchronize`). One
+  persistent comment per PR, updated in place. A push reviews the head it
+  created, bounded twice: a draft is skipped, and a head that already carries a
+  complete review of that exact commit is not reviewed again, so a rebase that
+  changes nothing spends no model call. The trigger alone is not enough: the
+  action drops a bare `synchronize`, so `github_action_config.handle_push_trigger`
+  and `push_commands = ["/review"]` are set too (`PR-AGENT.md` D31).
 - **Commands** (PR comment): `/review`, `/describe`, `/improve`, `/ask <q>`.
   Only OWNER, MEMBER, COLLABORATOR; anyone else is ignored.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
@@ -150,27 +155,41 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   thread.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
-  `--findings` lists `path:line`, `--full` includes the comment.
+  `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
+  unless a complete review of the head cleared the merge, and `--reviewed` exits
+  0 whenever a complete review of the head exists, whatever its verdict.
 - **Gate:** the check is evaluated when a review run finishes, which is the only
-  trustworthy trigger. A push starts no review (`pr-agent` has no `synchronize`
-  trigger, `PR-AGENT.md` N9), so the new head gets no `Review Gate` check at
-  all: with the check required, that absence blocks the merge button; without
-  it required, nothing does. It fails when the review comment is missing, older
-  than the PR head, incomplete (`last_run.complete` not true), or did not clear
-  the merge (verdict other than `No concerns found`, override with
-  `REVIEW_GATE_VERDICT`). It makes no model call, so it spends no credits, and
-  it runs only the default branch's copy of the script. Only a comment authored
-  by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed block identifies
-  one: every other marker is forgeable or shared with `/describe`. A `/review`
-  refresh does not move the check onto the PR, because GitHub anchors it to the
-  commit the review run checked out and a `/review` run checks out the default
-  branch.
+  trustworthy trigger, and it judges the PR head and nothing else: the head is
+  resolved once and pinned with `review-state.sh <pr> --gate --sha <head>`, so
+  the commit the verdict is about and the commit it is reported on are the same
+  one. It fails closed: no review comment, a review of another commit, an
+  incomplete run (`last_run.complete` not true), or a verdict that did not clear
+  the merge (anything other than `No concerns found`, override with
+  `REVIEW_GATE_VERDICT`) is a failure. It makes no model call, so it spends no
+  credits, and it runs only the default branch's copy of the script. Only a
+  comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
+  block identifies one: every other marker is forgeable or shared with
+  `/describe`.
+- **Where the check lands:** a `workflow_run`-triggered workflow runs on the
+  default branch, and its own check is attached to the default branch's HEAD —
+  not to the commit the review run checked out. That was measured, not assumed
+  (`.github/PR-AGENT.md` D32): it is why a pushed head used to have no `Review
+  Gate` check at all. So the gate's own check never gates a PR, and it never
+  fails on a review verdict either, which would leave a red mark on `main` that
+  outlives the PR it described (#111). The verdict is written onto the PR head
+  through the Checks API instead. A push run writes it for the head it reviewed;
+  a `/review` run, which checks out the default branch but reviewed the PR,
+  writes it for the head too. A push run whose head moved on before it finished
+  reports nothing, because that head has its own run and a verdict about it from
+  an older review would be a lie; the check it left on the older commit is read
+  by no rollup, because checks are per-commit.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict. A red `Review Gate` blocks a merge only once it is a required
-  status check in the `main` ruleset, which is a one-time repository setting and
-  not something this repo can assert (`PR-AGENT.md` N5). Until that setting
-  exists the gate reports and the verdict stays advisory. A human override is an
-  admin merge, and it is a decision, not a formality.
+  the verdict, and it is requireable because every head with a review run of its
+  own gets a `Review Gate` conclusion on itself.
+  Whether it is a required status check in the `main` ruleset is a one-time
+  repository setting and not something this repo can assert (`PR-AGENT.md` N5).
+  Until that setting exists the gate reports and the verdict stays advisory. A
+  human override is an admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
@@ -202,9 +221,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `.github/workflows/ci.yml` | Build, lint, test, audit |
 | `.github/workflows/sim.yml` | Arch container scenarios |
 | `.github/workflows/pr-agent.yml` | Agentic PR review |
+| `.github/workflows/review-gate.yml` | The review verdict, on the PR head |
 | `.pr_agent.toml` | Review policy |
 | `.github/PR-AGENT.md` | Review decisions and measurements |
-| `scripts/review-state.sh` | Agent-facing review state |
+| `scripts/review-state.sh` | Agent-facing review state, and `--gate` |
 | `sim/scenario-map.tsv` | `src/` path → the sim scenarios that exercise it |
 | `scripts/gate-scenarios.sh` | The map check and the changed-scenario list |
 | `scripts/gate-coverage.sh` / `coverage-floor.txt` | Line-coverage gate and the measured floor |

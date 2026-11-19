@@ -122,3 +122,14 @@ extra_instructions = """
 Only suggest changes that fix a bug, a safety-rule violation, or a correctness
 gap. No style rewrites, renames, added comments, or new dependencies.
 """
+
+# #115: a pushed head is reviewed too. The action skips `synchronize` unless
+# `handle_push_trigger` is on and `push_commands` names what to run
+# (pr_agent/servers/github_action_runner.py @ 0.50.0: without an entry it logs
+# "No push_commands configured, skipping synchronize" and returns). `/review`
+# only: the description is not re-generated on every push. Its own guards stay on:
+# a merge commit and a bot's push are skipped, and the workflow's reviewed-SHA
+# step skips a commit that already carries a complete review.
+[github_action_config]
+handle_push_trigger = true
+push_commands = ["/review"]

@@ -1,17 +1,25 @@
 name: Review Gate
 
-# Model-free coverage gate. The review bot deliberately does not run on push,
-# so this check re-evaluates only when a review run finishes. After a push the
-# new head has no `Review Gate` check at all, and once this check is required
-# that absence is what blocks the merge. It fails when the review is missing,
-# stale, or its verdict is not the clean pass. It never calls a model and never
-# spends credits.
+# Model-free coverage gate. It reads the newest review comment and decides
+# whether that review covers one commit: the PR head. It never calls a model and
+# never spends credits.
 #
-# Two triggers only, both of which load this file and the gate script from the
-# default branch, so a PR can neither rewrite the check nor hand it a script.
-# `workflow_run` is the review run rather than the review comment: the bot posts
-# with `GITHUB_TOKEN`, and GitHub does not start workflows for events that token
-# creates.
+# #115: a pushed head used to have no `Review Gate` check at all, because the
+# review bot did not run on push. `PR Agent` now reviews a pushed head too, and
+# this gate judges the head that review was about.
+#
+# Where the verdict lands is not the run's own check. Measured on 2026-11-19: a
+# `workflow_run`-triggered workflow runs on the default branch and its check is
+# attached to the default branch's HEAD, not to the commit the review run checked
+# out (20/20 `Review Gate` runs listed `headBranch: main`, including one whose
+# `workflow_run.head_sha` was PR #132's head). So this job's own check can never
+# gate a PR head, and it must never fail on a review verdict either: that would
+# put a red `Review Gate` on `main` that outlives the PR it described (#111). It
+# writes the verdict onto the PR head through the Checks API instead, which is
+# also what lets a later `/review` revise it (PR-AGENT.md N13/N14).
+#
+# The trigger is `workflow_run`, not `pull_request`: a `pull_request` workflow
+# executes the PR's own copy of this file and of the script that judges it.
 on:
   workflow_run:
     workflows: ["PR Agent"]
@@ -22,10 +30,13 @@ permissions:
   pull-requests: read
   # Reading the triggering run's name and pull_requests.
   actions: read
+  # Writing the verdict onto the PR head.
+  checks: write
 
 concurrency:
-  # Keyed on the run, not the head: a `/review` run reports the default branch
-  # as its head, so a head key made runs for different PRs cancel each other.
+  # Keyed on the run, not the head: the run is what is being judged, and two
+  # runs for one PR must not cancel each other's verdict. The later write wins
+  # on the head, which is the verdict from the newest review.
   group: review-gate-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
 
@@ -36,9 +47,9 @@ jobs:
     # expose secrets to them, so the gate would fail forever with no way to
     # produce a review. This matches the bot's fork policy.
     # A skipped `/review` run changed nothing (the comment was not authorized),
-    # and its gate run would land on the default branch, so this stays skipped.
+    # so there is no review to judge.
     # A skipped review run on a push is a draft PR; that one is still evaluated,
-    # because a skipped check counts as a pass.
+    # because a draft that becomes ready must not inherit a pass it never earned.
     if: >-
       github.event.workflow_run.head_repository.full_name == github.repository &&
       !(github.event.workflow_run.event == 'issue_comment' &&
@@ -46,54 +57,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Resolve which PR to gate, and take its head from the PR rather than from
-      # the event: on a `/review` run both event fields describe the default
-      # branch.
-      - name: Resolve the PR and its head
-        id: target
-        env:
-          # This runs before checkout, so there is no git remote for gh to infer
-          # the repository from.
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-          RUN_EVENT: ${{ github.event.workflow_run.event }}
-          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          pr="${RUN_PR:-}"
-          # A `/review` run carries no `pull_requests` entry and reports the
-          # default branch as its head, so its PR comes from its run name. That
-          # name is evaluated in an `issue_comment` run, which always loads the
-          # default branch's copy of the workflow.
-          if [[ -z "$pr" && "$RUN_EVENT" == "issue_comment" && "$RUN_BRANCH" == "$DEFAULT_BRANCH" ]]; then
-            pr="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq .display_title 2>/dev/null \
-              | grep -o 'PR #[0-9]\+' | tr -dc '0-9' || true)"
-          fi
-          [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
-          head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
-          # An unreadable head is not "superseded": the stale branch below would
-          # then skip the gate and report a pass. Fail loudly instead.
-          if [[ -z "$head" ]]; then
-            echo "::error::cannot read the head of PR $pr; refusing to report a pass"
-            exit 1
-          fi
-          # Required checks are per commit, so a run whose SHA is no longer the
-          # PR head can neither pass nor fail for the current head: GitHub does
-          # not attach it there. Failing it only punished a force-push, which
-          # strict branch protection makes routine: a rebase left a permanent
-          # red `Review Gate` on `main` (run 44247662200). A superseded run
-          # reports that it was superseded and gates nothing; the new head has
-          # its own review run, and that one is the gate.
-          if [[ "$RUN_EVENT" != "issue_comment" && -n "${RUN_SHA:-}" && "$head" != "$RUN_SHA" ]]; then
-            echo "::notice::PR $pr is at $head; this run reviewed $RUN_SHA, so it is superseded and gates nothing"
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "head=$head" >> "$GITHUB_OUTPUT"
       # The script comes from the default branch, never from the PR head and
       # never from the PR's base ref: a PR aimed at another branch would
       # otherwise choose the script that judges it.
@@ -103,14 +66,56 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Review must exist for this head
-        # A superseded run has nothing to say about the current head; the run
-        # for that head is the one that gates it.
-        if: steps.target.outputs.stale != 'true'
+        id: gate
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.target.outputs.pr }}
+          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          # --- review-gate:begin ---
+          pr="${RUN_PR:-}"
+          # A `/review` run carries no `pull_requests` entry and reports the
+          # default branch as its head, so its PR comes from its run name. That
+          # name is evaluated in an `issue_comment` run, which always loads the
+          # default branch's copy of this workflow.
+          if [[ -z "$pr" && "$RUN_EVENT" == "issue_comment" && "$RUN_BRANCH" == "$DEFAULT_BRANCH" ]]; then
+            pr="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq .display_title 2>/dev/null \
+              | grep -o 'PR #[0-9]\+' | tr -dc '0-9' || true)"
+          fi
+          [[ -n "$pr" ]] || { echo "::error::cannot tell which PR this run reviewed"; exit 1; }
+          # One head, resolved once and pinned for every check that reads it.
+          head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
+          # An unreadable head is not "superseded" and is not a pass: failing
+          # loudly is the only honest answer to an API fault.
+          if [[ -z "$head" ]]; then
+            echo "::error::cannot read the head of PR $pr; refusing to report a pass"
+            exit 1
+          fi
+          # A push run reports on the head it reviewed. A `/review` run checked
+          # out the default branch but reviewed the PR, so it reports on the head
+          # too. A push run whose head moved on before it finished reviewed a
+          # commit that has its own run, so it reports nothing. Writing a verdict
+          # about the newer head from a review of the older one would redden a
+          # head nobody judged, and writing a `neutral` check on the older commit
+          # would be worse than nothing: a neutral conclusion counts as a success
+          # for a required check, so a commit nobody cleared would carry a pass.
+          # Reporting nothing leaves the older commit's last check on the older
+          # commit, which no rollup reads, because checks are per-commit.
+          if [[ "$RUN_SHA" == "$head" || "$RUN_EVENT" == "issue_comment" ]]; then
+            report=true
+          else
+            report=false
+          fi
+          if [[ "$report" != "true" ]]; then
+            echo "::notice::PR $pr is at $head; this run reviewed ${RUN_SHA:0:7}, which has its own review run, so it reports nothing"
+            echo "report=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if ! scripts/review-state.sh --help | grep -q -- '--gate'; then
             # Before the gate exists on the default branch this workflow cannot
             # run at all, so this means the default branch lost `--gate`. A
@@ -118,4 +123,28 @@ jobs:
             echo "::error::$DEFAULT_BRANCH has no review-state.sh --gate; refusing to report a pass"
             exit 1
           fi
-          exec scripts/review-state.sh "$PR" --gate
+          # Fail closed, on the pinned head: no review, a review of another
+          # commit, an incomplete run, and a verdict that did not clear the merge
+          # all land on the head as a `failure`. This job itself stays green,
+          # because its own check is anchored on the default branch.
+          set +e
+          verdict="$(scripts/review-state.sh "$pr" --gate --sha "$head" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$verdict"
+          conclusion=failure
+          if [[ "$rc" -eq 0 ]]; then conclusion=success; fi
+          summary="$(sed -n 's/^reason: //p' <<<"$verdict" | head -1)"
+          [[ -n "$summary" ]] || summary="the review gate reported $conclusion"
+          echo "report=$conclusion" >> "$GITHUB_OUTPUT"
+          body="$(mktemp)"
+          trap 'rm -f "$body"' EXIT
+          jq -n --arg name 'Review Gate' --arg sha "$head" --arg conclusion "$conclusion" \
+            --arg title "Review Gate: $conclusion" --arg summary "$summary" \
+            '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion,
+              output: {title: $title, summary: $summary}}' >"$body"
+          # A write that fails must fail the job: a check that was never written
+          # would otherwise read as "not required yet" rather than as a fault.
+          gh api -X POST "repos/$GH_REPO/check-runs" --input "$body" >/dev/null
+          echo "::notice::verdict $conclusion for $head is reported on the PR head"
+          # --- review-gate:end ---
