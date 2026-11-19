@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Which sim scenarios must run for a change.
 #
-#   scripts/gate-scenarios.sh --check-map      every src/ path has a row
-#   scripts/gate-scenarios.sh --list <base>    scenarios for <base>...HEAD
+#   scripts/gate-scenarios.sh --check-map            every src/ path has a row
+#   scripts/gate-scenarios.sh --list <base> [<head>] scenarios for <base>...<head>
+#
+# <head> defaults to HEAD, which is right on a developer's branch. CI passes the
+# pull request's own head commit, because the runner checks out the synthetic
+# merge commit instead: its first parent is whatever `main` was when the merge
+# ref was last rebuilt, so diffing the frozen `base.sha` against it also picks up
+# every commit `main` gained in the meantime (measured on PR #143: three markdown
+# files selected 27 of 56 scenarios, and the job took 218s instead of 6s).
 #
 # The map is sim/scenario-map.tsv. Both modes exit 1 when a path under src/ has
 # no row there: a src file nothing exercises is the drift this gate exists for,
@@ -89,15 +96,17 @@ check_map() {
 }
 
 list() {
-    local base=${1:-}
-    [[ -n $base ]] || die "usage: $0 --list <base-ref>"
+    local base=${1:-} head=${2:-HEAD}
+    [[ -n $base ]] || die "usage: $0 --list <base-ref> [<head-ref>]"
     git rev-parse --verify --quiet "$base^{commit}" >/dev/null \
         || die "unknown base ref: $base"
+    git rev-parse --verify --quiet "$head^{commit}" >/dev/null \
+        || die "unknown head ref: $head"
 
     local -a changed=() unmapped=() scenarios=()
     local file list scenario
     local -A picked=()
-    mapfile -t changed < <(git diff --name-only "$base"...HEAD)
+    mapfile -t changed < <(git diff --name-only "$base"..."$head")
 
     for file in "${changed[@]}"; do
         # Scenarios this branch edits always run, whatever the map says.
@@ -136,6 +145,6 @@ list() {
 
 case ${1:-} in
 --check-map) check_map ;;
---list) shift; list "${1:-}" ;;
-*) die "usage: $0 --check-map | --list <base-ref>" ;;
+--list) shift; list "${1:-}" "${2:-}" ;;
+*) die "usage: $0 --check-map | --list <base-ref> [<head-ref>]" ;;
 esac

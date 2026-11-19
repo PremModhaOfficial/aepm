@@ -193,11 +193,29 @@ plus every scenario it edits:
 ./sim/run.sh $(scripts/gate-scenarios.sh --list origin/main)
 ```
 
+CI passes the pull request's own head, because the runner checks out the
+synthetic merge commit instead and that commit also carries whatever `main`
+gained after the event's `base.sha` was frozen:
+
+```bash
+scripts/gate-scenarios.sh --list "$BASE" "$HEAD_SHA"
+```
+
+Without the head argument a three-markdown-file change selected 27 of 56
+scenarios on PR #143, because `main` had merged an unrelated `src/tui` change in
+between. `scripts/check-gate-scenarios.sh` pins both halves of that: the merge
+commit inherits the drift, and a head-pinned docs commit selects nothing.
+`ci.sh` runs it.
+
 `scripts/gate-scenarios.sh --check-map` walks `git ls-files src` and fails on a
 path with no row, on a row naming a scenario that does not exist, and on a row
 for a file that is gone. `ci.sh` runs it, so a new `src/` file that nothing
 exercises is a red build instead of a quiet merge. `main` and
 `workflow_dispatch` still run the whole suite.
+
+The selection is written to `sim-logs/selected-scenarios.txt` before anything
+runs, so the uploaded artifact records what the run chose — including a run that
+chose nothing.
 
 The map is a claim about the harness, not a wish: every listed scenario runs
 that code path. If a scenario stops touching a file, the change that removes

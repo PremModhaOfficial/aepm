@@ -37,6 +37,11 @@ jobs:
         id: select
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          # The commit this pull request added, not the merge commit the runner
+          # checked out: the merge commit also carries whatever `main` gained
+          # since `base.sha` was frozen, and diffing that in runs scenarios the
+          # change cannot reach (measured on #143: 27 of 56, 218s instead of 6s).
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" != pull_request ]]; then
@@ -44,11 +49,14 @@ jobs:
             exit 0
           fi
           scripts/gate-scenarios.sh --check-map
-          list=$(mktemp)
-          scripts/gate-scenarios.sh --list "$BASE" > "$list"
+          # Inside sim-logs/ so the uploaded artifact records what this run chose,
+          # including when it chose nothing.
+          mkdir -p sim-logs
+          list=sim-logs/selected-scenarios.txt
+          scripts/gate-scenarios.sh --list "$BASE" "$HEAD_SHA" > "$list"
           echo "mode=changed" >> "$GITHUB_OUTPUT"
           echo "list=$list" >> "$GITHUB_OUTPUT"
-          echo "$(wc -l < "$list") scenario(s) selected by scripts/gate-scenarios.sh"
+          echo "$(grep -c . "$list" || true) scenario(s) selected by scripts/gate-scenarios.sh"
           sed 's/^/  /' "$list"
       - name: Build sim image and run scenarios
         env:
