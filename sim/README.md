@@ -165,6 +165,7 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `51-corrupt-download.sh` | the `corrupt` fault flips one byte in the transfer, so pacman's own checksum check rejects the artifact: `fetch` exits 2 and quotes the rejection, keeps neither a final nor a partial artifact, still delivered the lists, leaves no lock, writes nothing to `/usr` or the local DB, and the retry fetches bytes that match the repo |
 | `52-corrupt-cached-artifact.sh` | a prefetched artifact is corrupted in place before the install: `check` and `doctor` stay read-only, `install --yes` discards the invalid cache file, transfers the real bytes and upgrades, pacman's log records the discarded copy, and the corrupt cache never turns into an AUR rebuild or an unverified install |
 | `53-package-install.sh` | a real `makepkg` builds the AUR package offline in an AUR-style directory (PKGBUILD and `.install`, no `Cargo.toml`), with its literal `pkgver` and source tag matching the crate version; `pacman -U` installs `/usr/bin/aepm` and both units in `/usr/lib/systemd/user`, with nothing under `/etc/systemd`, and the `.install` scriptlet prints how to enable the timer instead of enabling it |
+| `55-completed-install-after-fetch.sh` | pacman's log holds a download-only fetch and, after it, the hand upgrade that finished the whole upgrade: `check` exits 0 and calls the system clean, counting no pending update and naming no partial upgrade, while writing nothing; the same log with updates still pending is the partial upgrade 44 reports |
 
 41-46 are the Phase 4 chaos level from `NEXT.md`; they need the fault
 injection below. 43, 44 and 45 each drive a real fault and assert the detection
@@ -172,6 +173,12 @@ it needs: `doctor` on the deleted lock, `check` on the hand install, `install`
 on the stale aurto repo. 50-52 are the same level for a mirror that answers 500
 and for bytes that are wrong, on the wire and already in the cache. 53 is the
 packaging level: a real `makepkg` and `pacman -U` against the checkout.
+
+The fault fixtures `NEXT.md` lists are those same states, asserted where they
+land rather than injected a second time: 06 for a stale and a live `db.lck`, 41
+for the `ENOSPC` `.part`, 45 for the stale aurto repo, and 44 with 55 for
+a `pacman.log` that holds an install after a fetch - 44 the mixed system it
+reports, 55 the completed one it must not.
 
 01 and 02 are a pair. Passing 01 alone would prove nothing if the harness could
 not detect a real install at all.

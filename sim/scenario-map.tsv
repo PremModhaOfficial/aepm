@@ -32,17 +32,17 @@ src/commands/pipeline.md	none	module notes beside the code
 src/tui/pipeline.md	none	module notes beside the code
 
 # --- commands --------------------------------------------------------------
-src/commands/fetch.rs	03,05,06,07,34,35,37,38,39,41,43,44,46,48,54	fetch's gates, argv, exit codes, the planned names and cache writes
-src/commands/check.rs	03,09,10,25,37,38,43,44	check's read-only report and verdict
+src/commands/fetch.rs	03,05,06,07,34,35,37,38,39,41,43,44,46,48,54,55	fetch's gates, argv, exit codes, the planned names and cache writes
+src/commands/check.rs	03,09,10,25,37,38,43,44,55	check's read-only report and verdict
 src/commands/doctor.rs	03,11,12,21,22,23,24,27,28,30,43,48	doctor's setup audit
 src/commands/clean.rs	13,68	clean's dry run and --apply
 src/commands/install.rs	14,15,17,18,26,42,45,47,54	install's gates, attached yay, root refusal and the partial-upgrade refusal
 src/commands/init.rs	16,20	init's rendered artifacts and --apply escalation
 
 # --- shared internals ------------------------------------------------------
-src/lock.rs	06,37,43,46	the lock gate and the live-process list
-src/state.rs	05,34,36,39,44,54	the state file fetch and install write
-src/report.rs	09,10,11,12,21,22,23,24,25,27,28,30,43,44	the snapshot the text and JSON reports render
+src/lock.rs	06,37,43,46,55	the lock gate and the live-process list
+src/state.rs	05,34,36,39,44,54,55	the state file fetch and install write
+src/report.rs	09,10,11,12,21,22,23,24,25,27,28,30,43,44,55	the snapshot the text and JSON reports render
 src/gate.rs	07,15,26,32,34,35,36	the gate vocabulary the preflight lists carry
 src/json.rs	09,12	`check --json` and `doctor --json`
 src/progress.rs	33,34,35	the cache scan behind the prefetch badges
