@@ -88,7 +88,9 @@ jobs:
           # `refs/pull/N/merge` and can only be restored by a re-run of that same
           # pull request, so a pull request writes nothing and only `main` seeds
           # the cache every pull request reads.
-          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=aepm-sim' || '' }}
+          # ignore-error: a cache that cannot be written must never redden a
+          # green gate. The build itself is the proof; the cache is an offer.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=aepm-sim,ignore-error=true' || '' }}
       - name: Run the scenarios
         env:
           # Flat directory so the artifact path is stable; run.sh prints it.
