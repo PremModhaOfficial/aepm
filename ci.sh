@@ -51,6 +51,11 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 echo "=== test (debug) ==="
 cargo test --all-targets --all-features --locked
 
+# The RenderCtx compile-fail doctest is the structural proof that a renderer
+# outside the module cannot build a context and skip the palette gate.
+echo "=== doc tests ==="
+cargo test --doc --all-features --locked
+
 echo "=== sim image tag (per worktree) ==="
 ./sim/check-image-tag.sh
 
