@@ -236,12 +236,29 @@ lands it carries the real before/after.
 | # | Change | Before | After | Win | Risk / status |
 |---|---|---|---|---|---|
 | 1 | Head-pinned scenario selection: `gate-scenarios.sh --list <base> <head>`, `sim.yml` passes the PR head, the selected list is written into `sim-logs/` | PR #143: 27 of 56 scenarios, job 218s, for three markdown files | 0 scenarios, job 6s (same branch, rebased, after the fix) | up to 212s on any PR that follows a `main` merge; the artifact now records what ran | **landed**, `scripts/check-gate-scenarios.sh` pins both halves |
-| 2 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | 118s build every run, 0 of 20 runs reused a layer | ~45s on a PR (two `pacman -Syu` layers hit, the 34s compile and the 3.5 GB export remain) | ~70s of every PR, and it bounds the 1162s tail | Docker calls `gha` experimental; ~1 GB more of the 10 GB cache; a cache miss falls back to today's build, so it can never make the gate fail |
+| 2 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | 118s build every run, 0 of 20 runs reused a layer | **measured on PR #145, 56 scenarios: build 128s → 70s, job 349s → 284s** | 58s off a full-suite run; the first export wrote **1.7 GB**, taking the repository cache from 4.0 to 6.2 GB of 10 | **landed**, but see the cache-growth risk below: `type=gha` is experimental by Docker's own label, and a cache miss falls back to the full build, so it can never make the gate fail |
 | 3 | Failure summary: failed scenario names and their last failing lines into `$GITHUB_STEP_SUMMARY` | one line, artifact download to diagnose | the reason on the run page | 0s wall clock; removes the artifact round trip from every diagnosis | none — the log stays the evidence |
 | 4 | Pre-compile the dependency graph in the Dockerfile (manifests + dummy `main`, `cargo build`, then `COPY src`) so the registry and dependencies are a cached layer | 33.6s compile, all of it invalidated by a `src/` edit | ~20s for a src-only change | ~15s on top of #2 | a dummy-`main` layer is a known trick, but it must be proven not to ship a stale binary (sim/README already documents that failure mode for the local classic builder) |
 | 5 | Shard the **full suite** run (`main` push) 2 ways with two job names, not the required one | 203s of scenarios | ~105s | ~100s on `main` only, no PR benefit | needs a second image build per shard unless #2 lands first; touches the required check name unless done as a matrix under one aggregator |
 | 6 | `cargo nextest` | — | — | **reject**: the entire Rust suite is 21.9s inside `ci.sh`; a tool install costs more than the split saves | — |
 | 7 | Path filters on `CI`/`Sim` | — | — | **reject**: a filtered workflow leaves a required check Pending forever (sourced above) | — |
+
+### Cache growth is now the risk, and it needs a follow-up
+
+Measured after the first export: 34 → 62 cache entries, 4.0 → 6.2 GB of the 10 GB
+allowance, 1.7 GB of it the sim image. Only `main` writes, so every push to
+`main` adds the layers that changed and leaves the old ones to age out after 7
+days of no access, oldest-accessed evicted first. With a handful of merges a day
+that is more than 10 GB of churn a week, and **LRU eviction does not
+distinguish the sim cache from the four rust-cache entries that currently save
+3.6–9.7 s per CI job**.
+
+The follow-up, deliberately not in slice 2 because it needs `actions: write` on
+the workflow and its own proof: a prune step at the end of the `main` run that
+deletes `buildkit-blob-*` and `index-aepm-sim-*` entries older than the current
+run. Until it exists, `gh api repos/{owner}/{repo}/actions/caches --jq
+'.actions_caches | length'` is the number to watch, and the fallback is today's
+behaviour, not a broken gate.
 
 ## 5. Rejected for cost
 

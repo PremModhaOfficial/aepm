@@ -55,6 +55,12 @@ the image's layers are then cached in the Actions cache instead of being rebuilt
 on every run. Measured 2026-11-19 over 20 runs: the build was 118s of a 194s
 pull-request job and never reused a layer.
 
+Measured on the same Dockerfile, a pull request with 56 scenarios: build 128s
+cold, 70s with the layers restored, job 349s → 284s. The first export of the
+image wrote 1.7 GB, which is 17% of the 10 GB repository cache allowance on its
+own — `gh api repos/{owner}/{repo}/actions/caches` prints the running total, and
+`mode=max` is what makes it that large, because it exports the builder stage too.
+
 The cache is written by a `push` to `main` and only read by pull requests: a
 cache written by a `pull_request` run is scoped to `refs/pull/N/merge` and can
 only be restored by a re-run of that same pull request. Nothing is written from
