@@ -46,6 +46,7 @@ jobs:
           set -euo pipefail
           if [[ "${{ github.event_name }}" != pull_request ]]; then
             echo "mode=all" >> "$GITHUB_OUTPUT"
+            echo "work=yes" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           scripts/gate-scenarios.sh --check-map
@@ -56,12 +57,46 @@ jobs:
           scripts/gate-scenarios.sh --list "$BASE" "$HEAD_SHA" > "$list"
           echo "mode=changed" >> "$GITHUB_OUTPUT"
           echo "list=$list" >> "$GITHUB_OUTPUT"
+          # No scenarios is not a build with nothing to run: it is no build.
+          if [[ -s $list ]]; then
+            echo "work=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "work=no" >> "$GITHUB_OUTPUT"
+          fi
           echo "$(grep -c . "$list" || true) scenario(s) selected by scripts/gate-scenarios.sh"
           sed 's/^/  /' "$list"
-      - name: Build sim image and run scenarios
+      # The image used to be built from scratch on every run: two `pacman -Syu`
+      # layers and the crate compile, 118s of a 194s job, measured over 20 runs
+      # with no layer reused. Its layers now live in the Actions cache, which is
+      # the only cache the free tier offers and the same 10 GB rust-cache draws
+      # from (4.0 GB used).
+      - name: Set up buildx
+        if: steps.select.outputs.work == 'yes'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the sim image
+        if: steps.select.outputs.work == 'yes'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: sim/Dockerfile
+          tags: aepm-sim:ci
+          # The scenarios run `$RUNTIME run` against this daemon, so the image
+          # has to be loaded here, not left in the builder's cache.
+          load: true
+          cache-from: type=gha,scope=aepm-sim
+          # A cache written by a `pull_request` run is scoped to
+          # `refs/pull/N/merge` and can only be restored by a re-run of that same
+          # pull request, so a pull request writes nothing and only `main` seeds
+          # the cache every pull request reads.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=aepm-sim' || '' }}
+      - name: Run the scenarios
         env:
           # Flat directory so the artifact path is stable; run.sh prints it.
           SIM_LOG_DIR: sim-logs
+          # Built above, with the cache. run.sh refuses to run when this names an
+          # image that is not present.
+          SIM_IMAGE: aepm-sim:ci
+          SIM_NO_BUILD: "1"
         run: |
           set -euo pipefail
           if [[ "${{ steps.select.outputs.mode }}" != changed ]]; then
