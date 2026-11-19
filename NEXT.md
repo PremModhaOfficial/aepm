@@ -607,10 +607,14 @@ and install-log keys from `TUI.md` are not wired; the receipt says to run
 - [x] #125 the 60s fast refresh `TUI.md` T8 promises. The view loop checks a
       deadline before it draws and shortens its idle poll to meet it, then
       re-reads the fast tier (`check::refresh_fast`), so pending counts and
-      artifact ages advance with the clock instead of with the next keypress. A
-      running fetch keeps the redraw and the lock to itself, the slow tier comes
-      back with the `at` it was read at, and a pure scheduler plus a simulated
-      idle run pin the cadence with no wall-clock assertion.
+      artifact ages advance with the clock instead of with the next keypress. The
+      pass runs on a worker (`RefreshPass`) and is only polled, so a slow
+      `yay -Qua` shows a stale age instead of blocking the frame, and a result a
+      manual `r` superseded is dropped by `epoch`. A running fetch keeps the
+      redraw and the lock to itself, the slow tier comes back with the `at` it
+      was read at, and a slow-lane fatal survives a pass that cannot re-read it
+      (`Snapshot::slow_fatal`). A pure scheduler plus a simulated idle run pin
+      the cadence with no wall-clock assertion.
 - [ ] No mouse or themes in v1. `tui.conf` exists, but `[keys]` is the only
       section it reads.
 

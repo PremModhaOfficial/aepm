@@ -214,6 +214,15 @@ fast tier and carries the slow one forward with the time it was read at. `yay -Q
 fast budget; mark AUR stale while it runs instead of blocking the frame. Use two
 lanes (fast and slow) so a slow `du` cannot delay a lock or disk refresh.
 
+The pass therefore runs on a worker (`RefreshPass` in `src/tui/mod.rs`), like
+the fetch does: the loop only polls for its result, so keys are read and the
+carried ages are drawn while it runs, and a slow `yay -Qua` costs a stale age
+instead of a frozen frame. Two guards: a pass is never started while one is in
+flight, and a result computed over a snapshot a manual refresh has since
+replaced is dropped by `epoch`, the generation counter above. A slow-lane fatal
+is not cleared by a fast pass, which does not read the section that raised it
+(`Snapshot::slow_fatal`).
+
 ### T9. No runtime plugins
 
 Extensibility means one panel per file plus one registry line, one action per

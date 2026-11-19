@@ -406,6 +406,11 @@ pub struct Snapshot {
     /// is a command outcome, not part of the snapshot.
     #[serde(skip)]
     pub fatal: Option<Error>,
+    /// The `fatal` above came from a section only a full pass reads, so a fast
+    /// pass cannot clear it: `check::refresh_fast` carries it forward for as
+    /// long as the reading it belongs to is carried too.
+    #[serde(skip)]
+    pub slow_fatal: bool,
 }
 
 impl Repo {

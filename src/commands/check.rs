@@ -222,10 +222,18 @@ fn collect_tier(
                 Policy::ReportOnly,
             ),
         ] {
-            let cache = collect_or_fatal!(
-                snapshot,
-                collect_cache(runner, label, path, unreadable_is_actionable, policy)
-            );
+            // A `du` that cannot even be spawned is the slow lane's own
+            // failure, and the flag is what lets a fast pass keep it: that
+            // pass never re-reads this section, so clearing the error would
+            // leave the carried reading on screen as if it were taken.
+            let cache = match collect_cache(runner, label, path, unreadable_is_actionable, policy) {
+                Ok(cache) => cache,
+                Err(error) => {
+                    snapshot.fatal = Some(error);
+                    snapshot.slow_fatal = true;
+                    return Ok(snapshot);
+                }
+            };
             if cache.actionable {
                 actionable += 1;
             }
@@ -250,6 +258,17 @@ fn collect_tier(
     snapshot.state = Section::ready(state_info(config, &state), now);
     let trust = collect_or_fatal!(snapshot, collect_trust(config));
     snapshot.trust = Section::ready(trust, now);
+    // A slow-lane failure outlives a fast pass, because the fast pass does not
+    // read the section that produced it (issue #135). Dropping it here would
+    // clear the error while the carried cache reading stayed on screen.
+    if tier == Tier::Fast && previous.slow_fatal {
+        assert!(
+            previous.fatal.is_some(),
+            "a slow fatal names the error that stopped the pass"
+        );
+        snapshot.fatal = previous.fatal.clone();
+        snapshot.slow_fatal = true;
+    }
     snapshot.actionable = actionable;
     Ok(snapshot)
 }
@@ -938,6 +957,28 @@ mod tests {
         for _ in 0..5 {
             runner.push_output(ok("1048576\n"));
         }
+        runner.push_output(ok(""));
+        runner.push_output(ok(""));
+    }
+
+    /// The fast tier's calls, in the order `collect_tier` makes them: no `du`
+    /// for any of the five caches.
+    fn queue_fast(runner: &FakeRunner, dir: &Path) {
+        let cache = dir.join("cache");
+        let size = "107374182400 53687091200\n";
+        runner.push_output(ok(""));
+        runner.push_output(ok(""));
+        runner.push_output(qui(0));
+        runner.push_output(ok(&format!("{}\n", cache.to_string_lossy())));
+        for output in [
+            ok(size),
+            ok("6553600 3200000\n"),
+            ok(size),
+            ok("6553600 3200000\n"),
+        ] {
+            runner.push_output(output);
+        }
+        runner.push_output(none_running());
         runner.push_output(ok(""));
         runner.push_output(ok(""));
     }
@@ -1751,23 +1792,7 @@ check: clean
 
         // The fast tier's calls, in the order `collect_tier` makes them: no
         // `du` for any of the five caches.
-        let cache = dir.join("cache");
-        let size = "107374182400 53687091200\n";
-        runner.push_output(ok(""));
-        runner.push_output(ok(""));
-        runner.push_output(qui(0));
-        runner.push_output(ok(&format!("{}\n", cache.to_string_lossy())));
-        for output in [
-            ok(size),
-            ok("6553600 3200000\n"),
-            ok(size),
-            ok("6553600 3200000\n"),
-        ] {
-            runner.push_output(output);
-        }
-        runner.push_output(none_running());
-        runner.push_output(ok(""));
-        runner.push_output(ok(""));
+        queue_fast(&runner, &dir);
         let seen = runner.calls().len();
 
         let second = refresh_fast(&config, &runner, later, &first).expect("fast pass");
@@ -1791,6 +1816,64 @@ check: clean
             !programs.iter().any(|program| program == "du"),
             "a fast pass must not scan the caches: {programs:?}"
         );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// A snapshot a full pass collected, then stopped by a failure. `slow_lane`
+    /// says which lane owns it: only a full pass reads the cache scan.
+    fn snapshot_stopped_by(slow_lane: bool) -> (PathBuf, Config, FakeRunner, Snapshot) {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let runner = FakeRunner::new();
+        queue(&runner, &dir, "", 53_687_091_200, false, 0);
+        let start = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let mut snapshot = collect(&config, &runner, start).expect("full pass");
+        snapshot.fatal = Some(Error::failed("du could not be spawned"));
+        snapshot.slow_fatal = slow_lane;
+        (dir, config, runner, snapshot)
+    }
+
+    /// Issue #135: a fatal the slow lane recorded is not cleared by a pass that
+    /// never re-reads the slow lane.
+    #[test]
+    fn a_fast_pass_keeps_a_slow_lane_fatal() {
+        let (dir, config, runner, stopped) = snapshot_stopped_by(true);
+        queue_fast(&runner, &dir);
+
+        let later = UNIX_EPOCH + Duration::from_secs(1_000_061);
+        let next = refresh_fast(&config, &runner, later, &stopped).expect("fast pass");
+
+        assert_eq!(
+            next.fatal, stopped.fatal,
+            "the error the slow lane recorded stands"
+        );
+        assert!(
+            next.slow_fatal,
+            "the next pass carries it too, instead of presenting the carried \
+             cache reading as one nobody had to read"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The carry is not a latch: a failure the fast pass did re-read is cleared
+    /// by the pass that re-read it.
+    #[test]
+    fn a_fast_pass_clears_a_fatal_it_re_read() {
+        let (dir, config, runner, mut stopped) = snapshot_stopped_by(false);
+        stopped.fatal = Some(Error::failed("pacman -Qu exited 2: database error"));
+        queue_fast(&runner, &dir);
+
+        let later = UNIX_EPOCH + Duration::from_secs(1_000_061);
+        let next = refresh_fast(&config, &runner, later, &stopped).expect("fast pass");
+
+        assert!(
+            next.fatal.is_none(),
+            "the section that failed was re-read clean: {:?}",
+            next.fatal
+        );
+        assert!(!next.slow_fatal, "there is no slow-lane error to carry");
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }
