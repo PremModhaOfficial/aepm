@@ -55,7 +55,7 @@ priority order of everything below.
 | Job total, docs-only PR (0 scenarios) | ~10s |
 | **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
 
-The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail ranked change #1 is sized against.
+The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail §4 item 1 is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
@@ -225,22 +225,72 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 | G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence |
 | G6 | The load-bearing check names are not written down | `CI (Linux)`, `Arch simulation` | Splitting or renaming either silently un-gates `main` |
 
-## 4. Ranked changes
+## 4. The reconciled plan
 
-Ordered by measured wall clock first, then robustness. "Expected" is a
-prediction from the decomposition above, not a measurement; the slice that
-lands it carries the real before/after.
+Two clean-context reviewers audited the twelve items below against the repo and
+the Actions API, each independently, and this is what survived. It is a short
+list on purpose: eight of twelve rows were killed or deferred, and the two that
+remain are one bug fix and nothing else new. Every verdict names the number that
+decided it, so a later reader can re-open a decision with a measurement rather
+than an opinion.
 
-| # | Change | Before | Expected after | Win | Risk |
-|---|---|---|---|---|---|
-| 1 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | 118s build every run | ~45s on a PR (two `pacman -Syu` layers hit, the 34s compile and the 3.5 GB export remain) | ~70s of every PR, and it bounds the 539s tail | Docker calls `gha` experimental; ~1 GB more of the 10 GB cache; a cache miss falls back to today's build, so it can never make the gate fail |
-| 2 | Failure summary: failed scenario names and their last failing lines into `$GITHUB_STEP_SUMMARY`; drop the selected list into `sim-logs/` | one line, artifact download to diagnose | the reason on the run page | 0s wall clock; removes the artifact round trip from every diagnosis | none — the log stays the evidence |
-| 3 | Pre-compile the dependency graph in the Dockerfile (manifests + dummy `main`, `cargo build`, then `COPY src`) so the registry and dependencies are a cached layer | 33.6s compile, all of it invalidated by a `src/` edit | ~20s for a src-only change | ~15s on top of #1 | a dummy-`main` layer is a known trick, but it must be proven not to ship a stale binary (sim/README already documents that failure mode for the local classic builder) |
-| 4 | Shard the **full suite** run (`main` push) 2 ways with two job names, not the required one | 203s of scenarios | ~105s | ~100s on `main` only, no PR benefit | needs a second image build per shard unless #1 lands first; touches the required check name unless done as a matrix under one aggregator |
-| 5 | `cargo nextest` | — | — | **reject**: the entire Rust suite is 21.9s inside `ci.sh`; a tool install costs more than the split saves | — |
-| 6 | Path filters on `CI`/`Sim` | — | — | **reject**: a filtered workflow leaves a required check Pending forever (sourced above) | — |
+Correction to an earlier version of this section: rows 1 and 2 were described as
+"landed" while they were only on their own branches. Neither is on `main`
+(`git cat-file -e origin/main:scripts/check-gate-scenarios.sh` fails; `grep -c
+cache-to origin/main:.github/workflows/sim.yml` is 0), and the cache numbers
+below are the API's, not the branch's.
 
-## 5. Rejected for cost
+| # | Item | Verdict | The number that decided it |
+|---|---|---|---|
+| 1 | Scenario selection: `--list` pinned to the PR's own head, and the map's `sim/` row actually selecting | **keep, first** — PR #144, not yet on `main` | 27 of 56 scenarios and a 218s job for a three-file docs diff became 0 scenarios and 6s; and a `sim/Dockerfile` change currently selects **nothing**, so it merges unproven |
+| 2 | buildx `type=gha` layer cache for the sim image | **park** — PR #145, branch kept, not merged | the 128s → 70s "warm" run was a restore on the **same pull-request ref** (a re-run), not a `main`-seeded steady state: the API reports **0** `aepm-sim` keys today, and a write costs 302–348s on every `main` push against ~58s saved per PR run — break-even near 5 PR runs per merge, with 7-day reclamation returning a quiet week to a cold build |
+| 3 | Prune old sim cache entries on `main` | **kill** | nothing to prune: 35 entries / 3.73 GiB, **all** of it `rust-cache`, zero sim keys; the machinery returns 0s today. Re-open when the sim scope exceeds ~3 GiB |
+| 4 | Review-state producer: write the typed block the bot omits | **closed, handed over** — branch `ci/review-state-block`, #146 | `review-gate.yml` and `scripts/review-state.sh` belong to thread `9c075c1c`; measurements on issue #141 |
+| 5 | Review-state reader: anchor the block start on a whole comment line | **handed over**, not applied | one line; real defect measured on #146, where a review that quoted the marker in prose made the reader swallow the block. Out of my bounds |
+| 6 | Speed up the `CI` jobs (`cargo publish --dry-run` 16.1s, toolchain 7.9s) | **kill** | a PR waits `max(CI 60s, Sim 183s)`; cutting CI to 45s moves PR wall clock by **0s** |
+| 7 | `cargo nextest` | **reject** | the whole Rust suite is 21.9s inside `ci.sh`; the install and the split cost more than they save |
+| 8 | Path filters on `CI`/`Sim` | **reject** | a filtered required workflow leaves its check `Pending` and blocks the merge — sourced in §2 |
+| 9 | Shard the full-suite run | **kill** | each shard pays its own 70–128s image build; the scenarios are 203s on `main` only, and nobody waits on `main` |
+| 10 | Failure summary in `$GITHUB_STEP_SUMMARY` | **kill** (was: defer) | its own value claim was 0s wall clock; `sim-logs/` already carries the failing lines, and #144 already records what was selected |
+| 11 | Four `CI` jobs compile the same tree and run the suite four times | **no action** | 0s wall clock (parallel), $0 (public repo); it costs a 4× flake surface for one defect — an accepted trade, not a plan item |
+| 12 | Pre-compile dependencies as a Dockerfile layer | **defer** | ~15–20s of a 33.6s compile, and only once a cache makes the layer warm — which is now parked with item 2 |
+| 13 | `rust-cache` hygiene: `save-if: main`, so pull requests read the cache instead of each writing their own | **proposed, one experiment first** | this is the cache that is actually filling: 35 entries / 3.73 GiB of the free 10 GiB is ~46%, at ~677 MB per new PR ref. Unproven: whether a PR slows down without its own save; the experiment is two pushes on one branch with and without, comparing job wall clock |
+| 14 | Parallelise the serial scenario loop in `sim/run.sh` | **ticket, not mine** | 179–199s of scenarios run one container at a time on a harness-change run; a 4-way fan-out would cut ~145s, 2.5× the win that item 2 was parked for, with no cache bytes and no new workflow. `sim/run.sh` is outside the files I may edit |
+
+### What that leaves
+
+One merge (#144), one experiment (item 13), one parked branch (#145), two
+hand-overs to `9c075c1c` (items 4 and 5), one ticket nobody owns (item 14). The
+flagship of the earlier ranking was parked by its own numbers, which is the
+result the audit was for.
+
+## 5. What fails, and what fails for the wrong reason
+
+43 failing runs, fetched 2026-11-19 with `gh run list --status failure --limit
+60`, each classified from its own log (`gh run view <id> --log-failed`). A
+required check that is red for a reason unrelated to the change is worse than no
+check: it trains everyone to ignore red.
+
+| Cause | Runs | About the change? | Mechanism |
+|---|---|---|---|
+| `Review Gate`: "the review is older than the PR head" | 17 | **no** | branch protection is `strict: true`, so every merge forces a rebase of every open PR; the rebased head has no review, so the required check is red until a new review lands. Measured consequence: ≥2 Sim runs per PR (`ci/sim-image-layer-cache` used 5) |
+| `Review Gate`: "no review comment from the bot for this PR" | 6 | **no** | the typed block ships with the findings section, so a clean review has none and the gate reports a missing review over a comment that exists (issue #141) |
+| `Review Gate`: "the review did not clear the merge" | 11 | yes | findings-based; the gate did its job |
+| `Review Gate`: "the review did not complete" | 1 | yes | the review run was truncated |
+| `Sim`: the image build failed, so no scenario ran | 1 | **no** | `ERROR: failed to build: failed to solve: process "/bin/sh -c chmod 755 … && make-repo.sh"`; the harness retries once and only for a BuildKit fault (`sim/run.sh:66-105`), so the class is mitigated — whether the retry fired on that run is not recorded |
+| `Sim`: scenario failure | 1 | yes | chaos scenarios on a feature branch |
+| `CI`: `cargo publish --dry-run` | 1 | **no** | the tree was dirty with `ci.log`, the job's own log file. **Already fixed**: the workflow now writes it to `$RUNNER_TEMP` (`#83`), and `git ls-files` holds no `ci.log` |
+| `CI`: compile or test failure | 4 | yes | four branches, all three jobs red for one defect — the 4× surface of §4 item 11 |
+| `PR Agent`: the model call failed | 1 | **no** | a provider fault on `main`; the documented consequence is that a red `Review` means "no review happened", never "no findings" |
+
+9 runs were not a judgement about the change at all, 17 more were staleness
+manufactured by the merge policy, and 17 were about the code. The first 9 are
+mostly `9c075c1c`'s surface (items 4 and 5, plus the `strict: true` rebase
+policy, which is a branch-protection decision and not mine to make). The one
+that was mine — `ci.log` — had already been fixed, which is why §4 is shorter
+than it was.
+
+## 6. Rejected for cost
 
 - **Larger GitHub-hosted runners.** "Larger runners are billed for public
   repositories" ([billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)).
@@ -257,7 +307,7 @@ lands it carries the real before/after.
   tracking). The free substitute is `scripts/proof.sh` plus `gh run list
   --status failure`, which is what section 1 used.
 
-## 6. Constraints on any change in this document
+## 7. Constraints on any change in this document
 
 1. Never change branch protection. `CI (Linux)` and `Arch simulation` are the
    required names; a split keeps those names or it un-gates `main` silently.
