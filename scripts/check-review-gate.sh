@@ -155,6 +155,16 @@ nobody="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</s
 export FAKE_COMMENTS="[$(comment "$nobody")]"
 run no-block-no-head 1 'no typed state block'
 
+# A PR that already had a findings ledger keeps one, resolved findings and all
+# (#133: 4 findings, 0 active, block present). Absence after that is a fault.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(clean_body)")]"
+run block-vanished 1 'although an earlier one on this PR did'
+
+# Same two comments, but the older block is a review of the current head: the
+# newest comment still wins, so this stays a fault rather than a pass.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(clean_body)")]"
+run block-vanished-current 1 'although an earlier one on this PR did'
+
 # A timed-out or truncated run can still print a clean recommendation.
 incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$incomplete")]"
@@ -255,4 +265,4 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-printf 'review gate: 28/28\n'
+printf 'review gate: 30/30\n'

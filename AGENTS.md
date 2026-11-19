@@ -177,7 +177,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `/describe`. A clean review (zero findings) carries no typed block at all, so
   the guide marker `<!-- pr-agent:review:full` selects it, its completeness is
   reported as `unrecorded` rather than assumed, and the head comes from the
-  commit the comment quotes.
+  commit the comment quotes. The block keeps resolved findings, so once a PR has
+  carried one its absence is a run fault, not a clean review, and the gate fails
+  on it.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

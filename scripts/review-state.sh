@@ -165,13 +165,18 @@ if ! found="$(gh pr view "$pr" --json comments \
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
     | {review: ([\$c[] | select(.body | test(\"pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
        head_from: ([\$c[] | select(.body | test(\"commit/[0-9a-f]{7,40}\")).body
-                    | capture(\"commit/(?<s>[0-9a-f]{7,40})\").s] | last // \"\")}" \
+                    | capture(\"commit/(?<s>[0-9a-f]{7,40})\").s] | last // \"\"),
+       blocks: ([\$c[] | select(.body | contains(\"pr-agent-review-state:v1\"))] | length)}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
 [[ -n "$found" ]] || found='{"review":{},"head_from":""}'
 review="$(jq -c '.review' <<<"$found")"
 fallback_head="$(jq -r '.head_from // ""' <<<"$found")"
+# Whether this PR has ever carried a findings ledger: a block keeps its resolved
+# findings, so a PR with any finding history always has one. Absence is only
+# explainable as "no findings yet" when there never was a block.
+prior_blocks="$(jq -r '.blocks // 0' <<<"$found")"
 [[ -n "$review" ]] || review='{}'
 
 review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
@@ -207,16 +212,20 @@ else
   fi
 fi
 
-# A review that found nothing emits no typed block: across five sampled PRs the
-# block was present exactly when findings existed (#99: 32, #133: 4, #136: 1;
-# #112 and #134: 0). The comment still names the commit it reviewed in
-# `commit/<sha>` form, so a clean review stays judgeable without the block; what
-# is missing is the run's own completeness flag, recorded as `unrecorded` rather
-# than assumed either way.
+# The block travels with findings, resolved ones included, so a review of a PR
+# that ever had a finding always carries one (#99: 32, #133: 4 with 0 active,
+# #136: 1, #143: 2 with 0 active). Only a PR the bot has never found anything in
+# has no block at all (#112, #134, #144). So absence means "nothing to record"
+# only while no block has ever been posted here: once one has, its absence is a
+# fault to fail on, not a clean review.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
   review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | head -1 | cut -d/ -f2)"
   [[ -n "$review_head" ]] || review_head="$fallback_head"
-  [[ -n "$review_head" ]] && complete="unrecorded"
+  if [[ "$prior_blocks" -eq 0 ]]; then
+    [[ -n "$review_head" ]] && complete="unrecorded"
+  else
+    complete="missing"
+  fi
 fi
 
 if [[ -n "$review_head" ]]; then
@@ -264,6 +273,12 @@ if [[ "$gate" -eq 1 ]]; then
     else
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review has no typed state block and does not name the commit it reviewed\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
+    exit 1
+  fi
+  # A block that vanished after this PR carried one is a fault of the run, not a
+  # clean review: fail on it before the head and verdict are read.
+  if [[ "$complete" == "missing" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: this review has no typed state block although an earlier one on this PR did\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
   # A truncated or timed-out run can still print a clean recommendation, so a

@@ -306,8 +306,10 @@ head.
   a repository setting and not this file's: `main` requires `CI (Linux)` and
   `Arch simulation` today. Only the bot's own comment counts, so pasting a
   marker by hand does not pass it. A review with no findings carries no typed
-  block: its guide header is the marker, its completeness is `unrecorded`, and
-  the commit it quotes is the head evidence.
+  block only while it has never carried one; its guide header is the marker, its
+  completeness is `unrecorded`, and the commit it quotes is the head evidence.
+  A PR that has carried a block keeps one, resolved findings included, so a
+  vanished block fails the gate instead of reading as a clean review.
 - A push reviews the head it created. `PR Agent` runs on `synchronize` too,
   with two bounds: a draft is skipped, and a head that already carries a
   complete review of that exact commit is not reviewed again, so a rebase that
