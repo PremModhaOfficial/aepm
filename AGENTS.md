@@ -78,6 +78,11 @@ silent: no output, no error, no exit. Three hours have been lost to this twice.
    per commit.
 7. A delegate whose last activity is more than 15 minutes old is hung, not
    thinking. Check it; do not wait longer.
+8. Merge with `gh pr merge --squash --match-head-commit <sha you reviewed>`.
+   Required checks already refuse a head CI never saw; the flag refuses a merge
+   GitHub accepted on a head you did not read.
+9. Wait for CI with `gh run watch <id> --exit-status` or `gh pr checks --watch`,
+   never `sleep`. A watch returns; a sleep only delays the next poll.
 
 ## Claims
 
