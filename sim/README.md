@@ -47,6 +47,25 @@ overrides the tag outright. `sim/check-image-tag.sh`, run by `./ci.sh`, proves
 the derived tag, the override, that the tag stays valid for any directory name,
 and that the build and the container use the same one.
 
+### In CI the image is built outside this script
+
+`sim/run.sh` is the only build path a developer uses. CI builds the same
+Dockerfile with `docker/build-push-action` and hands the result over, because
+the image's layers are then cached in the Actions cache instead of being rebuilt
+on every run. Measured 2026-11-19 over 20 runs: the build was 118s of a 194s
+pull-request job and never reused a layer.
+
+The cache is written by a `push` to `main` and only read by pull requests: a
+cache written by a `pull_request` run is scoped to `refs/pull/N/merge` and can
+only be restored by a re-run of that same pull request. Nothing is written from
+a pull request.
+
+`SIM_NO_BUILD=1` is the handover: `run.sh` skips the build, checks that the image
+named by `SIM_IMAGE` is actually present, and refuses to start when it is not —
+a scenario that ran against nothing would pass. `sim/check-build-retry.sh`
+proves both halves, and that `--build-only` with `SIM_NO_BUILD=1` is refused
+rather than resolved in either direction.
+
 After any source change, rebuild the image without the cache before running:
 
 ```bash

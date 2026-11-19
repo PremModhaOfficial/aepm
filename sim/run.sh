@@ -10,6 +10,9 @@
 #                                         reuse a host-built binary (same Arch glibc)
 #   SIM_LOG_DIR=/tmp/sim-logs ./sim/run.sh
 #                                         where the per-scenario logs go
+#   SIM_NO_BUILD=1 ./sim/run.sh ...        run against an image that is already
+#                                         present (CI builds it with a layer
+#                                         cache outside this script)
 #   SIM_SCENARIO_TIMEOUT=300 ./sim/run.sh
 #                                         seconds a single scenario may run
 #
@@ -43,6 +46,11 @@ slug=$(printf %s "${PWD##*/}" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40 | sed 's/^
 IMAGE=${SIM_IMAGE:-aepm-sim:"$slug"-$(printf %s "$PWD" | sha256sum | cut -c1-8)}
 
 SIM_SCENARIO_TIMEOUT=${SIM_SCENARIO_TIMEOUT:-300}
+
+# CI builds the image itself, with its layers cached in the Actions cache, and
+# hands it here. A local run never sets this, so the build below stays the one
+# path a developer uses.
+SIM_NO_BUILD=${SIM_NO_BUILD:-0}
 
 LOG_DIR=${SIM_LOG_DIR:-sim-logs/$(date -u +%Y%m%dT%H%M%SZ)}
 mkdir -p "$LOG_DIR"
@@ -126,6 +134,10 @@ fi
 ./sim/check-scenario-numbers.sh "${scenarios[@]}"
 
 if ((build_only)); then
+    if [[ $SIM_NO_BUILD == 1 ]]; then
+        echo "sim: --build-only and SIM_NO_BUILD=1 ask for opposite things" >&2
+        exit 1
+    fi
     build_image
     exit 0
 fi
@@ -135,7 +147,19 @@ if ((${#scenarios[@]} == 0)); then
     exit 1
 fi
 
-build_image
+# An image that was never built and an image that is present are different
+# claims. Refusing to start is the only honest answer to the first: a scenario
+# that silently ran against nothing would pass.
+if [[ $SIM_NO_BUILD == 1 ]]; then
+    "$RUNTIME" image inspect "$IMAGE" >/dev/null 2>&1 || {
+        printf 'sim: SIM_NO_BUILD=1 but image %s is not present; refusing to run against nothing\n' \
+            "$IMAGE" >&2
+        exit 1
+    }
+    echo "sim: build: skipped (SIM_NO_BUILD=1, using the image named $IMAGE)"
+else
+    build_image
+fi
 
 # The scenario argv is asserted, not trusted. `--network` appears once outside
 # the build, as `none`; a future edit that copies the build's `--network host`
