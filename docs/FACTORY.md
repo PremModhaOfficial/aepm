@@ -97,9 +97,9 @@ the bug.
 
 | Task | Trigger | Reads / writes | Next run | Human re-enters | What stops a duplicate |
 |---|---|---|---|---|---|
-| `check` (CI) | `pull_request`, `push: main`, dispatch | git host PR state | `Review Gate` reads its conclusion | reads a red log | `concurrency: <workflow>-<ref>`, cancel-in-progress on PRs |
-| `sim` (Arch container) | `pull_request`, `push: main`, dispatch | git host | same | reads a red scenario | same group; a docs-only diff selects no scenario |
-| `prototype` (web goldens) | `pull_request`, `push: main` | `prototype/web/*` | same | reads `FAIL n/76` | same group; unrelated to Rust behaviour |
+| `check` (CI) | `pull_request`, `push: main`, dispatch | git host PR state | the required rollup waits for it; a merge fires `push: main` | reads a red log | `concurrency: <workflow>-<ref>`, cancel-in-progress on PRs |
+| `sim` (Arch container) | `pull_request`, `push: main`, dispatch | git host | the required rollup waits for it; a merge fires `push: main` | reads a red scenario | same group; a docs-only diff selects no scenario |
+| `prototype` (web goldens) | `pull_request`, `push: main` | `prototype/web/*` | none: it is not a required check; a merge fires `push: main` | reads `FAIL n/76` | same group; unrelated to Rust behaviour |
 | `review` (PR Agent) | `pull_request: [opened, reopened, ready_for_review, synchronize]`, `issue_comment: created` | PR diff, `.pr_agent.toml`, the ticket | `workflow_run` → `Review Gate` | comments `/review`, `/ask` | one persistent comment, updated in place |
 | `gate` (Review Gate) | `workflow_run: PR Agent completed` | the review comment, PR head | none: it is a status check | merges on green | `review-gate-<run id>`, cancel-in-progress |
 | `audit` (deny, audit, `--locked`) | `schedule: cron 17 6 * * 1`, dispatch | `Cargo.lock`, `deny.toml`, one tracking issue | a red run opens or comments on that issue; a green run closes it | reads the weekly run or the issue | one issue, updated in place: its fixed title is the key, so a second red run comments instead of filing |
