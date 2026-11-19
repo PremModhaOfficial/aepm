@@ -6107,6 +6107,55 @@ mod tests {
         assert!(frame.contains("ctrl-z  suspend"));
     }
 
+    /// M1: the gate and the receipt cover the frame, so an open help is
+    /// shadowed rather than layered over.
+    #[test]
+    fn a_modal_covers_an_open_help_overlay() {
+        fn over_help(draw: impl FnOnce(&mut ratatui::Frame)) -> String {
+            let buffer = buffer_rendered(120, 40, |frame| {
+                super::draw_help(frame, frame.area(), false, None);
+                draw(frame);
+            });
+            super::buffer_text(&buffer, 120)
+        }
+
+        let help_only = buffer_rendered(120, 40, |frame| {
+            super::draw_help(frame, frame.area(), false, None);
+        });
+        let gate = buffer_rendered(120, 40, |frame| {
+            super::draw_install_gate(frame, &install_preflight(), true, ctx(false, false));
+        });
+        assert_ne!(
+            super::buffer_text(&help_only, 120),
+            super::buffer_text(&gate, 120),
+            "the fixture must draw something help can cover"
+        );
+
+        assert_eq!(
+            over_help(|frame| super::draw_install_gate(
+                frame,
+                &install_preflight(),
+                true,
+                ctx(false, false)
+            )),
+            super::buffer_text(&gate, 120),
+            "the gate must cover the help overlay, not layer over it"
+        );
+
+        let receipt = buffer_rendered(120, 40, |frame| {
+            super::draw_post_install(frame, &success_receipt(), ctx(false, false));
+        });
+        assert_eq!(
+            over_help(|frame| super::draw_post_install(
+                frame,
+                &success_receipt(),
+                ctx(false, false)
+            )),
+            super::buffer_text(&receipt, 120),
+            "the receipt must cover the help overlay, not layer over it"
+        );
+    }
+
     /// One source of truth: a rebound key is named by the footer and the help
     /// overlay with the key that is actually dispatched.
     #[test]
