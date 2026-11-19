@@ -59,16 +59,19 @@ fi
 [[ -n "$pr" ]] || warn "cannot tell which pull request this run reviewed"
 
 head="${2:-}"
-[[ -n "$head" ]] || head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
+if [[ -z "$head" ]]; then
+    head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null)" || true
+fi
 [[ -n "$head" ]] || warn "cannot read the head of PR $pr"
 
-comments="$(gh api "repos/$GH_REPO/issues/$pr/comments?per_page=100" --paginate 2>/dev/null)" \
+comments="$(gh api --paginate --slurp "repos/$GH_REPO/issues/$pr/comments?per_page=100" 2>/dev/null)" \
     || warn "cannot read the comments of PR $pr"
 
 # Bot-authored, last one wins: the guide is the persistent comment, updated in
 # place, so the newest bot comment is the current review.
 review="$(jq -c --arg bots "$BOT_LOGIN" '
-  [.[]
+  add
+  | [.[]
    | select((.user.login // "") as $a | ($bots | split(",") | any(. == $a)))
    | select(.body | contains("pr-agent:review:full"))]
   | last // empty' <<<"$comments")"
@@ -91,7 +94,8 @@ fi
 # The comment lists findings as `### path:line` sections under a <summary>. This
 # producer cannot enumerate them into the typed schema, and a block claiming
 # `findings: []` over a real finding would pass a merge that should not.
-if grep -qE '^### .*:[0-9]' <<<"$body" || grep -qiE '<summary>[^<]*findings' <<<"$body"; then
+if grep -qE '^### .*:[0-9]' <<<"$body" \
+    || grep -qiE '<summary>[^<]*(finding|issues? found)' <<<"$body"; then
     skip "the review lists findings but carries no typed block; refusing to assert an empty list"
 fi
 

@@ -17,7 +17,7 @@ cat >"$TMP/bin/gh" <<'GH'
 set -u
 printf '%s\n' "$*" >>"$FAKE_GH_CALLS"
 case "$*" in
-    *"/issues/"*"/comments"*"--paginate"*) printf '%s\n' "${FAKE_COMMENTS:-[]}" ;;
+    *"--paginate --slurp"*"/issues/"*"/comments"*) printf '[%s]\n' "${FAKE_COMMENTS:-[]}" ;;
     "api -X PATCH "*)
         cat >"$FAKE_PATCH_OUT"
         echo '{}'
@@ -87,6 +87,16 @@ grep -q 'refusing to assert an empty list' <<<"$out" ||
     bad "refusing a review with findings said something else: $out"
 [[ ! -e "$FAKE_PATCH_OUT" ]] && ok "a review listing findings is refused, not stamped empty"
 
+# 2b. The bot's summary is the other shape a findings section takes, and it does
+# not contain the word "findings": refusing on `### path:line` alone would stamp
+# an empty list over real findings when the headers are missing.
+loc="$(printf '\n<details><summary>⚠️ Issues found</summary>\n\nA finding with no header.\n</details>\n')"
+out="$(run "[$(comment "$(guide "$HEAD" "Changes required" "$loc")")]")"
+[[ ! -e "$FAKE_PATCH_OUT" ]] || bad "a findings summary without headers was stamped: $(block_of)"
+grep -q 'refusing to assert an empty list' <<<"$out" ||
+    bad "a findings summary without headers said something else: $out"
+[[ ! -e "$FAKE_PATCH_OUT" ]] && ok "a findings summary without path:line headers is refused too"
+
 # 3. The coverage footer is the bot's own disclosure that files went unreviewed.
 # The block says so, and the gate then fails on it rather than on a missing block.
 footer="$(printf '\n---\nReview coverage: 3 of 9 files.\n')"
@@ -124,4 +134,4 @@ grep -q 'no review guide comment from the bot' <<<"$out" ||
 [[ ! -e "$FAKE_PATCH_OUT" ]] && ok "a comment the bot did not author is never stamped"
 
 ((status == 0)) || { printf 'review-state-stamp self-test FAILED\n' >&2; exit 1; }
-printf 'review-state-stamp self-test: 6 assertions hold\n'
+printf 'review-state-stamp self-test: 7 assertions hold\n'
