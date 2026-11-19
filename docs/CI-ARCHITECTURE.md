@@ -16,7 +16,7 @@ required-check design, and how a failure explains itself. Review policy lives in
 | Workflow | Triggers | Jobs | Gating? | Wall clock (n=20) |
 |---|---|---|---|---|
 | `CI` | `pull_request`, `push main`, `dispatch` | `MSRV (1.85)`, `CI (Linux)`, `Stable (tip)`, `Coverage (floor enforced)`, `Prototype (web demo matches the goldens)` | `CI (Linux)` only | median 60s, 49–83s |
-| `Sim` | `pull_request`, `push main`, `dispatch` | `Arch simulation` | yes | median 183s, 7–646s |
+| `Sim` | `pull_request`, `push main`, `dispatch` | `Arch simulation` | yes | median 183s, 7–646s (plus one 1162s outlier, below) |
 | `Review Gate` | `workflow_run` of `PR Agent` | `Review Gate` | yes | median 10s, 1–557s |
 | `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 124s, 1–425s, 3 of 20 skipped |
 | `Scheduled audit` | weekly cron, `dispatch` | `audit`, `report` | no | n/a |
@@ -47,12 +47,15 @@ priority order of everything below.
 
 | Part | Measured |
 |---|---|
-| Image build (`docker build`, no cache) | median 118s, 99–130s over 13 runs, **one 539s outlier** (run 44464311286) |
+| Image build (`docker build`, no cache) | median 118s, 99–130s over the 13 sample runs that built at all |
 | Scenarios, per-scenario | 3.6s average; slowest 53s (`53-package-install`), 23s (`43-delete-db-lck`), 14s (`40-tui-keymap`) |
-| Scenarios, whole suite (56) | 203s typical, 597s on the same outlier run |
+| Scenarios, whole suite (56) | 203s typical |
 | Job total, PR with 8 scenarios | ~194s |
 | Job total, `main` push, 56 scenarios | ~330s |
 | Job total, docs-only PR (0 scenarios) | ~10s |
+| **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
+
+The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail ranked change #1 is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
@@ -91,8 +94,8 @@ from the local ratio, and the first slice below measures it by removing it.
 
 Other CI jobs: `Prototype` 42.5s (37.3s of it the browser verify), `Stable` 38.0s,
 `Coverage` 36.5s, `MSRV` 27.3s. They run in parallel, so they cost no wall clock;
-they cost four separate compiles and three separate test runs per PR, and they
-are the four places a flake can appear.
+they cost four compiles and four test runs of the same tree per PR, and they are
+the four places a flake can appear.
 
 ### Cache behaviour
 
@@ -217,7 +220,7 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 |---|---|---|---|
 | G1 | The sim image is built from scratch on every run | 118s of a 194s PR job; 0/20 runs reused a layer | 61% of the only wall clock that a PR actually waits for, and the 539s tail is the same uncached build on a slow mirror |
 | G2 | CI speed is inside Sim's shadow | CI 60s vs Sim 183s median | Any CI job tuning moves 0 seconds of PR latency |
-| G3 | Four workflows run the Rust suite four times per PR | `MSRV` + `CI` + `Stable` test, `Coverage` tests again | Free (G3 costs no money and no wall clock) but multiplies the flake surface 4× |
+| G3 | Four jobs inside `CI` each compile the same tree and run the same suite (`MSRV`, `CI (Linux)`, `Stable`, `Coverage`) | four compiles, four test runs per PR | Free (G3 costs no money and no wall clock) but multiplies the flake surface 4×, and one defect reddens three or four checks |
 | G4 | A red `Sim` says one line | `sim: FAIL: sim/scenarios/NN-*.sh exited 1 (log: …)` | Diagnosis requires downloading the artifact; the failing assertion is inside it, not on the run page |
 | G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence |
 | G6 | The load-bearing check names are not written down | `CI (Linux)`, `Arch simulation` | Splitting or renaming either silently un-gates `main` |
