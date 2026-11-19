@@ -87,3 +87,48 @@ returned rather than guessed at:
 - Present a same-context review as a fresh-context one.
 - Turn a gate into a silent skip that prints success.
 - Claim a number without naming the command that printed it.
+
+## Wiring: which event starts which task
+
+Every task below exists as a workflow file or as a run type in this repo. The
+table is the contract; the `on:` block in `.github/workflows/*.yml` is the
+mechanism. When the two disagree, the mechanism is the truth and this table is
+the bug.
+
+| Task | Trigger | Reads / writes | Next run | Human re-enters | What stops a duplicate |
+|---|---|---|---|---|---|
+| `check` (CI) | `pull_request`, `push: main`, dispatch | git host PR state | `Review Gate` reads its conclusion | reads a red log | `concurrency: <workflow>-<ref>`, cancel-in-progress on PRs |
+| `sim` (Arch container) | `pull_request`, `push: main`, dispatch | git host | same | reads a red scenario | same group; a docs-only diff selects no scenario |
+| `prototype` (web goldens) | `pull_request`, `push: main` | `prototype/web/*` | same | reads `FAIL n/76` | same group; unrelated to Rust behaviour |
+| `review` (PR Agent) | `pull_request: [opened, reopened, ready_for_review]`, `issue_comment: created` | PR diff, `.pr_agent.toml`, the ticket | `workflow_run` → `Review Gate` | comments `/review`, `/ask` | one persistent comment, updated in place |
+| `gate` (Review Gate) | `workflow_run: PR Agent completed` | the review comment, PR head | none: it is a status check | merges on green | `review-gate-<run id>`, cancel-in-progress |
+| `audit` (deny, audit, `--locked`) | `schedule: cron 17 6 * * 1`, dispatch | `Cargo.lock`, `deny.toml` | files a red run only | reads the weekly run | weekly clock, no overlap |
+| `implement` / `explore` / `review` (agent runs) | a human starts a T3 thread with a ticket | ticket tracker, git host, worktree | opens a PR, which fires `check` and `sim` | writes the brief, reads the report | `claimed` label; one worktree and one branch per ticket |
+| `merge` | a green required rollup, **acted on by a human or the orchestrating thread** | PR state | `push: main` → `check`, `sim`, `prototype` | merges, or does not | branch protection: `CI (Linux)` + `Arch simulation`, strict, admins included |
+
+### The two brakes that are wired, and the one that is not
+
+- **Automated checks** (CI, sim, prototype, gate): required on `main`, so a red
+  check blocks the merge button rather than advising.
+- **Automated review** (PR Agent + Review Gate): produces a typed verdict, and
+  the gate fails when the review is missing, stale or not a clean pass. It is
+  **not yet a required check**: a `push` does not start a review, so requiring
+  it would block a rebased PR forever. That is the #115 fix, and the condition
+  for requiring it.
+- **Human review**: every merge in this repo so far is a human or the
+  orchestrating thread reading the rollup. This is the brake that has caught the
+  most: an incomplete rollup merged twice early on, a review that quoted fixed
+  code, and a required check that could not be produced.
+
+### Named gaps, each with the ticket that closes it
+
+- A pushed head gets `check` and `sim` but **no review**, so a rebase produces a
+  PR whose review describes an older commit. Closed by #115 (review on
+  `synchronize`), and that is the day `Review Gate` becomes required.
+- **`ratchet` has no trigger.** The coverage floor in `coverage-floor.txt` moves
+  only when a human raises it; nothing fails when coverage climbs and the floor
+  is left stale. Deliberate for now: a floor that chases coverage rewards
+  flakiness.
+- **No ticket source but humans.** Nothing files a ticket automatically: no
+  feedback button, no monitor, no error-tracker hook. `sim/run.sh` failures and
+  CI reds end in run logs, not tickets.
