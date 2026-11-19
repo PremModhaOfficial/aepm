@@ -142,6 +142,10 @@ nohead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"com
 export FAKE_COMMENTS="[$(comment "$nohead")]"
 run untracked 1 'no typed state block'
 
+prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-agent-review-state:v1`, so the block is not rewritten.\n\n<!-- pr-agent-review-state:v1\n{\"findings\":[],\"last_run\":{\"complete\":true,\"excluded_files\":[],\"head_sha\":\"%s\"}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
+run marker-quoted-in-prose 0 'gate: pass'
+
 export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
 run clean-no-block 0 'gate: pass'
 
@@ -265,4 +269,4 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-printf 'review gate: 30/30\n'
+printf 'review gate: 31/31\n'
