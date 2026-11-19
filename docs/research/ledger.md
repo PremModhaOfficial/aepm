@@ -31,7 +31,7 @@ Commands behind the numbers below:
 | `CI (Linux)` — required | a tree that does not build, lint or test | deterministic | ~60s wall, 4 legs compile the same tree, ~1 flaky surface per leg | caught every compile/test break in the sample: 4 runs, all three legs red for one defect | measured (43045640650, 42488229442, 42487635874, 42452318081) | **KEEP**, MERGE the four legs (§3) | high; flips if a leg stops catching anything only it can see |
 | `Arch simulation` — required | behaviour claims that FakeRunner units cannot make: pacman side effects, install paths, TUI under a pty | deterministic | 183s median per PR, 266–330s on main pushes, 118–128s of it an image build | 56 scenarios; the only red in the window was a real chaos-scenario failure (43434768093) | measured | **KEEP** | high; flips if scenario selection is ever wrong in the *unsafe* direction (a `sim/` change selecting nothing ran until #144) |
 | `Review Gate` — required | a merge while the review holds an unresolved blocking finding | deterministic wrapper around an LLM verdict | 26 of 43 red runs were not about the change: 17 stale-after-rebase, 9 false; 775 lines of shell | **0 independent catches** — it restates the reviewer's verdict; it never found anything the reviewer had not | measured + documented root cause (§8) | **KEEP required, reduce its noise**: the staleness is `strict: true`, not the gate; merge queue would fix it but is unavailable to a user-owned repo (§8). Options A/B/C in §3 item 5 | medium; flips to DEMOTE if option C (block on findings, report staleness) is refused and the noise stays |
-| `PR Agent` (review) | an agent-authored change merging with a defect a human would have caught | LLM | 62,073 tokens / 1 AI call per review; 1–8 min latency; paid subscription; **substrate now a community legacy fork** of Qodo's, pinned by digest (§8) | real: #146 3 active findings, all real and fixed (pagination bug, unguarded API call, a regex false positive); #145 4; #143 2; #133 4 | measured | **KEEP as advisory**, and stop paying for the markdown seam: `--json-output` exists in v0.50.0 (§8) | medium; flips if a seeded-bug probe shows recall below ~2 of 3, or if the fork stops shipping fixes and the digest is the last good one |
+| `PR Agent` (review) | an agent-authored change merging with a defect a human would have caught | LLM | 62,073 tokens / 1 AI call per review; 1–8 min latency; paid subscription; **substrate now a community legacy fork** of Qodo's, pinned by digest (§8) | real catches: #146 6 findings, 3 active, all real and fixed (pagination, unguarded API call, regex FP); #99 32; #133 7; #145 5. **False negatives, measured 2026-11-19: 4 of 11 reviews returned zero findings, 3 of them on diffs ≥70 lines** — #144 (234 lines, 7 files, a shell rewrite) drew a 775-byte "No concerns found", while #146 (410 lines, the same surface) drew 6 | measured | **KEEP for code-change PRs; it is blind on claim-change PRs** — its unit of work is a finding, so a PR whose only job is to make a prose claim true cannot be reviewed by it at all (#134: two claims, 0 findings, 18,312 in / 19,623 out). ADD §4a-1 and §4a-2 | high; flips if `extra_instructions` gains claim verification and the zero-finding rate on ≥70-line diffs does not fall |
 | `Scheduled audit` | lockfile, toolchain and advisory drift that no PR touches | deterministic | one run a week, ~0 minutes | **0 runs**: added 2026-11-17, first cron Monday 2026-11-23. No issue ever opened | measured (workflow state `active`, 0 runs) | **UNPROVEN — shadow** | medium; flips when the first drift opens one issue, or a seeded drift fails to |
 | `Dependabot` | dependency rot | deterministic | monthly PRs, each costing a full CI+Sim run | not measured here | none | **KEEP** (out of scope) | — |
 
@@ -126,6 +126,32 @@ cost is duplication rather than runtime.
    review automatically after a rebase, or report "staled, not rejected"
    distinctly so a red gate does not read as a finding.
 
+## 4a. Promoted by measurement, 2026-11-19
+
+1. **Claim verification as a required output, not a hoped-for finding.** A PR that
+   only asserts something — a glossary row, a state-machine paragraph, a gate's
+   own documentation — has no defect for a finding-hunter to find, so it gets zero
+   findings and an unearned "No concerns found". Measured on #134: two prose
+   claims, +49 lines of test asserting them, zero findings, and the reviewer
+   neither confirmed nor refuted either claim (the claims do hold; the review did
+   not check). **ADD** one instruction: for every claim the diff asserts, state
+   `confirmed` or `refuted` with a `file:line`. Cost: a few output tokens. Benefit:
+   the repo's most common PR shape becomes reviewable. Owner: `.pr_agent.toml`
+   (`extra_instructions` is all Rust safety rules today), which is the review
+   thread's surface, not mine.
+2. **A prose-only diff must not read as approval.** With (1) in place, the
+   `--gate` reader can distinguish "no findings because nothing is wrong" from
+   "no findings because findings cannot exist here". **ADD** to the gate report:
+   when the diff touches no `src/`, `tests/` or `sim/` path, say `not applicable`
+   rather than `passed`. Cheap, and it removes the false green that (1) would
+   otherwise leave behind.
+
+Also recorded: the reviewer **deletes** the comment it updates. All five
+"Persistent review updated to latest commit" notices on #134 point at
+`#issuecomment-7000612126`, now `404`. A dead pointer is a silent "no review", and
+it is why #134's gate reads "no review comment" rather than "stale". Not
+configurable from here; recorded for the review thread.
+
 ## 5. Shadow-mode plan — measure before demoting or deleting
 
 | experiment | what | window | success criteria | rollback |
@@ -182,6 +208,8 @@ so, and the verdict that depends on it is named.
 | CodeRabbit's OSS plan covers public repos at zero cost; Copilot code review needs a paid plan or an org. | docs.coderabbit.ai pricing; github.blog 2026-04-27, read 2026-11-19 | No change: this repo already has a reviewer, and a second LLM on the same diff doubles cost for unmeasured recall. Recorded as the fallback if the fork dies. |
 | `cargo nextest` 0.9.152 (2026-11-13) has nothing new that lowers the break-even for a 22s suite. | nexte.st changelog, 2026-11-19 | V4 unchanged. |
 | Required checks behind `paths:` filters stay Pending. | docs.github.com, Triggering a workflow, 2026-11-19 | V5 unchanged. |
+
+| **Measured in this repo (not an external claim):** of 11 reviews, 4 returned zero findings — #112 (77 lines), #134 (74), #137 (26), #144 (234, 7 files). Same reviewer, same surface, opposite result on #146 (410 lines, 6 findings). | `gh pr view --json additions,deletions,changedFiles` plus the review comment's byte size and finding count, 2026-11-19 | Recall is not merely unmeasured, it is **inconsistent on similar inputs**. V2 is re-priced as "keep for code changes, blind on claim changes". |
 
 **What this cost and bought.** One delegate, ~10 minutes. It overturned the *fix*
 for V1 (merge queue, unavailable here — worth knowing before proposing it) and
