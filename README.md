@@ -305,7 +305,9 @@ head.
   red gate. That is what makes it requireable, though whether it is required is
   a repository setting and not this file's: `main` requires `CI (Linux)` and
   `Arch simulation` today. Only the bot's own comment counts, and only its
-  typed block identifies one, so pasting a marker by hand does not pass it.
+  typed block identifies one, so pasting a marker by hand does not pass it. A
+  review that found nothing arrives without that block, so the gate workflow
+  writes the block the bot would have written, from `main`'s copy of the script.
 - A push reviews the head it created. `PR Agent` runs on `synchronize` too,
   with two bounds: a draft is skipped, and a head that already carries a
   complete review of that exact commit is not reviewed again, so a rebase that

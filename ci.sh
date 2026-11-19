@@ -45,6 +45,15 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
 
+echo "=== review state stamp: the typed block a clean review does not carry ==="
+# The bot emits its typed block with the findings section, so a review that found
+# nothing arrives without one and the required check blocks a clean PR (measured:
+# #133, #136 and #143 had one; #134 and #144, zero findings each, did not). The
+# stamp writes the block the bot would have written, and must refuse a review
+# whose comment lists findings, quotes another commit, or was not authored by the
+# bot.
+bash scripts/check-review-stamp.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

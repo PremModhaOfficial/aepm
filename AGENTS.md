@@ -174,7 +174,11 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   credits, and it runs only the default branch's copy of the script. Only a
   comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
   block identifies one: every other marker is forgeable or shared with
-  `/describe`.
+  `/describe`. The bot emits that block with the findings section, so a review
+  that found nothing carries none and the required check blocked clean PRs
+  (#134, #144); `scripts/review-state-stamp.sh` writes it in the gate workflow,
+  from the default branch's copy, touching only a bot comment that quotes the
+  head — a pull request cannot stamp its own pass.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed
