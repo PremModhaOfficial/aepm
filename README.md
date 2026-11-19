@@ -80,10 +80,13 @@ fetch/install times. System-owned caches (`/var/cache/pacman/aurto`, aurutils
 chroots) that the invoking user cannot read are reported as unreadable but do
 not fail a healthy system; unreadable user caches do.
 
-It also reports a **partial upgrade**: an install or upgrade after the last
-download-only fetch while updates are still pending, read from `pacman.log`. It
-prints the evidence it read. When the log cannot be read it says the answer is
-unknown rather than guessing, and it still exits `1` for the pending updates.
+It also reports a **partial upgrade**: a package the last download-only `fetch`
+planned that is still pending after an install. It reads the same recorded set
+`install` refuses on, and names the evidence in the line it prints;
+`pacman.log` is read only when the state file recorded no install after that
+fetch, which is the only way an install this tool did not make can be seen.
+When no evidence can be read it says the answer is unknown rather than
+guessing, and it still exits `1` for the pending updates.
 
 Exit codes: `0` when clean, `1` when one or more checks need attention, `2`
 when a check could not run (for example `pacman -Qu` failed).

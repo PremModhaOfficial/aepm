@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::commands::fetch;
+use crate::commands::{fetch, install};
 use crate::config::Config;
 use crate::error::Error;
 use crate::lock;
@@ -11,7 +11,7 @@ use crate::report::{
     CacheUsage, Cached, DiskStatus, DiskUsage, Drift, LockState, PartialUpgrade, Policy, Repo,
     Section, Snapshot, StateInfo, TimerState, TrustState, Update, attention,
 };
-use crate::runner::{CommandRunner, SystemRunner};
+use crate::runner::{CommandOutput, CommandRunner, SystemRunner};
 use crate::state::State;
 use crate::util::{human_bytes, path_str, resolve_cache_dir};
 
@@ -73,6 +73,9 @@ pub fn collect(
         )));
         return Ok(snapshot);
     }
+
+    // The pending names `install` compares its refusal against.
+    let still_pending = queried_pending(&official);
     let updates = parse_updates(&official.stdout, Repo::Unknown);
     if !updates.is_empty() {
         actionable += 1;
@@ -192,10 +195,14 @@ pub fn collect(
     }
     snapshot.timer = Section::ready(timer, now);
 
-    let state = collect_or_fatal!(snapshot, collect_state(config));
-    let drift = collect_drift(config, &state, pending_count(&snapshot));
-    snapshot.drift = drift;
-    snapshot.state = Section::ready(state, now);
+    let state = collect_or_fatal!(snapshot, State::load(&config.state_file));
+    snapshot.drift = collect_drift(
+        config,
+        &state,
+        pending_count(&snapshot),
+        still_pending.as_deref(),
+    );
+    snapshot.state = Section::ready(state_info(config, &state), now);
     let trust = collect_or_fatal!(snapshot, collect_trust(config));
     snapshot.trust = Section::ready(trust, now);
     snapshot.actionable = actionable;
@@ -236,6 +243,9 @@ fn render_drift(out: &mut String, drift: &Drift) {
         PartialUpgrade::None => {}
         PartialUpgrade::Possible => out.push_str(
             "check: partial upgrade: cannot tell (pacman.log unreadable while updates are pending)\n",
+        ),
+        PartialUpgrade::Unrecorded => out.push_str(
+            "check: partial upgrade: cannot tell (the last fetch recorded no pending set)\n",
         ),
         PartialUpgrade::Detected(detail) => {
             writeln!(out, "check: partial upgrade: {detail}").expect("writing to a String cannot fail");
@@ -572,20 +582,19 @@ fn scheduled_timer(stdout: &str) -> Option<&str> {
         .filter(|line| !line.trim_start().starts_with("n/a"))
 }
 
-fn collect_state(config: &Config) -> Result<StateInfo, Error> {
-    let state = State::load(&config.state_file)?;
+fn state_info(config: &Config, state: &State) -> StateInfo {
     let fallback = if state.last_fetch_unix.is_none() && state.last_install_unix.is_none() {
         collect_log_fallback(config)
     } else {
         None
     };
 
-    Ok(StateInfo {
+    StateInfo {
         last_fetch_unix: state.last_fetch_unix,
         last_fetch_pending: state.last_fetch_pending,
         last_install_unix: state.last_install_unix,
         fallback,
-    })
+    }
 }
 
 fn collect_log_fallback(config: &Config) -> Option<String> {
@@ -628,20 +637,64 @@ fn pending_count(snapshot: &Snapshot) -> usize {
     len(&snapshot.official) + len(&snapshot.aur)
 }
 
-/// The drift record: the times the state file knows, and whether the log proves
-/// an upgrade ran after the last download-only fetch.
+/// The names `pacman -Qu` still reports, or `None` when it could not answer.
 ///
-/// `check` cannot see a hand `pacman -S` in the state file, so the evidence is
-/// pacman's own log. `Possible` is a value, not a silence: when the log cannot
-/// be read the answer is unknown, and unknown is never reported as `none`.
-fn collect_drift(config: &Config, info: &StateInfo, pending: usize) -> Drift {
+/// Exit 1 means "nothing pending" only when both streams are silent: pacman
+/// exits 1 on an unreadable database too, and reading that as an empty list
+/// would clear a partial upgrade (#110).
+fn queried_pending(output: &CommandOutput) -> Option<Vec<String>> {
+    match output.code {
+        0 => Some(install::package_names(&output.stdout)),
+        1 if output.stdout.trim().is_empty() && output.stderr.trim().is_empty() => Some(Vec::new()),
+        _ => None,
+    }
+}
+
+/// The drift record, and the one decision behind the partial-upgrade answer.
+///
+/// `install` refuses on the set the last `fetch` recorded; `check` answered the
+/// same question from `pacman.log` alone, so the two could disagree (#118).
+/// The state file answers when it recorded an install after that fetch: only it
+/// knows which names the fetch planned. `pacman.log` answers only when the state
+/// file cannot, because no install since the fetch was recorded and an install
+/// this tool did not make is then the only thing that can have moved. The line
+/// the renderer prints names the evidence that decided.
+///
+/// `Possible` is a value, not a silence: unknown is never reported as `none`.
+fn collect_drift(
+    config: &Config,
+    state: &State,
+    pending: usize,
+    still_pending: Option<&[String]>,
+) -> Drift {
     let drift = Drift {
-        last_fetch: info.last_fetch_unix,
-        last_install: info.last_install_unix,
+        last_fetch: state.last_fetch_unix,
+        last_install: state.last_install_unix,
         partial_upgrade: PartialUpgrade::None,
     };
     if pending == 0 {
         return drift;
+    }
+    let installed_since_fetch = matches!(
+        (state.last_fetch_unix, state.last_install_unix),
+        (Some(fetch), Some(install)) if install > fetch
+    );
+    if installed_since_fetch {
+        // The fetch recorded a set and this tool recorded the install that
+        // followed it, so the state file is the evidence. Three states, never
+        // collapsed: no set says so, an empty set is a clean upgrade, and a
+        // recorded set is compared against what is still pending.
+        let partial_upgrade = match state.last_fetch_pending_names.as_deref() {
+            Some(planned) => match still_pending {
+                Some(still) => from_state_file(planned, still),
+                None => PartialUpgrade::Possible,
+            },
+            None => PartialUpgrade::Unrecorded,
+        };
+        return Drift {
+            partial_upgrade,
+            ..drift
+        };
     }
     match fs::read_to_string(&config.pacman_log) {
         Ok(log) => Drift {
@@ -655,9 +708,28 @@ fn collect_drift(config: &Config, info: &StateInfo, pending: usize) -> Drift {
     }
 }
 
+/// `install`'s own intersection, asked of the pending set `check` already read:
+/// the names the fetch planned that a later query still reports.
+fn from_state_file(planned: &[String], still_pending: &[String]) -> PartialUpgrade {
+    let left = install::partial_upgrade(planned, still_pending);
+    if left.is_empty() {
+        return PartialUpgrade::None;
+    }
+    PartialUpgrade::Detected(format!(
+        "{} package(s) the last fetch planned are still pending ({}); evidence: the state file",
+        left.len(),
+        left.join(", ")
+    ))
+}
+
 /// An install or upgrade after the last download-only fetch, with updates still
 /// pending, is the mixed system `spec.md` calls a partial upgrade: the lists
 /// are new, some packages moved, the rest did not.
+///
+/// This is the fallback evidence, used only when the state file recorded no
+/// install after the fetch, so the sentence is the one the log has always
+/// produced and stays byte-identical: `check`'s output for this evidence path
+/// is not the thing #118 changes.
 fn detect_partial_upgrade(log: &str, pending: usize) -> PartialUpgrade {
     if pending == 0 {
         return PartialUpgrade::None;
@@ -718,8 +790,8 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        collect_cache, collect_drift, detect_partial_upgrade, render_text, run_with,
-        run_with_options, scheduled_timer,
+        collect, collect_cache, collect_drift, detect_partial_upgrade, queried_pending,
+        render_text, run_with, run_with_options, scheduled_timer,
     };
     use crate::commands::fetch;
     use crate::config::Config;
@@ -729,6 +801,7 @@ mod tests {
         Section, Snapshot, StateInfo, TimerState, TrustState, Update,
     };
     use crate::runner::{CommandOutput, FakeRunner};
+    use crate::state::State;
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1286,14 +1359,16 @@ check: action needed (1 item(s))
     fn an_unreadable_log_is_a_possible_drift_not_a_none() {
         let dir = temp_dir();
         let config = test_config(&dir);
-        let info = StateInfo {
+        // No install after the fetch was recorded, so the state file cannot
+        // answer and the log is the evidence: absent, which is unknown.
+        let state = State {
             last_fetch_unix: Some(1_760_000_000),
             last_fetch_pending: Some(2),
+            last_fetch_pending_names: Some(vec!["glibc".to_string(), "firefox".to_string()]),
             last_install_unix: None,
-            fallback: None,
         };
 
-        let drift = collect_drift(&config, &info, 2);
+        let drift = collect_drift(&config, &state, 2, Some(&[]));
 
         assert_eq!(drift.last_fetch, Some(1_760_000_000));
         assert_eq!(drift.partial_upgrade, PartialUpgrade::Possible);
@@ -1305,6 +1380,280 @@ check: action needed (1 item(s))
             .contains("check: partial upgrade: cannot tell"),
             "an unknown answer is printed, never reported as none"
         );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// #110's trap: `pacman -Qu` exits 1 both for "nothing pending" and for a
+    /// database it could not read, and the second is not an empty list.
+    #[test]
+    fn only_a_silent_exit_one_means_nothing_is_pending() {
+        let pending = ok("simapp 1.0.0-1 -> 2.0.0-1\n");
+        assert_eq!(queried_pending(&pending), Some(vec!["simapp".to_string()]));
+
+        let mut silent = ok("");
+        silent.code = 1;
+        assert_eq!(queried_pending(&silent), Some(Vec::new()));
+
+        let mut unreadable = ok("");
+        unreadable.code = 1;
+        unreadable.stderr = "error: could not open file /var/lib/pacman/db.lck".to_string();
+        assert_eq!(
+            queried_pending(&unreadable),
+            None,
+            "an unreadable database is not \"nothing pending\""
+        );
+    }
+
+    /// The state file records the fetch's planned set and this tool's own
+    /// install, while `pacman.log` mentions only the fetch, so the log would
+    /// call the system clean. The state file decides: a name the fetch planned
+    /// is still pending. `check` names that evidence and writes neither file.
+    #[test]
+    fn the_state_file_wins_when_the_log_would_call_it_clean() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let recorded = concat!(
+            "{\"last_fetch_unix\":1000,\"last_fetch_pending\":2,",
+            "\"last_fetch_pending_names\":[\"simapp\",\"bigpkg\"],",
+            "\"last_install_unix\":2000}\n"
+        );
+        fs::write(&config.state_file, recorded).expect("state file");
+        let log = "\
+[2026-11-14T10:00:00+0000] [PACMAN] Running 'pacman -Syuw --noconfirm'
+";
+        fs::write(&config.pacman_log, log).expect("pacman log");
+
+        let exiting = FakeRunner::new();
+        queue(
+            &exiting,
+            &dir,
+            "simapp 1.0.0-1 -> 2.0.0-1\n",
+            53_687_091_200,
+            false,
+            0,
+        );
+        let result = run_with(&config, &exiting);
+
+        let runner = FakeRunner::new();
+        queue(
+            &runner,
+            &dir,
+            "simapp 1.0.0-1 -> 2.0.0-1\n",
+            53_687_091_200,
+            false,
+            0,
+        );
+        let snapshot = collect(&config, &runner, SystemTime::now()).expect("collect");
+        let text = render_text(&snapshot);
+
+        assert!(
+            matches!(
+                &snapshot.drift.partial_upgrade,
+                PartialUpgrade::Detected(detail) if detail.contains("evidence: the state file")
+            ),
+            "the state file's evidence is named: {:?}",
+            snapshot.drift.partial_upgrade
+        );
+        assert!(
+            text.contains("simapp"),
+            "the packages the fetch planned and did not move are named: {text}"
+        );
+        assert!(
+            !text.contains("check: clean"),
+            "it must not claim clean: {text}"
+        );
+        assert_eq!(snapshot.actionable, 1);
+        assert_eq!(
+            result.as_ref().err().map(Error::exit_code),
+            Some(1),
+            "a partial upgrade is action needed"
+        );
+        assert_eq!(
+            fs::read_to_string(&config.state_file).expect("state file"),
+            recorded,
+            "check wrote the state file"
+        );
+        assert_eq!(
+            fs::read_to_string(&config.pacman_log).expect("pacman log"),
+            log,
+            "check wrote pacman.log"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// A recorded-but-empty set is an answer, not a silence: the fetch planned
+    /// nothing, so an install after it cannot have left part of that set
+    /// behind. The log here would report an upgrade after a fetch, and it must
+    /// not override the state file.
+    #[test]
+    fn a_recorded_empty_set_is_clean_even_when_the_log_would_disagree() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(
+            &config.state_file,
+            concat!(
+                "{\"last_fetch_unix\":1000,\"last_fetch_pending\":0,",
+                "\"last_fetch_pending_names\":[],\"last_install_unix\":2000}\n"
+            ),
+        )
+        .expect("state file");
+        fs::write(
+            &config.pacman_log,
+            "\
+[2026-11-14T10:00:00+0000] [PACMAN] Running 'pacman -Syuw --noconfirm'
+[2026-11-14T10:05:00+0000] [ALPM] upgraded simapp (1.0.0-1 -> 2.0.0-1)
+",
+        )
+        .expect("pacman log");
+        let state = State {
+            last_fetch_unix: Some(1_000),
+            last_fetch_pending: Some(0),
+            last_fetch_pending_names: Some(Vec::new()),
+            last_install_unix: Some(2_000),
+        };
+
+        let drift = collect_drift(&config, &state, 1, Some(&["simapp".to_string()]));
+
+        assert_eq!(drift.partial_upgrade, PartialUpgrade::None);
+        assert!(
+            !render_text(&Snapshot {
+                drift,
+                ..base_snapshot()
+            })
+            .contains("partial upgrade"),
+            "an empty recorded set is clean"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// An install after the fetch is recorded, but the fetch recorded no set
+    /// (an older state file). There is nothing to compare, so `check` says it
+    /// cannot tell instead of reading the log or claiming clean.
+    #[test]
+    fn an_unrecorded_set_says_so_instead_of_reading_the_log() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(
+            &config.pacman_log,
+            "\
+[2026-11-14T10:00:00+0000] [PACMAN] Running 'pacman -Syuw --noconfirm'
+[2026-11-14T10:05:00+0000] [ALPM] upgraded simapp (1.0.0-1 -> 2.0.0-1)
+",
+        )
+        .expect("pacman log");
+        let state = State {
+            last_fetch_unix: Some(1_000),
+            last_fetch_pending: Some(1),
+            last_fetch_pending_names: None,
+            last_install_unix: Some(2_000),
+        };
+
+        let drift = collect_drift(&config, &state, 1, Some(&["simapp".to_string()]));
+
+        assert_eq!(drift.partial_upgrade, PartialUpgrade::Unrecorded);
+        let text = render_text(&Snapshot {
+            drift,
+            ..base_snapshot()
+        });
+        assert!(
+            text.contains("cannot tell (the last fetch recorded no pending set)"),
+            "the unrecorded set is named: {text}"
+        );
+        assert!(
+            !text.contains("an upgrade ran after the last fetch"),
+            "the log did not decide: {text}"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The state file records no install since the fetch, so the only thing
+    /// that can have moved is an install this tool did not make. That is the
+    /// one thing `pacman.log` is kept for, and its sentence is unchanged by
+    /// #118: only the new state-file path names itself.
+    #[test]
+    fn the_log_answers_only_when_no_install_since_the_fetch_was_recorded() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        fs::write(
+            &config.pacman_log,
+            "\
+[2026-11-14T10:00:00+0000] [PACMAN] Running 'pacman -Syuw --noconfirm'
+[2026-11-14T10:05:00+0000] [ALPM] upgraded bigpkg (1.0.0-1 -> 2.0.0-1)
+",
+        )
+        .expect("pacman log");
+        let state = State {
+            last_fetch_unix: Some(1_760_000_000),
+            last_fetch_pending: Some(2),
+            last_fetch_pending_names: Some(vec!["simapp".to_string(), "bigpkg".to_string()]),
+            last_install_unix: None,
+        };
+
+        let drift = collect_drift(&config, &state, 1, Some(&["simapp".to_string()]));
+
+        assert_eq!(
+            drift.partial_upgrade,
+            PartialUpgrade::Detected(
+                "an upgrade ran after the last fetch and 1 update(s) are still pending".to_string()
+            ),
+            "the log's sentence is the one it has always printed"
+        );
+        assert_eq!(drift.last_fetch, Some(1_760_000_000));
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// Nothing is pending, so both evidence paths answer "no partial upgrade".
+    /// The text is the frozen clean report, so no new evidence line can appear
+    /// in this case and break existing output silently.
+    #[test]
+    fn check_output_is_unchanged_when_the_evidence_agrees() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs();
+        fs::write(
+            &config.state_file,
+            format!(
+                "{{\"last_fetch_unix\":{},\"last_fetch_pending\":1,\
+                 \"last_fetch_pending_names\":[\"simapp\"],\"last_install_unix\":{}}}\n",
+                now - 600,
+                now - 86_400
+            ),
+        )
+        .expect("state file");
+        let runner = FakeRunner::new();
+        queue(&runner, &dir, "", 53_687_091_200, false, 0);
+
+        let snapshot = collect(&config, &runner, SystemTime::now()).expect("collect");
+        let cache = dir.join("cache");
+        let sizes = "50.0 GiB free of 100.0 GiB, 3200000 inodes free of 6553600\n";
+        let expected = format!(
+            "\
+check: official updates: 0
+check: aur updates: 0
+check: disk {}: {sizes}check: disk /: {sizes}check: lock: none
+check: cache downloads: 1.0 MiB
+check: cache yay builds: 1.0 MiB
+check: cache aurto repo: 1.0 MiB
+check: cache aurbuild chroot: 1.0 MiB
+check: cache archbuild chroot: 1.0 MiB
+check: timer: not scheduled
+check: state: last fetch 10m ago, last install 1d ago
+check: trust: missing (aurto trusts everyone)
+check: clean
+",
+            cache.display()
+        );
+
+        assert_eq!(snapshot.actionable, 0);
+        assert_eq!(render_text(&snapshot), expected);
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }

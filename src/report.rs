@@ -365,7 +365,11 @@ pub struct Drift {
 pub enum PartialUpgrade {
     #[default]
     None,
+    /// The evidence exists but cannot answer: the log is unreadable.
     Possible,
+    /// The state file recorded an install after the fetch but no pending set,
+    /// so there is nothing to compare against.
+    Unrecorded,
     Detected(String),
 }
 

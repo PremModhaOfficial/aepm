@@ -399,7 +399,7 @@ fn pending_names(config: &Config, runner: &dyn CommandRunner) -> Result<Vec<Stri
 }
 
 /// `name oldver -> newver`, one per line, as pacman prints it.
-fn package_names(stdout: &str) -> Vec<String> {
+pub(crate) fn package_names(stdout: &str) -> Vec<String> {
     let mut names: Vec<String> = stdout
         .lines()
         .filter_map(|line| line.split_whitespace().next())
@@ -412,7 +412,10 @@ fn package_names(stdout: &str) -> Vec<String> {
 
 /// The planned names that are still pending, sorted. A finished upgrade leaves
 /// this empty; a partial one names exactly the packages that did not move.
-fn partial_upgrade(planned: &[String], still_pending: &[String]) -> Vec<String> {
+///
+/// Shared with `check`, which asks the same question read-only: one
+/// intersection, so the report and the refusal cannot drift apart (#118).
+pub(crate) fn partial_upgrade(planned: &[String], still_pending: &[String]) -> Vec<String> {
     let mut left: Vec<String> = planned
         .iter()
         .filter(|name| still_pending.iter().any(|pending| pending == *name))
