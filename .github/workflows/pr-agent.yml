@@ -17,7 +17,13 @@ run-name: "Review PR #${{ github.event.pull_request.number || github.event.issue
 # pull_request_target with an untrusted checkout.
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    # `synchronize` is #115: a head that received a commit after the PR opened
+    # got no review at all, and nothing said so. A push now reviews the head it
+    # created. The bounds are in the job guard below (drafts and forks are
+    # skipped) and in the first steps (a head that already carries a complete
+    # review of that exact commit is not reviewed again, so the trigger does not
+    # spend a model call per push).
+    types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
 
@@ -47,7 +53,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      # A PR must not hand the reviewer's side its own copy of the check, so it
+      # comes from the default branch, as in review-gate.yml.
+      - name: Check out the default branch
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      # The bound on `synchronize`: a head that already carries a complete review
+      # of that exact commit is not reviewed again, so a rebase that changes no
+      # diff spends nothing. `--reviewed` is the state command's own question, so
+      # the skip shares one definition of "reviewed" with the gate rather than
+      # owning a second one. It ignores the verdict on purpose: a review that
+      # asked for changes still covered that commit, and the commit after the fix
+      # is a different one. An error here reads as "not reviewed", so a broken
+      # check costs a model call rather than a silent missing review.
+      - name: Is this head already reviewed?
+        id: reviewed
+        if: github.event_name == 'pull_request'
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if scripts/review-state.sh "$PR" --reviewed --sha "$SHA" >/dev/null 2>&1; then
+            echo "reviewed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR #$PR already carries a complete review of $SHA; not reviewing it again"
+          else
+            echo "reviewed=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Spelled out for `issue_comment`: that event has no `reviewed` step, so its
+      # output is empty, and an empty output must not be the only reason `/review`
+      # still runs. A future default of `true` would otherwise disable every
+      # `/review` command silently.
       - name: pr-agent
+        if: github.event_name == 'issue_comment' || steps.reviewed.outputs.reviewed != 'true'
         # pragent/pr-agent:0.50.0-github_action, pinned by manifest digest.
         # 0.50.0 adds the run-details section (model, tokens in/out, duration,
         # AI calls), which is the only place token usage is observable: the job
@@ -73,3 +115,9 @@ jobs:
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: "true"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"
+          # A pushed head is reviewed. Without these two the action logs
+          # "Skipping action: synchronize" and returns: the trigger fires, the run
+          # is green, and nothing is reviewed. Repeated from .pr_agent.toml so the
+          # first run works before that file is on main. Keep both in sync.
+          GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: "true"
+          GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/review"]'

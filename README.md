@@ -292,17 +292,24 @@ head.
 - Commands: `/describe`, `/review`, `/improve` (manual), `/ask <question>`.
 - Agent contract: [`AGENTS.md`](AGENTS.md) → "Agent review surface".
 - Agent state: `scripts/review-state.sh [<pr>]`; add `--findings` for the list.
-- The `Review Gate` check is evaluated after every review run, the only
-  trigger that cannot be forged, and fails when the review is missing, older
-  than the PR head, incomplete, or its verdict is anything but
-  `No concerns found`. It reads the review only: CI and `Sim` stay the behaviour
-  gates. It makes no model call, so it is free; make it a required check so
-  neither a force push nor an open finding merges — a push starts no review, so
-  the new head simply has no check, and a required check that never runs blocks
-  the button. Only the bot's own comment counts, and only its typed block
-  identifies one, so pasting a marker by hand does not pass it. A `/review`
-  refresh does not move the check onto the PR: GitHub anchors it to the commit
-  the review run checked out, which for a `/review` run is the default branch.
+- The `Review Gate` check is evaluated after every review run, the only trigger
+  that cannot be forged. It reads the review only: CI and `Sim` stay the
+  behaviour gates. It makes no model call, so it is free. It judges the PR
+  head, pinned with `--sha`, and fails closed: no review comment, a review of
+  another commit, an incomplete run, or a verdict other than `No concerns
+  found` (override with `REVIEW_GATE_VERDICT`). It reports the verdict where
+  the merge decision reads it, which is the PR head: a `workflow_run` workflow
+  runs on the default branch, so its own check can never gate a PR, and the
+  gate writes `Review Gate` onto the head through the Checks API instead. A
+  `/review` refresh writes it there too, which is what lets a re-review clear a
+  red gate. That is what makes it requireable, though whether it is required is
+  a repository setting and not this file's: `main` requires `CI (Linux)` and
+  `Arch simulation` today. Only the bot's own comment counts, and only its
+  typed block identifies one, so pasting a marker by hand does not pass it.
+- A push reviews the head it created. `PR Agent` runs on `synchronize` too,
+  with two bounds: a draft is skipped, and a head that already carries a
+  complete review of that exact commit is not reviewed again, so a rebase that
+  changes nothing spends no model call.
 - Each review carries a run-details section: model, tokens in/out, duration, and
   AI calls. That is the only usage record; the job log prints prompt tokens
   only.

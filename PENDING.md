@@ -37,14 +37,15 @@ release notes.
 |---|---|
 | #93 C3 | the palette / `ascii: bool` pair is gone: one `RenderCtx` replaces it in 33 signatures and 212 call sites, and 4 of the 14 `#[allow(clippy::too_many_arguments)]` went with it (`grep -c too_many_arguments src/tui/render.rs` → 10). The 10 left are not a face-flag problem: `render_live_frame_status` carries 10 arguments and the rest 8 to 11, because each carries the frame's own layout inputs (`width`, `room`, `slots`, `selection`). Folding those is a second input type, not this sweep |
 | #41, AUR side | the refusal shipped: `install` compares the last fetch's pending names with `pacman -Qu` and exits 2, `sim 54`, and `check` now reads the same set and names its evidence (#118). One gap remains: AUR packages are outside `fetch`'s plan (`pacman -Qui` only), so a helper can leave an AUR package behind and the refusal will not see it | a plan that covers AUR packages |
-| #115 | a review does not follow a force-push: `PR Agent` runs on open, reopen and ready only, so a rebased head has no review and nothing fails. At `112`'s rebased head, `gh pr view 112 --json statusCheckRollup` lists six checks and no `Review` | a `pull_request` synchronize check that fails when the newest review's `head_sha` is not the PR head |
+| #115 | a review did not follow a push: `PR Agent` ran on open, reopen and ready only, so a rebased head had no review and nothing failed (#112 merged at six checks, none a review). Closed by two changes: the trigger includes `synchronize` with `handle_push_trigger`/`push_commands = ["/review"]`, bounded by a reviewed-SHA skip; and `Review Gate` judges the PR head with `--sha <head>` and writes its verdict onto that commit through the Checks API, because a `workflow_run` check is anchored on the default branch (measured, `.github/PR-AGENT.md` D32). Unproven live until this is on the default branch: the verdict write runs only from the default branch's copy of the gate, and a check run can only be created by a GitHub App, so a local run gets `403 You must authenticate via a GitHub App` (`bash scripts/gate-review-selfcheck.sh` proves the branch; `gh pr checks <pr> --json name,conclusion` on a merged copy proves the deployment) | merge this, then one push and one `/review` on any PR: `gh pr checks <pr> --json name,conclusion` |
 | #29 | the TUI v2 shell. Not planned: the tree pays for panels nobody asked for |
 
 ## Housekeeping
 
-- The `Review` workflow runs on `pull_request` open, reopen and ready — not on
-  push. A PR that is opened and then pushed to keeps the review of its first
-  commit only; #115 owns closing that.
+- The `Review` workflow runs on `pull_request` open, reopen, ready and push. A
+  pushed head is reviewed unless it already carries a complete review of that
+  exact commit, and `Review Gate` records its verdict on the head that a merge
+  decides on (#115).
 - `shellcheck` is not installed on this host and `ci.sh` does not run it, so
   nothing checks the shell in `sim/`. Scenario scripts are covered by running
   them and by `scripts/gate-scenarios.sh`; the VM scripts under `sim/vm/` are

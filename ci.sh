@@ -28,14 +28,15 @@ echo "=== state machines (docs match code) ==="
 bash scripts/gate-state-machines.sh --self-test
 bash scripts/gate-state-machines.sh
 
-echo "=== review gate (current, stale, missing, untracked) ==="
-# The review gate fails closed when no review exists or the head moved. This
-# self-test pins the four outcomes with a fake gh, so the gate cannot silently
-# pass everything.
+echo "=== review gate (current, stale, missing, untracked, pinned) ==="
+# The review gate fails closed when no review exists or the head moved, including
+# when the caller pins the commit it reports on (`--sha`). This self-test pins the
+# outcomes with a fake gh, so the gate cannot silently pass everything.
 bash scripts/check-review-gate.sh
 
-echo "=== review gate workflow: a superseded run gates nothing, an unreadable head fails ==="
-# The workflow's own PR-resolution block, extracted and run against a fake gh.
+echo "=== review gate workflow: verdicts land on the PR head, a superseded run gates nothing ==="
+# The workflow's own reporting block, extracted from review-gate.yml and run
+# against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
 
 echo "=== clippy (deny warnings) ==="

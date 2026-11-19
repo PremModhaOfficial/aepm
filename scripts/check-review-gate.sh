@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Deterministic test for `scripts/review-state.sh --gate`. A fake `gh` supplies
-# the meta, checks, and review comments, so the test never touches the network.
-# The fake applies the real `--jq` program to the fixture, so the comment
-# selection is exercised too: a test that hands over one pre-filtered comment
-# cannot catch a selection bug.
+# Deterministic test for the review surface: `scripts/review-state.sh --gate`
+# and `--reviewed`. A fake `gh` supplies the meta, checks, review comments and
+# API calls, so the test never touches the network. The fake
+# applies the real `--jq` program to the fixture, so the comment selection is
+# exercised too: a test that hands over one pre-filtered comment cannot catch a
+# selection bug.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,8 +37,45 @@ if [[ "$sub" == "pr view" ]]; then
       [[ -n "$expr" ]] || { echo "fake gh: no --jq program" >&2; exit 1; }
       jq -c "$expr" <<<"{\"comments\":${FAKE_COMMENTS:-[]}}"
       ;;
-    *) printf '%s\n' "${FAKE_META:?FAKE_META is required}" ;;
+    *" --json isDraft,isCrossRepository "*)
+      if [[ -n "${FAKE_PR_FLAGS:-}" ]]; then
+        printf '%s\n' "$FAKE_PR_FLAGS"
+      else
+        printf '{"isDraft":false,"isCrossRepository":false}\n'
+      fi
+      ;;
+    *)
+      if [[ "${FAKE_META_FAIL:-0}" == 1 ]]; then
+        echo "HTTP 404: Not Found" >&2
+        exit 1
+      fi
+      printf '%s\n' "${FAKE_META:?FAKE_META is required}"
+      ;;
   esac
+  exit 0
+fi
+if [[ "${1:-}" == "api" ]]; then
+  shift
+  method=GET
+  path=""
+  jqexpr=""
+  while (($#)); do
+    case "$1" in
+      -X) method="$2"; shift 2 ;;
+      --jq) jqexpr="$2"; shift 2 ;;
+      -f|-F) shift 2 ;;
+      -*) shift ;;
+      *) path="$1"; shift ;;
+    esac
+  done
+  printf '%s %s\n' "$method" "$path" >>"${FAKE_CALLS:-/dev/null}"
+  [[ "$method" == GET ]] || exit 0
+  if [[ -n "$jqexpr" ]]; then
+    # `gh api --jq` prints a string result raw, not JSON-quoted.
+    jq -r "$jqexpr" <<<"${FAKE_API_COMMENTS:-[]}"
+  else
+    printf '%s\n' "${FAKE_API_COMMENTS:-[]}"
+  fi
   exit 0
 fi
 printf 'unexpected gh call: %s\n' "$*" >&2
@@ -63,10 +101,12 @@ typed_body() {
 export FAKE_META="{\"number\":21,\"state\":\"OPEN\",\"title\":\"t\",\"headRefOid\":\"$HEAD\",\"url\":\"u\"}"
 export FAKE_CHECKS='[]'
 
+GATE_ARGS=(--gate)
+
 run() {
   local name="$1" want_exit="$2" want="$3" assign="${4:-}" out rc
   set +e
-  out="$(env $assign PATH="$TMP/bin:$PATH" "$STATE" 21 --gate 2>&1)"
+  out="$(env $assign PATH="$TMP/bin:$PATH" "$STATE" 21 "${GATE_ARGS[@]}" 2>&1)"
   rc=$?
   set -e
   if [[ "$rc" -ne "$want_exit" ]]; then
@@ -120,7 +160,7 @@ run forged 1 'from the bot'
 # Nor by pasting a newer one after a stale review: the bot's comment still wins
 # the selection and still reads as stale.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(typed_body "$HEAD")" "mallory")]"
-run forged-newer 1 'older than the PR head'
+run forged-newer 1 'does not cover the head being judged'
 
 # `--gate` decides on the review alone, so it must not need the Checks API: a
 # workflow can grant `pull-requests: read` and nothing else.
@@ -137,7 +177,7 @@ describe_body='## PR Reviewer Guide 🔍
 <table><tr><td>⚠️ <strong>Risk level</strong>: Low</td></tr>
 <tr><td>✅ <strong>Merge recommendation</strong>: No concerns found</td></tr></table>'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$describe_body")]"
-run describe-newer 1 'older than the PR head'
+run describe-newer 1 'does not cover the head being judged'
 
 # The reverse: a describe behind a current review does not break the pass.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$describe_body")]"
@@ -150,4 +190,48 @@ quoted="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[{"body":"the marke
 export FAKE_COMMENTS="[$(comment "$quoted")]"
 run marker-quoted 0 'gate: pass'
 
-printf 'review gate: 15/15\n'
+# `--sha` pins the commit the verdict is about. The workflow resolves the PR head
+# once and then reports on that exact commit, so a push mid-run cannot make the
+# verdict describe one commit and land on another.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
+GATE_ARGS=(--gate --sha "$HEAD")
+run pinned-head 0 'gate: pass'
+
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")")]"
+run pinned-other 1 'does not cover the head being judged'
+
+# The pin decides, not the PR's current head: a review of the old commit passes
+# when the old commit is what is being judged.
+GATE_ARGS=(--gate --sha "$OLD")
+run pinned-old-reviewed 0 'gate: pass'
+
+# A short or non-hex pin would compare unequal to every recorded head and read as
+# a stale review, which is a verdict about a typo rather than about the PR.
+GATE_ARGS=(--gate --sha abc)
+run pinned-short 2 'is not a 40-hex commit'
+
+GATE_ARGS=(--gate --sha)
+run pinned-missing 2 '--sha needs a commit'
+
+GATE_ARGS=(--gate)
+
+# `--reviewed` is the question the push trigger asks before spending a model
+# call: is there a complete review of this exact commit? The verdict is not part
+# of it, so a review that asked for changes counts as reviewed, and the commit
+# that fixes the findings is a different one.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD" 'Changes required')")]"
+GATE_ARGS=(--reviewed --sha "$HEAD")
+run reviewed-despite-findings 0 'reviewed: true'
+
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")")]"
+run reviewed-stale 1 'reviewed: false'
+
+export FAKE_COMMENTS="[$(comment "$incomplete")]"
+run reviewed-incomplete 1 'reviewed: false'
+
+export FAKE_COMMENTS='[]'
+run reviewed-missing 1 'reviewed: false'
+
+GATE_ARGS=(--gate)
+
+printf 'review gate: 24/24\n'
