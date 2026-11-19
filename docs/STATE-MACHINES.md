@@ -353,10 +353,21 @@ counts: a count cannot tell a finished upgrade from a different unfinished one.
 | non-empty | `Failed`, exit 2, one sentence naming the packages | **nothing**: no state, no package DB, no `/usr` |
 | the fetch recorded no names | `Ok` with a warning that it cannot be told | the state file, as today |
 
-**Who owns precedence:** `install::check_partial_upgrade`. It runs only after
-the helper returned 0, and it is the only place that decides. `check`'s
-`PartialUpgrade` reads `pacman.log` as evidence and refuses nothing, so the two
-never contradict each other: one writes nothing, the other is the refusal.
+**Who owns precedence:** `install::check_partial_upgrade` owns the refusal. It
+runs only after the helper returned 0, and it is the only place that decides.
+`check::collect_drift` owns the read-only report and refuses nothing. It asks
+the same question of the same set, from the evidence that can answer:
+
+| which command recorded the install | evidence `check` reads | the line says |
+|---|---|---|
+| `install`, after the fetch (`last_install_unix > last_fetch_unix`) | `last_fetch_pending_names` ∩ `pacman -Qu` | `evidence: the state file`, naming the packages left behind |
+| anything else, including a hand `pacman -S` | `pacman.log`: an install or upgrade after the last `-Syuw` | the log's own sentence, unchanged |
+| no install is recorded and the log cannot be read | none | `cannot tell`, never `none` |
+
+The state file answers first because only it knows which names the fetch
+planned; the log is read only for what the state file cannot show, an install
+this tool did not make. Both compare against the same `pacman -Qu` names, so
+the report and the refusal cannot name different sets. Neither writes.
 
 **Known and inherent:** the set is the last fetch's, so a `pacman -Sy` in
 between can make new packages pending that the set never named. Those are the
@@ -393,11 +404,12 @@ purpose, so this table cannot quietly describe an older tree.
 | the exit fold | `src/tui/fetch_session.rs:355` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:103` | `pub fn plan_observed(` |
 | the partial-upgrade refusal | `src/commands/install.rs:350` | `fn check_partial_upgrade(` |
+| the partial-upgrade refusal | `src/commands/install.rs:339` | `fn check_partial_upgrade(` |
 | the install gate order | `src/commands/install.rs:53` | `pub fn preflight(config: &Config, runner: &dyn CommandRunner) -> Preflight {` |
 | the install arming verdict | `src/commands/install.rs:44` | `pub fn blocked(&self) -> bool {` |
 | the lock probe | `src/lock.rs:17` | `pub fn running(runner: &dyn CommandRunner) -> Result<Option<String>, Error> {` |
 | the lock refusal | `src/lock.rs:42` | `pub fn check(config: &Config, runner: &dyn CommandRunner, action: &str) -> Result<(), Error> {` |
-| the lock observation | `src/commands/check.rs:466` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
+| the lock observation | `src/commands/check.rs:473` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
 | the third reader of the lock probe | `src/commands/doctor.rs:103` | `fn report_lock(` |
 | the clean decision loop | `src/commands/clean.rs:187` | `fn collect_yay(` |
 | the freeze on failure | `src/frontier.rs:401` | `self.frozen = true;` |
