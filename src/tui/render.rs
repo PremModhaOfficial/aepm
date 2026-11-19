@@ -104,10 +104,28 @@ fn palette(ascii: bool, color: bool) -> bool {
 /// one argument of noise per call and one place per function to get the order
 /// wrong. `color` is the gated value, not the caller's request: [`palette`] is
 /// applied once here, so no renderer below can paint the ASCII tier.
+///
+/// The fields are private, so [`RenderCtx::new`] is the only door: a renderer
+/// outside this module cannot build one with a struct literal and skip the
+/// gate.
+///
+/// ```compile_fail
+/// // A struct literal would bypass `palette`; privacy rejects it.
+/// let _ = aepm::tui::render::RenderCtx { ascii: false, color: true };
+/// ```
+///
+/// The companion below keeps the one above honest: if the crate path itself
+/// broke, the `compile_fail` block would pass for the wrong reason.
+///
+/// ```
+/// let a = aepm::tui::render::RenderCtx::new(true, true);
+/// let b = aepm::tui::render::RenderCtx::new(true, true);
+/// assert_eq!(a, b);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderCtx {
-    pub ascii: bool,
-    pub color: bool,
+    ascii: bool,
+    color: bool,
 }
 
 impl RenderCtx {
