@@ -163,7 +163,7 @@ REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 if ! found="$(gh pr view "$pr" --json comments \
   --jq "[.comments[]
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
-    | {review: ([\$c[] | select(.body | test(\"pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
+    | {review: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
        head_from: ([\$c[] | select(.body | test(\"Review updated until commit\")) | .body
                     | (capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\")? // empty).s]
                    | last // \"\"),
@@ -222,7 +222,12 @@ fi
 # only while no block has ever been posted here: once one has, its absence is a
 # fault to fail on, not a clean review.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
-  review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | head -1 | cut -d/ -f2)"
+  # The guide header is the evidence: it names the head the run checked out. A
+  # bare `commit/<sha>` anywhere in the body is not, because a review that
+  # discusses an earlier fix quotes one, and taking the first match judged a
+  # clean review against that older commit.
+  review_head="$(sed -n 's/.*Review updated until commit[^0-9a-f]*commit\/\([0-9a-f]\{7,40\}\).*/\1/p' <<<"$review_body" | head -1)"
+  [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
   [[ -n "$review_head" ]] || review_head="$fallback_head"
   if [[ "$prior_blocks" -eq 0 ]]; then
     [[ -n "$review_head" ]] && complete="unrecorded"
@@ -271,6 +276,13 @@ if [[ "$gate" -eq 1 ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
     exit 1
   fi
+  # A block that vanished after this PR carried one is a fault of the run, not a
+  # clean review, so it is named before the stale check: the fault is the run,
+  # and a stale head is only its symptom.
+  if [[ "$complete" == "missing" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: this review has no typed state block although an earlier one on this PR did\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    exit 1
+  fi
   if [[ "$stale" != "false" ]]; then
     if [[ "$stale" == "true" ]]; then
       printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review does not cover the head being judged\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
@@ -279,12 +291,6 @@ if [[ "$gate" -eq 1 ]]; then
     else
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review has no typed state block and does not name the commit it reviewed\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
-    exit 1
-  fi
-  # A block that vanished after this PR carried one is a fault of the run, not a
-  # clean review: fail on it before the head and verdict are read.
-  if [[ "$complete" == "missing" ]]; then
-    printf 'gate: fail\npr: %s\nhead: %s\nreason: this review has no typed state block although an earlier one on this PR did\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
   # A truncated or timed-out run can still print a clean recommendation, so a

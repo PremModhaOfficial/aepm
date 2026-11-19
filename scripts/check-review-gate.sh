@@ -305,4 +305,22 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
+# The guide header is the evidence, not the first bare commit link: a clean
+# review that discusses an earlier fix quotes one, and reading that as the
+# reviewed head judged a current review as stale.
+export FAKE_COMMENTS="[$(comment "$(printf 'See commit/%s for the earlier attempt.\n\n%s' "$OLD" "$(clean_body "$HEAD")")")]"
+run header-beats-earlier-link 0 'gate: pass'
+
+# The marker in prose is not a review: only a line-start block or the guide
+# header selects the comment, so a newer comment merely writing about the
+# marker cannot be judged in place of the real review.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(printf '> the gate reads `<!-- pr-agent-review-state:v1` and commit/%s\n' "$HEAD")")]"
+run prose-mention-is-not-a-review 0 'gate: pass'
+
+# A block that vanished after this PR carried one is the run's fault, and it is
+# named before staleness: the missing block is the cause, the stale head only
+# its symptom.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(clean_body "$OLD")")]"
+run missing-block-named-before-stale 1 'no typed state block although an earlier one'
+
 printf 'review gate: %s/%s\n' "$PASSED" "$CASES"
