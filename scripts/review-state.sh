@@ -165,7 +165,7 @@ if ! found="$(gh pr view "$pr" --json comments \
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
     | {review: ([\$c[] | select(.body | test(\"pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
        head_from: ([\$c[] | select(.body | test(\"Review updated until commit\")) | .body
-                    | capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\").s]
+                    | (capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\")? // empty).s]
                    | last // \"\"),
        blocks: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1\"))] | length)}" \
   2>"$GERR")"; then
@@ -232,9 +232,10 @@ if [[ -z "$state_json" && -n "$review_body" ]]; then
 fi
 
 if [[ -n "$review_head" ]]; then
-  if [[ "$review_head" == "$head_full" ]]; then
-    stale="false"
-  elif [[ ${#review_head} -lt ${#head_full} && "$head_full" == "$review_head"* ]]; then
+  # A review may quote an abbreviated sha, in either direction, so a prefix
+  # match counts. The length floor is what stops a truncated or mistyped value
+  # from matching a head that merely starts the same way.
+  if [[ ${#review_head} -ge 7 && ( "$review_head" == "$head_full"* || "$head_full" == "$review_head"* ) ]]; then
     stale="false"
   else
     stale="true"

@@ -285,6 +285,16 @@ run reviewed-unrecorded-stale 1 'reviewed: false'
 export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"), $(comment "$(printf '## PR Description\n\nHead is https://github.com/o/r/commit/%s\n' "$HEAD")")]"
 GATE_ARGS=(--gate)
 run describe-quotes-head 1 'does not name the commit'
+
+# One comment quoting the phrase without a commit must not kill the whole read.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment 'Review updated until commit (the line was truncated)')]"
+GATE_ARGS=(--gate)
+run persisted-line-odd 0 'gate: pass'
+
+# A four-character head is not a prefix match: the floor is what stops a
+# truncated value from clearing the gate.
+export FAKE_COMMENTS="[$(comment "$(typed_body "${HEAD:0:4}")")]"
+run short-head-is-not-current 1 'does not cover the head'
 GATE_ARGS=(--reviewed --sha "$HEAD")
 
 export FAKE_COMMENTS="[$(comment "$incomplete")]"
