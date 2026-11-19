@@ -114,7 +114,12 @@ list() {
             picked["$file"]=1
             continue
         fi
-        [[ $file == src/* ]] || continue
+        # `sim/` is in the map too: the image, the stubs and the shared
+        # assertions are what a scenario runs inside, so a change to them is a
+        # change to every claim the suite makes. Dropping non-src paths here made
+        # that row inert — a sim/Dockerfile change selected nothing at all. The
+        # owned files carry `none` rows, so they still select nothing.
+        [[ $file == src/* || $file == sim/* ]] || continue
         # A deleted file has no scenario left to run; --check-map catches the
         # row it leaves behind.
         [[ -e $file ]] || continue
