@@ -81,8 +81,6 @@ review="$(jq -c --arg bots "$BOT_LOGIN" '
 cid="$(jq -r '.id' <<<"$review")"
 body="$(jq -r '.body' <<<"$review")"
 
-grep -q 'pr-agent-review-state:v1' <<<"$body" && skip "the review already carries a typed block"
-
 # The commit the comment says it reviewed. Without it there is no head evidence,
 # and a stamp would assert a completeness nobody can check.
 quoted="$(sed -n 's|.*/commit/\([0-9a-f]\{7,40\}\).*|\1|p' <<<"$body" | head -1)"
@@ -91,19 +89,40 @@ if [[ "$head" != "$quoted"* ]]; then
     skip "the review quotes ${quoted:0:7}, not the head ${head:0:7}"
 fi
 
-# The comment lists findings as `### path:line` sections under a <summary>. This
-# producer cannot enumerate them into the typed schema, and a block claiming
-# `findings: []` over a real finding would pass a merge that should not.
-if grep -qE '^### .*:[0-9]' <<<"$body" \
-    || grep -qiE '<summary>[^<]*(finding|issues? found)' <<<"$body"; then
-    skip "the review lists findings but carries no typed block; refusing to assert an empty list"
+# A block the bot wrote for *this* head is left alone. One that names another
+# head is replaced: the bot rewrites its persistent comment on every review
+# (measured on #146, whose single guide carried the newest head and no trace of
+# the previous block), but a bot that appends instead of replacing would
+# otherwise leave the gate reading an old commit forever.
+if grep -q 'pr-agent-review-state:v1' <<<"$body"; then
+    stamped="$(sed -n '/pr-agent-review-state:v1/,/^-->/p' <<<"$body" | sed -n 's/.*"head_sha":"\([0-9a-f]\{7,40\}\)".*/\1/p' | head -1)"
+    [[ "$stamped" == "$head"* ]] && skip "the review already carries a typed block for ${head:0:7}"
+    body="$(awk '!f && /pr-agent-review-state:v1/{f=1;next} f&&/^-->/{f=0;next} !f' <<<"$body")"
+    refreshed=1
 fi
 
-# The coverage footer is the bot's own disclosure that a chunk cap left files
-# unreviewed, so the run did not complete. Stamped as such, the gate reads it as
-# partial and fails; claiming `complete` would launder a truncated review.
+# The comment lists findings as `### path:line` sections under a summary. This
+# producer cannot enumerate them into the typed schema, and a block claiming
+# `findings: []` over a real finding would pass a merge that should not. The
+# summary is matched on what the bot writes — "Issues found", "Resolved
+# findings" — not on the word "findings" alone.
+if grep -qE '^### .*:[0-9]' <<<"$body" \
+    || grep -qiE '<summary>[^<]*(finding|issues? found)' <<<"$body"; then
+    skip "the review lists findings but carries no usable typed block; refusing to assert an empty list"
+fi
+
+# The coverage footer is the bot's own disclosure of what it did not read. The
+# counts decide, not the footer's presence: `Review coverage: 9 of 9 files` is a
+# complete review. A footer without parseable counts is treated as incomplete,
+# because the conservative direction costs a model call and the other costs a
+# merge nobody reviewed.
 complete=true
-grep -q 'Review coverage' <<<"$body" && complete=false
+if grep -q 'Review coverage' <<<"$body"; then
+    complete=false
+    if read -r seen total < <(sed -n 's/.*Review coverage:[^0-9]*\([0-9]\+\)[^0-9]\+of[^0-9]*\([0-9]\+\).*/\1 \2/p' <<<"$body" | head -1); then
+        [[ -n "${seen:-}" && -n "${total:-}" && "$seen" -ge "$total" ]] && complete=true
+    fi
+fi
 
 block="$(jq -cn --arg head "$head" --argjson complete "$complete" '{
   schema_version: 1,
@@ -116,5 +135,7 @@ jq -cn --arg body "$new_body" '{body: $body}' \
     | gh api -X PATCH "repos/$GH_REPO/issues/comments/$cid" --input - >/dev/null \
     || warn "cannot update comment $cid"
 
-printf 'stamp: wrote the typed block on PR %s for %s (complete=%s, findings=0)\n' \
-    "$pr" "${head:0:7}" "$complete"
+verb=wrote
+[[ -n "${refreshed:-}" ]] && verb=refreshed
+printf 'stamp: %s the typed block on PR %s for %s (complete=%s, findings=0)\n' \
+    "$verb" "$pr" "${head:0:7}" "$complete"

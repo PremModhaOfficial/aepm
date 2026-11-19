@@ -22,7 +22,13 @@ case "$*" in
         cat >"$FAKE_PATCH_OUT"
         echo '{}'
         ;;
-    "pr view "*"--json headRefOid"*) printf '%s\n' "${FAKE_HEAD:-}" ;;
+    "pr view "*"--json headRefOid"*)
+        if [[ ${FAKE_PR_FAIL:-0} == 1 ]]; then
+            echo "HTTP 502: bad gateway" >&2
+            exit 1
+        fi
+        printf '%s\n' "${FAKE_PR_HEAD:-}"
+        ;;
     *) echo "fake gh: unexpected call: $*" >&2; exit 1 ;;
 esac
 GH
@@ -105,6 +111,37 @@ out="$(run "[$(comment "$(guide "$HEAD" "No concerns found" "$footer")")]")"
     bad "a chunked review was stamped complete: $(block_of)"
 [[ $status == 0 ]] && ok "a review with a coverage footer is stamped incomplete"
 
+# 3b. A footer that says everything was read is a complete review. The counts
+# decide, not the footer's presence; treating the footer alone as incomplete
+# would fail every clean review this PR exists to unblock.
+fullfoot="$(printf '\n---\nReview coverage: 9 of 9 files.\n')"
+out="$(run "[$(comment "$(guide "$HEAD" "No concerns found" "$fullfoot")")]")"
+[[ "$(jq -r '.last_run.complete' <<<"$(block_of)")" == "true" ]] ||
+    bad "a 9-of-9 coverage footer was stamped incomplete: $(block_of)"
+[[ $status == 0 ]] && ok "a coverage footer that read every file is stamped complete"
+
+# 3c. The head lookup is an API call like any other. Its failure must be a
+# warning and exit 0, not a red check on main (#111), and its success must stamp.
+run_noprhead() {
+    rm -f "$FAKE_PATCH_OUT" "$FAKE_GH_CALLS"
+    export FAKE_COMMENTS="$1" FAKE_PR_HEAD="$HEAD"
+    "$ROOT/scripts/review-state-stamp.sh" 7 2>&1
+}
+out="$(run_noprhead "[$(comment "$(guide)")]")" && rc=0 || rc=$?
+[[ $rc == 0 ]] || bad "an unreadable head exited $rc: $out"
+[[ -e "$FAKE_PATCH_OUT" ]] || bad "a readable head from the API did not stamp"
+[[ $status == 0 ]] && ok "with no head argument the API supplies it"
+
+rm -f "$FAKE_PATCH_OUT"
+export FAKE_PR_FAIL=1
+out="$(run_noprhead "[$(comment "$(guide)")]")" && rc=0 || rc=$?
+unset FAKE_PR_FAIL
+[[ $rc == 0 ]] || bad "an API fault on the head lookup exited $rc: $out"
+grep -q '::warning::stamp: cannot read the head' <<<"$out" ||
+    bad "an API fault was not a warning: $out"
+[[ ! -e "$FAKE_PATCH_OUT" ]] || bad "an API fault still stamped a block"
+[[ $status == 0 ]] && ok "an API fault on the head lookup warns and exits 0"
+
 # 4. Idempotent: a block the bot wrote itself is never rewritten.
 body="$(guide)"
 with_block="$body
@@ -133,5 +170,17 @@ grep -q 'no review guide comment from the bot' <<<"$out" ||
     bad "a non-bot comment said something else: $out"
 [[ ! -e "$FAKE_PATCH_OUT" ]] && ok "a comment the bot did not author is never stamped"
 
+# 7. A block naming another head is replaced, not skipped: a bot that appends
+# instead of replacing would otherwise leave the gate reading an old commit.
+old_block="$(printf '\n\n<!-- pr-agent-review-state:v1\n{\"schema_version\":1,\"findings\":[],\"last_run\":{\"complete\":true,\"head_sha\":\"%s\",\"excluded_files\":[]}}\n-->' "$OTHER")"
+out="$(run "[$(comment "$(guide)$old_block")]")"
+[[ -e "$FAKE_PATCH_OUT" ]] || bad "a block naming another head was not refreshed"
+grep -q 'refreshed the typed block' <<<"$out" || bad "a refresh said something else: $out"
+[[ "$(jq -r '.body' "$FAKE_PATCH_OUT" | grep -c 'pr-agent-review-state:v1')" == "1" ]] ||
+    bad "a refresh left more than one block in the comment"
+[[ "$(jq -r '.last_run.head_sha' <<<"$(block_of)")" == "$HEAD" ]] ||
+    bad "a refresh did not rewrite the head: $(block_of)"
+[[ $status == 0 ]] && ok "a block naming another head is replaced with one for the head"
+
 ((status == 0)) || { printf 'review-state-stamp self-test FAILED\n' >&2; exit 1; }
-printf 'review-state-stamp self-test: 7 assertions hold\n'
+printf 'review-state-stamp self-test: 11 assertions hold\n'
