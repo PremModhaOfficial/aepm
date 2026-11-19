@@ -1237,6 +1237,23 @@ mod tests {
             observations, 4_000,
             "the burst is a start and a finish each"
         );
+        // The bounds below are all upper bounds, and a counter that stopped
+        // firing reads zero, which satisfies every one of them. These two fail
+        // unless the `#[cfg(test)]` instrumentation actually ran: each settle
+        // counts at least one step per node and derives readiness over two
+        // required dependencies, so the honest work is a small multiple of the
+        // node count.
+        assert!(
+            work.steps >= nodes,
+            "the step counter is live: every node settles at least once, got {} for {nodes} nodes",
+            work.steps
+        );
+        assert!(
+            work.checks >= nodes,
+            "the check counter is live: each step derives a node's readiness, got {} checks \
+             over {nodes} nodes",
+            work.checks
+        );
         assert!(
             work.steps <= bound,
             "4,000 observations over {nodes} packages took {} settle steps, over {bound}; \
@@ -1261,9 +1278,11 @@ mod tests {
         let doubled = burst(2 * BURST_PACKAGES);
         let twice = settle_work().since(before);
         assert!(doubled.is_complete(), "every doubled package finished");
-        panic!(
-            "MEASURED steps={} checks={} twice={} nodes={} edges={}",
-            work.steps, work.checks, twice.steps, nodes, edges
+        assert!(
+            twice.steps > work.steps,
+            "the step counter is live: double the burst took {} settle steps against {}",
+            twice.steps,
+            work.steps
         );
         assert!(
             twice.steps <= 3 * work.steps,
