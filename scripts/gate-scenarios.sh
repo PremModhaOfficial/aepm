@@ -120,9 +120,13 @@ list() {
         # that row inert — a sim/Dockerfile change selected nothing at all. The
         # owned files carry `none` rows, so they still select nothing.
         [[ $file == src/* || $file == sim/* ]] || continue
-        # A deleted file has no scenario left to run; --check-map catches the
-        # row it leaves behind.
-        [[ -e $file ]] || continue
+        # A deleted src/ file has no scenario left to run; --check-map catches
+        # the row it leaves behind. A deleted file under sim/ is a harness
+        # change like any other and keeps its row (usually `all`), so deleting
+        # the image or the stubs still runs the suite.
+        if [[ $file == src/* && ! -e $file ]]; then
+            continue
+        fi
         list=$(lookup "$file")
         if [[ -z $list ]]; then
             unmapped+=("$file")

@@ -31,6 +31,9 @@ sim/	all	the image and the stubs every scenario runs inside
 sim/README.md	none	documentation only
 MAP
 
+# The base already carries a harness file, so a later delete is a real diff.
+printf 'FROM archlinux:base-devel\n# v1\n' > "$repo/sim/Dockerfile"
+printf 'image notes\n' > "$repo/sim/README.md"
 git -C "$repo" init -q -b main
 # A developer's global config may sign commits with an agent the runner has no
 # socket for; the fixture is a scratch repository and signs nothing.
@@ -104,8 +107,7 @@ fi
 # inert because --list dropped every path outside src/, so a sim/Dockerfile edit
 # selected nothing and merged unproven.
 git -C "$repo" checkout -q -b harness "$head"
-mkdir -p "$repo/sim"
-printf 'FROM archlinux:base-devel\n' > "$repo/sim/Dockerfile"
+printf 'FROM archlinux:base-devel\n# v2\n' > "$repo/sim/Dockerfile"
 git -C "$repo" -c commit.gpgsign=false add -A
 git -C "$repo" -c commit.gpgsign=false commit -qm "harness: touch the image"
 harness="$(git -C "$repo" rev-parse HEAD)"
@@ -129,7 +131,19 @@ else
     bad "a sim/README.md change selected: $(tr '\n' ' ' <<<"$out")"
 fi
 
-# 6. The default head is still HEAD, so a developer's branch keeps working.
+# 6. Deleting a harness file still runs the suite: the deleted-file guard is
+# about src/ (its row is checked by --check-map), not about sim/.
+git -C "$repo" checkout -q -b harnessrm "$head"
+git -C "$repo" rm -q sim/Dockerfile
+git -C "$repo" -c commit.gpgsign=false commit -qm "harness: delete the image"
+rm="$(git -C "$repo" rev-parse HEAD)"
+out="$(listed "$base" "$rm" | tr '\n' ' ')"
+case $out in
+    *01-a.sh*02-b.sh* | *02-b.sh*01-a.sh*) ok "a deleted sim/ file still selects the whole suite" ;;
+    *) bad "a deleted sim/ file selected: ${out:-nothing}" ;;
+esac
+
+# 7. The default head is still HEAD, so a developer's branch keeps working.
 git -C "$repo" checkout -q touched
 out="$(cd "$repo" && bash scripts/gate-scenarios.sh --list "$base" 2>&1 | tr '\n' ' ')"
 if [[ $out == *01-a.sh* ]]; then
@@ -139,4 +153,4 @@ else
 fi
 
 ((status == 0)) || { printf 'gate-scenarios self-test FAILED\n' >&2; exit 1; }
-printf 'gate-scenarios self-test: 6 assertions hold\n'
+printf 'gate-scenarios self-test: 7 assertions hold\n'

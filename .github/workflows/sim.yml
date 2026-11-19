@@ -90,7 +90,7 @@ jobs:
           # the cache every pull request reads.
           # ignore-error: a cache that cannot be written must never redden a
           # green gate. The build itself is the proof; the cache is an offer.
-          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=aepm-sim,ignore-error=true' || '' }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=aepm-sim,ignore-error=true' || '' }}
       - name: Run the scenarios
         env:
           # Flat directory so the artifact path is stable; run.sh prints it.
@@ -101,15 +101,18 @@ jobs:
           SIM_NO_BUILD: "1"
         run: |
           set -euo pipefail
+          # work=no means no scenario was selected, so no image was built: had
+          # this reached run.sh it would either run the whole suite or refuse a
+          # missing image. Saying so is the honest output.
+          if [[ "${{ steps.select.outputs.work }}" != yes ]]; then
+            echo "nothing to run: no src/ or sim/ change in this pull request"
+            exit 0
+          fi
           if [[ "${{ steps.select.outputs.mode }}" != changed ]]; then
             ./sim/run.sh
             exit 0
           fi
           mapfile -t scenarios < "${{ steps.select.outputs.list }}"
-          if ((${#scenarios[@]} == 0)); then
-            echo "no src/ or sim/ change in this pull request; nothing to run"
-            exit 0
-          fi
           ./sim/run.sh "${scenarios[@]}"
       - name: Upload scenario logs
         # Always: a failed or timed-out run is the one whose log is needed.
