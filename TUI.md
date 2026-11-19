@@ -208,7 +208,9 @@ never silently presented as fresh. A refresh that is superseded is ignored
 (generation counter), so a slow `du` cannot overwrite a newer snapshot.
 
 Fast refresh every 60s is a scheduled wake, not an animation poll: "no periodic
-tick" means no 250ms repaint when nothing runs. `yay -Qua` can exceed the 500ms
+tick" means no 250ms repaint when nothing runs. It lives in `fast_due` and
+`poll_window` in `src/tui/mod.rs` over `check::refresh_fast`, which reads the
+fast tier and carries the slow one forward with the time it was read at. `yay -Qua` can exceed the 500ms
 fast budget; mark AUR stale while it runs instead of blocking the frame. Use two
 lanes (fast and slow) so a slow `du` cannot delay a lock or disk refresh.
 

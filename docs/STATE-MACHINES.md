@@ -42,6 +42,7 @@ stack.** `run_interactive` holds the whole state:
 | `log_open` | `bool` | the log of the session that owns it |
 | `news_attested` | `bool` | "I read the news", for this TUI process only |
 | `selection` | `live::Selection` | the cursor, always re-planned against the drawn frame |
+| `last_fast` | `SystemTime` | when the fast tier was last re-read; the only clock the schedule reads |
 
 ### Body states
 
@@ -70,6 +71,15 @@ never lost.
 | 2 | install gate | `install_gate.is_some()` | after the log |
 | 3 | log | `log_open` and `session.is_some()` | after the body |
 | 4 (bottom) | body | always | first |
+
+**The scheduled fast pass** (`TUI.md` T8) is a timer, not a key: the loop
+checks `fast_due(last_fast, now)` before it draws, and `poll_window` shortens the
+idle `event::poll` so the wake lands on the deadline instead of on the next
+keypress. A pass re-reads the fast tier only (`check::refresh_fast`), so the
+slow sections keep the `at` they were read at and show their real age. The one
+refusal: a running fetch owns the redraw and pacman's lock, so `running` keeps
+the pass from firing and every manual refresh goes through `recollect`, which
+restarts `last_fast` so a pass just taken cannot fire twice.
 
 **Precedence, owned by `accepts` in `src/tui/mod.rs`:** the same order decides
 which actions are live. `resolve` turns a press into the action the keymap binds
@@ -393,24 +403,24 @@ purpose, so this table cannot quietly describe an older tree.
 
 | Claim | Anchor | The line says |
 |---|---|---|
-| the body precedence, and its order | `src/tui/mod.rs:641` | `let (footer, gates, body) = match (session, notice) {` |
-| the receipt rank, above the gate | `src/tui/mod.rs:239` | `if post_install.is_some() {` |
-| the gate rank, above the main match | `src/tui/mod.rs:251` | `if install_gate.is_some() {` |
-| the log-flag invariant | `src/tui/mod.rs:155` | `assert!(` |
-| the `Esc` ladder | `src/tui/mod.rs:341` | `Some(Action::Back) => {` |
-| the arming predicate | `src/tui/mod.rs:256` | `let armed = news_attested` |
-| the attestation reset | `src/tui/mod.rs:306` | `news_attested = false;` |
-| the modal action allow-list | `src/tui/mod.rs:502` | `fn accepts(context: Context, action: Action) -> bool {` |
+| the body precedence, and its order | `src/tui/mod.rs:656` | `let (footer, gates, body) = match (session, notice) {` |
+| the receipt rank, above the gate | `src/tui/mod.rs:254` | `if post_install.is_some() {` |
+| the gate rank, above the main match | `src/tui/mod.rs:266` | `if install_gate.is_some() {` |
+| the log-flag invariant | `src/tui/mod.rs:158` | `assert!(` |
+| the `Esc` ladder | `src/tui/mod.rs:356` | `Some(Action::Back) => {` |
+| the arming predicate | `src/tui/mod.rs:271` | `let armed = news_attested` |
+| the attestation reset | `src/tui/mod.rs:321` | `news_attested = false;` |
+| the modal action allow-list | `src/tui/mod.rs:517` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:61` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:355` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:103` | `pub fn plan_observed(` |
 | the partial-upgrade refusal | `src/commands/install.rs:350` | `fn check_partial_upgrade(` |
-| the partial-upgrade evidence order | `src/commands/check.rs:664` | `fn collect_drift(` |
+| the partial-upgrade evidence order | `src/commands/check.rs:718` | `fn collect_drift(` |
 | the install gate order | `src/commands/install.rs:53` | `pub fn preflight(config: &Config, runner: &dyn CommandRunner) -> Preflight {` |
 | the install arming verdict | `src/commands/install.rs:44` | `pub fn blocked(&self) -> bool {` |
 | the lock probe | `src/lock.rs:17` | `pub fn running(runner: &dyn CommandRunner) -> Result<Option<String>, Error> {` |
 | the lock refusal | `src/lock.rs:42` | `pub fn check(config: &Config, runner: &dyn CommandRunner, action: &str) -> Result<(), Error> {` |
-| the lock observation | `src/commands/check.rs:476` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
+| the lock observation | `src/commands/check.rs:530` | `fn collect_lock(config: &Config, runner: &dyn CommandRunner) -> Result<LockState, Error> {` |
 | the third reader of the lock probe | `src/commands/doctor.rs:103` | `fn report_lock(` |
 | the clean decision loop | `src/commands/clean.rs:187` | `fn collect_yay(` |
 | the freeze on failure | `src/frontier.rs:401` | `self.frozen = true;` |

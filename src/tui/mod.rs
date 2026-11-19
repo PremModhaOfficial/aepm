@@ -127,6 +127,9 @@ fn run_interactive(
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
         .map_err(|err| Error::failed(format!("cannot start the terminal: {err}")))?;
     let mut snapshot = collect_snapshot(config, SystemTime::now())?;
+    // The fast tier's own clock: the collect just above stamped every section
+    // it read, so the schedule starts now, not at the next keystroke.
+    let mut last_fast = SystemTime::now();
     let mut session: Option<FetchSession> = None;
     let mut notice: Option<Notice> = None;
     let mut help = false;
@@ -157,7 +160,19 @@ fn run_interactive(
             "the log flag outlived its session"
         );
 
-        if session.as_ref().is_some_and(FetchSession::running) {
+        // The fast tier is re-read on a schedule, not on the next keypress:
+        // pending counts and artifact ages have to advance with the clock
+        // (`TUI.md` T8). A running fetch owns the redraw and holds pacman's
+        // lock, so its own poll is the only reader then.
+        let running = session.as_ref().is_some_and(FetchSession::running);
+        if !running && fast_due(last_fast, SystemTime::now()) {
+            let now = SystemTime::now();
+            snapshot = refresh_snapshot(config, &snapshot, now)?;
+            last_fast = now;
+            dirty = true;
+        }
+
+        if running {
             let tick = session
                 .as_mut()
                 .expect("a running session is present")
@@ -220,10 +235,10 @@ fn run_interactive(
             dirty = false;
         }
 
-        let wait = if session.as_ref().is_some_and(FetchSession::running) {
+        let wait = if running {
             Duration::from_millis(100)
         } else {
-            Duration::from_millis(250)
+            poll_window(Duration::from_millis(250), last_fast, SystemTime::now())
         };
         if !event::poll(wait)
             .map_err(|err| Error::failed(format!("cannot read the terminal: {err}")))?
@@ -300,7 +315,7 @@ fn run_interactive(
                                 terminal.clear().map_err(|err| {
                                     Error::failed(format!("cannot clear the terminal: {err}"))
                                 })?;
-                                snapshot = collect_snapshot(config, SystemTime::now())?;
+                                recollect(config, &mut snapshot, &mut last_fast)?;
                                 post_install = Some(receipt);
                                 notice = Some(Notice::install(outcome));
                                 news_attested = false;
@@ -349,7 +364,7 @@ fn run_interactive(
                         } else if session.take().is_some() {
                             // Dismissing a session closes its log with it.
                             log_open = false;
-                            snapshot = collect_snapshot(config, SystemTime::now())?;
+                            recollect(config, &mut snapshot, &mut last_fast)?;
                         } else {
                             notice = None;
                         }
@@ -437,7 +452,7 @@ fn run_interactive(
                             session = None;
                             notice = None;
                             log_open = false;
-                            snapshot = collect_snapshot(config, SystemTime::now())?;
+                            recollect(config, &mut snapshot, &mut last_fast)?;
                             dirty = true;
                         }
                     }
@@ -455,7 +470,7 @@ fn run_interactive(
                                 // Ending the session closes its log, so a refusal
                                 // below cannot leave the flag orphaned.
                                 log_open = false;
-                                snapshot = collect_snapshot(config, SystemTime::now())?;
+                                recollect(config, &mut snapshot, &mut last_fast)?;
                             }
                             match start_fetch(config, &snapshot, SystemTime::now(), motion) {
                                 Ok(started) => {
@@ -736,13 +751,62 @@ fn collect_snapshot(config: &Config, now: SystemTime) -> Result<Snapshot, Error>
     Ok(snapshot)
 }
 
+/// Re-read everything and restart the fast tier's schedule. Every refresh the
+/// user asks for goes through here, so a pass just taken cannot fire again on
+/// the next loop iteration.
+fn recollect(
+    config: &Config,
+    snapshot: &mut Snapshot,
+    last_fast: &mut SystemTime,
+) -> Result<(), Error> {
+    let now = SystemTime::now();
+    *snapshot = collect_snapshot(config, now)?;
+    *last_fast = now;
+    Ok(())
+}
+
+/// Re-read the fast tier over the snapshot already on screen. The slow
+/// sections come back as they were, so nothing on the frame claims to be
+/// fresher than it is.
+fn refresh_snapshot(
+    config: &Config,
+    previous: &Snapshot,
+    now: SystemTime,
+) -> Result<Snapshot, Error> {
+    let mut snapshot = check::refresh_fast(config, &SystemRunner, now, previous)?;
+    snapshot.prefetch = progress::collect(config, &SystemRunner, &snapshot, now);
+    Ok(snapshot)
+}
+
+/// The fast tier's re-read interval. `TUI.md` T8 promises a 60s refresh, and
+/// this is the one place the number lives.
+const FAST_REFRESH: Duration = Duration::from_secs(60);
+
+/// Whether a scheduled fast pass is due. A clock that went backwards reads as
+/// due: re-reading is cheap next to a fact shown with no age at all.
+fn fast_due(last: SystemTime, now: SystemTime) -> bool {
+    match now.duration_since(last) {
+        Ok(elapsed) => elapsed >= FAST_REFRESH,
+        Err(_) => true,
+    }
+}
+
+/// The idle poll window, shortened so the scheduled pass lands on time instead
+/// of after the next keystroke.
+fn poll_window(idle: Duration, last: SystemTime, now: SystemTime) -> Duration {
+    let elapsed = now.duration_since(last).unwrap_or(Duration::ZERO);
+    idle.min(FAST_REFRESH.saturating_sub(elapsed))
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    use std::time::{Duration, UNIX_EPOCH};
+
     use super::{
-        BodyKind, Context, Keymap, Notice, ensure_interactive, frame_parts, resolve, static_keys,
-        use_color,
+        BodyKind, Context, FAST_REFRESH, Keymap, Notice, ensure_interactive, fast_due, frame_parts,
+        poll_window, resolve, static_keys, use_color,
     };
     use crate::keymap::Action;
 
@@ -865,5 +929,73 @@ mod tests {
         assert_eq!(body, BodyKind::Notice);
         assert!(gates.is_some(), "a notice reports its own gate list");
         assert_eq!(footer.status, Some(notice.status.as_str()));
+    }
+
+    /// The loop's own refresh decision, one pass per simulated second. The
+    /// clock is a parameter, so this counts passes without sleeping.
+    fn scheduled_passes(seconds: u64, running: bool) -> usize {
+        let start = UNIX_EPOCH;
+        let mut last = start;
+        let mut passes = 0;
+        for second in 0..=seconds {
+            let now = start + Duration::from_secs(second);
+            if !running && fast_due(last, now) {
+                passes += 1;
+                last = now;
+            }
+        }
+        passes
+    }
+
+    #[test]
+    fn the_fast_pass_is_due_at_the_minute_mark_and_not_before() {
+        let start = UNIX_EPOCH;
+
+        assert!(!fast_due(start, start), "the pass that just ran is not due");
+        assert!(!fast_due(
+            start,
+            start + FAST_REFRESH - Duration::from_secs(1)
+        ));
+        assert!(fast_due(start, start + FAST_REFRESH));
+        // A clock that stepped backwards reads as due: a fact with no age is
+        // worse than one re-read a little early.
+        assert!(fast_due(start, start - Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_simulated_idle_run_re_reads_the_fast_tier_on_schedule() {
+        // Two minutes of one-second passes: the tick lands at 60 and at 120,
+        // not on every pass and not never.
+        assert_eq!(scheduled_passes(130, false), 2);
+        // A running fetch owns the redraw, so its passes re-read nothing.
+        assert_eq!(scheduled_passes(130, true), 0);
+    }
+
+    #[test]
+    fn the_poll_window_shortens_so_the_tick_lands_on_time() {
+        let start = UNIX_EPOCH;
+        let idle = Duration::from_millis(250);
+
+        assert_eq!(poll_window(idle, start, start), idle, "nothing is due yet");
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(10)),
+            idle,
+            "a fresh pass never shortens the idle wait"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(59)),
+            idle,
+            "a whole second left still fits in the idle wait"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_millis(59_900)),
+            Duration::from_millis(100),
+            "the wake is the time left once that is shorter"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(120)),
+            Duration::ZERO,
+            "an overdue pass polls without waiting"
+        );
     }
 }
