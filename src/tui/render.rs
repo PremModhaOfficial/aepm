@@ -1007,7 +1007,7 @@ fn footer_lines(footer: Footer<'_>, width: usize, ctx: RenderCtx) -> Vec<Line<'s
 
 /// One key line, each key resolved through `keymap`, so a rebound key is named
 /// here and nowhere stores the default spelling beside it.
-fn key_hints(keymap: &Keymap, ascii: bool, hints: &[(Action, &str)]) -> String {
+pub(super) fn key_hints(keymap: &Keymap, ascii: bool, hints: &[(Action, &str)]) -> String {
     let separator = if ascii { " | " } else { " · " };
     hints
         .iter()
