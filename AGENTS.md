@@ -232,7 +232,8 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `.github/PR-AGENT.md` | Review decisions and measurements |
 | `scripts/review-state.sh` | Agent-facing review state, and `--gate` |
 | `sim/scenario-map.tsv` | `src/` path → the sim scenarios that exercise it |
-| `scripts/gate-scenarios.sh` | The map check and the changed-scenario list |
+| `scripts/gate-scenarios.sh` | The map check and the changed-scenario list (head-pinned) |
+| `scripts/check-gate-scenarios.sh` | Pins that selection follows the PR's own head, not the base branch's drift |
 | `scripts/gate-coverage.sh` / `coverage-floor.txt` | Line-coverage gate and the measured floor |
 | `scripts/gate-scheduled-audit.sh` | The weekly deny, audit and `--locked` checks |
 
