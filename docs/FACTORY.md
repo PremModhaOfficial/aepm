@@ -100,21 +100,23 @@ the bug.
 | `check` (CI) | `pull_request`, `push: main`, dispatch | git host PR state | `Review Gate` reads its conclusion | reads a red log | `concurrency: <workflow>-<ref>`, cancel-in-progress on PRs |
 | `sim` (Arch container) | `pull_request`, `push: main`, dispatch | git host | same | reads a red scenario | same group; a docs-only diff selects no scenario |
 | `prototype` (web goldens) | `pull_request`, `push: main` | `prototype/web/*` | same | reads `FAIL n/76` | same group; unrelated to Rust behaviour |
-| `review` (PR Agent) | `pull_request: [opened, reopened, ready_for_review]`, `issue_comment: created` | PR diff, `.pr_agent.toml`, the ticket | `workflow_run` → `Review Gate` | comments `/review`, `/ask` | one persistent comment, updated in place |
+| `review` (PR Agent) | `pull_request: [opened, reopened, ready_for_review, synchronize]`, `issue_comment: created` | PR diff, `.pr_agent.toml`, the ticket | `workflow_run` → `Review Gate` | comments `/review`, `/ask` | one persistent comment, updated in place |
 | `gate` (Review Gate) | `workflow_run: PR Agent completed` | the review comment, PR head | none: it is a status check | merges on green | `review-gate-<run id>`, cancel-in-progress |
-| `audit` (deny, audit, `--locked`) | `schedule: cron 17 6 * * 1`, dispatch | `Cargo.lock`, `deny.toml` | files a red run only | reads the weekly run | weekly clock, no overlap |
+| `audit` (deny, audit, `--locked`) | `schedule: cron 17 6 * * 1`, dispatch | `Cargo.lock`, `deny.toml`, one tracking issue | a red run opens or comments on that issue; a green run closes it | reads the weekly run or the issue | one issue, updated in place: its fixed title is the key, so a second red run comments instead of filing |
 | `implement` / `explore` / `review` (agent runs) | a human starts a T3 thread with a ticket | ticket tracker, git host, worktree | opens a PR, which fires `check` and `sim` | writes the brief, reads the report | `claimed` label; one worktree and one branch per ticket |
-| `merge` | a green required rollup, **acted on by a human or the orchestrating thread** | PR state | `push: main` → `check`, `sim`, `prototype` | merges, or does not | branch protection: `CI (Linux)` + `Arch simulation`, strict, admins included |
+| `merge` | a green required rollup, **acted on by a human or the orchestrating thread** | PR state | `push: main` → `check`, `sim`, `prototype` | merges, or does not | branch protection, printed by `gh api repos/PremModhaOfficial/aepm/branches/main/protection --jq '.required_status_checks.contexts'`: `CI (Linux)`, `Arch simulation`, `Review Gate`; `.required_status_checks.strict` and `.enforce_admins.enabled` both `true` (measured 2026-11-19) |
 
 ### The two brakes that are wired, and the one that is not
 
-- **Automated checks** (CI, sim, prototype, gate): required on `main`, so a red
-  check blocks the merge button rather than advising.
+- **Automated checks** (CI, sim, prototype, gate): three of them are the
+  required status checks on `main` — `CI (Linux)`, `Arch simulation` and
+  `Review Gate` — so a red one blocks the merge button rather than advising.
+  `prototype` reports without gating.
 - **Automated review** (PR Agent + Review Gate): produces a typed verdict, and
-  the gate fails when the review is missing, stale or not a clean pass. It is
-  **not yet a required check**: a `push` does not start a review, so requiring
-  it would block a rebased PR forever. That is the #115 fix, and the condition
-  for requiring it.
+  the gate fails when the review is missing, stale or not a clean pass. It is a
+  required check, which #115 made possible: a push now reviews the head it
+  created, so a rebased PR is reviewed and gated on its own commit instead of
+  blocking on a review of an older one.
 - **Human review**: every merge in this repo so far is a human or the
   orchestrating thread reading the rollup. This is the brake that has caught the
   most: an incomplete rollup merged twice early on, a review that quoted fixed
@@ -122,9 +124,10 @@ the bug.
 
 ### Named gaps, each with the ticket that closes it
 
-- A pushed head gets `check` and `sim` but **no review**, so a rebase produces a
-  PR whose review describes an older commit. Closed by #115 (review on
-  `synchronize`), and that is the day `Review Gate` becomes required.
+- A pushed head once got `check` and `sim` but **no review**, so a rebase left a
+  PR whose review described an older commit. Closed by #115: `synchronize`
+  reviews the head it created and `Review Gate` writes the verdict onto that
+  head, which is what let the gate become a required check (measured above).
 - **`ratchet` has no trigger.** The coverage floor in `coverage-floor.txt` moves
   only when a human raises it; nothing fails when coverage climbs and the floor
   is left stale. Deliberate for now: a floor that chases coverage rewards
