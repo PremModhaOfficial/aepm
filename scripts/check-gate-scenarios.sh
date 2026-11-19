@@ -27,6 +27,8 @@ cat > "$repo/sim/scenario-map.tsv" <<'MAP'
 # path	scenarios	why
 src/a.rs	01	the first module
 src/b.rs	02	the second module
+sim/	all	the image and the stubs every scenario runs inside
+sim/README.md	none	documentation only
 MAP
 
 git -C "$repo" init -q -b main
@@ -98,7 +100,37 @@ else
     bad "src/a.rs selected: ${out:-nothing}"
 fi
 
-# 4. The default head is still HEAD, so a developer's branch keeps working.
+# 4. A change to the harness itself runs the suite. The `sim/` row used to be
+# inert because --list dropped every path outside src/, so a sim/Dockerfile edit
+# selected nothing and merged unproven.
+git -C "$repo" checkout -q -b harness "$head"
+mkdir -p "$repo/sim"
+printf 'FROM archlinux:base-devel\n' > "$repo/sim/Dockerfile"
+git -C "$repo" -c commit.gpgsign=false add -A
+git -C "$repo" -c commit.gpgsign=false commit -qm "harness: touch the image"
+harness="$(git -C "$repo" rev-parse HEAD)"
+out="$(listed "$base" "$harness" | tr '\n' ' ')"
+case $out in
+    *01-a.sh*02-b.sh* | *02-b.sh*01-a.sh*) ok "a sim/ change selects the whole suite" ;;
+    *) bad "a sim/ change selected: ${out:-nothing}" ;;
+esac
+
+# 5. The map rows that own documentation carry `none`, so they still select
+# nothing. A blanket "any sim/ change runs everything" would fail here.
+git -C "$repo" checkout -q -b harness-docs "$head"
+printf 'more\n' >> "$repo/sim/README.md"
+git -C "$repo" -c commit.gpgsign=false add -A
+git -C "$repo" -c commit.gpgsign=false commit -qm "harness: docs only"
+docs="$(git -C "$repo" rev-parse HEAD)"
+out="$(listed "$base" "$docs")"
+if [[ -z $out ]]; then
+    ok "a sim/ file with a none row still selects nothing"
+else
+    bad "a sim/README.md change selected: $(tr '\n' ' ' <<<"$out")"
+fi
+
+# 6. The default head is still HEAD, so a developer's branch keeps working.
+git -C "$repo" checkout -q touched
 out="$(cd "$repo" && bash scripts/gate-scenarios.sh --list "$base" 2>&1 | tr '\n' ' ')"
 if [[ $out == *01-a.sh* ]]; then
     ok "--list with one argument still diffs against HEAD"
@@ -107,4 +139,4 @@ else
 fi
 
 ((status == 0)) || { printf 'gate-scenarios self-test FAILED\n' >&2; exit 1; }
-printf 'gate-scenarios self-test: 4 assertions hold\n'
+printf 'gate-scenarios self-test: 6 assertions hold\n'
