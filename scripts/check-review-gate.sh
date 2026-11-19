@@ -111,6 +111,9 @@ export FAKE_CHECKS='[]'
 
 GATE_ARGS=(--gate)
 
+CASES="$(grep -c '^run ' "$0")"
+PASSED=0
+
 run() {
   local name="$1" want_exit="$2" want="$3" assign="${4:-}" out rc
   set +e
@@ -125,6 +128,7 @@ run() {
     printf 'FAIL %s: missing %q\n%s\n' "$name" "$want" "$out"
     exit 1
   fi
+  PASSED=$((PASSED + 1))
   printf 'ok %s\n' "$name"
 }
 
@@ -140,11 +144,17 @@ run missing 1 'from the bot'
 # A typed block that records no head commit reports that, not staleness.
 nohead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true}}\n-->\n')"
 export FAKE_COMMENTS="[$(comment "$nohead")]"
-run untracked 1 'no typed state block'
+run untracked 1 'does not record a head commit'
 
 prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-agent-review-state:v1`, so the block is not rewritten.\n\n<!-- pr-agent-review-state:v1\n{\"findings\":[],\"last_run\":{\"complete\":true,\"excluded_files\":[],\"head_sha\":\"%s\"}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
 run marker-quoted-in-prose 0 'gate: pass'
+
+# Prose alone is not a ledger: a PR that never carried a block must not read as
+# one that lost it, or the fix for a clean review would fail on the reviewer
+# writing about the marker.
+export FAKE_COMMENTS="[$(comment "$(printf 'The gate reads `pr-agent-review-state:v1`, and here is why it matters.\n\n<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$HEAD")")]"
+run prose-is-not-a-block 0 'gate: pass'
 
 export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
 run clean-no-block 0 'gate: pass'
@@ -261,6 +271,22 @@ run reviewed-despite-findings 0 'reviewed: true'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")")]"
 run reviewed-stale 1 'reviewed: false'
 
+# `--reviewed` on a clean block-less review: already reviewed, so no second run.
+export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
+GATE_ARGS=(--reviewed --sha "$HEAD")
+run reviewed-unrecorded 0 'reviewed: true'
+
+export FAKE_COMMENTS="[$(comment "$(clean_body "$OLD")")]"
+GATE_ARGS=(--reviewed --sha "$HEAD")
+run reviewed-unrecorded-stale 1 'reviewed: false'
+
+# The fallback head comes from the persistent review line only: a `/describe`
+# comment quoting the head must not make an older review look current.
+export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"), $(comment "$(printf '## PR Description\n\nHead is https://github.com/o/r/commit/%s\n' "$HEAD")")]"
+GATE_ARGS=(--gate)
+run describe-quotes-head 1 'does not name the commit'
+GATE_ARGS=(--reviewed --sha "$HEAD")
+
 export FAKE_COMMENTS="[$(comment "$incomplete")]"
 run reviewed-incomplete 1 'reviewed: false'
 
@@ -269,4 +295,4 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-printf 'review gate: 31/31\n'
+printf 'review gate: %s/%s\n' "$PASSED" "$CASES"

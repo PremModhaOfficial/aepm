@@ -164,9 +164,10 @@ if ! found="$(gh pr view "$pr" --json comments \
   --jq "[.comments[]
     | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
     | {review: ([\$c[] | select(.body | test(\"pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
-       head_from: ([\$c[] | select(.body | test(\"commit/[0-9a-f]{7,40}\")).body
-                    | capture(\"commit/(?<s>[0-9a-f]{7,40})\").s] | last // \"\"),
-       blocks: ([\$c[] | select(.body | contains(\"pr-agent-review-state:v1\"))] | length)}" \
+       head_from: ([\$c[] | select(.body | test(\"Review updated until commit\")) | .body
+                    | capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\").s]
+                   | last // \"\"),
+       blocks: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1\"))] | length)}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
@@ -272,6 +273,8 @@ if [[ "$gate" -eq 1 ]]; then
   if [[ "$stale" != "false" ]]; then
     if [[ "$stale" == "true" ]]; then
       printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review does not cover the head being judged\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
+    elif [[ -n "$state_json" ]]; then
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     else
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review has no typed state block and does not name the commit it reviewed\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
