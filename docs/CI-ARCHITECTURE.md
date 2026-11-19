@@ -222,9 +222,10 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 | G2 | CI speed is inside Sim's shadow | CI 60s vs Sim 183s median | Any CI job tuning moves 0 seconds of PR latency |
 | G3 | Four jobs inside `CI` each compile the same tree and run the same suite (`MSRV`, `CI (Linux)`, `Stable`, `Coverage`) | four compiles, four test runs per PR | Free (G3 costs no money and no wall clock) but multiplies the flake surface 4×, and one defect reddens three or four checks |
 | G4 | A red `Sim` says one line | `sim: FAIL: sim/scenarios/NN-*.sh exited 1 (log: …)` | Diagnosis requires downloading the artifact; the failing assertion is inside it, not on the run page |
-| G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence |
+| G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence — **closed by change #1**, which writes `sim-logs/selected-scenarios.txt` |
 | G6 | The load-bearing check names are not written down | `CI (Linux)`, `Arch simulation` | Splitting or renaming either silently un-gates `main` |
 | G7 | Selection diffs the frozen `base.sha` against the merge commit the runner checked out | PR #143: three markdown files selected 27 of 56 scenarios, job 218s instead of 6s | A PR pays for the runtime changes it does not contain, and the harness proves less than it claims |
+| G8 | A head that conflicts with its base starts no workflow at all | PR #144: created conflicting → `gh api .../actions/runs?head_sha=…` returned `total_count: 0`; after the head was rebased onto `main` the same PR started `CI`, `Sim` and `Review` | "No checks reported" on a conflicted PR is not a broken workflow, and nothing distinguishes it from a workflow bug on the PR page |
 
 ## 4. Ranked changes
 
