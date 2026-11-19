@@ -25,6 +25,12 @@ echo "=== sim scenario map (every src path names its scenarios) ==="
 # sim/scenario-map.tsv names the scenarios for every path under src/, and
 # .github/workflows/sim.yml runs exactly the mapped set for a pull request.
 bash scripts/gate-scenarios.sh --check-map
+# The map decides what a PR runs; the base it diffs against decides whether that
+# is the PR's own change. CI checks out the merge commit, so a three-dot diff
+# from the frozen base.sha also picks up every commit main gained meanwhile
+# (measured on #143: 27 of 56 scenarios for three markdown files). The head is
+# pinned in sim.yml and this proves the pin is what keeps the selection honest.
+bash scripts/check-gate-scenarios.sh
 
 echo "=== state machines (docs match code) ==="
 # An implicit machine drifts in silence: a variant is added, a precedence branch
