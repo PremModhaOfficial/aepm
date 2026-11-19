@@ -17,6 +17,8 @@ pub mod tree;
 use std::io::{self, IsTerminal, stdout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
@@ -127,6 +129,14 @@ fn run_interactive(
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
         .map_err(|err| Error::failed(format!("cannot start the terminal: {err}")))?;
     let mut snapshot = collect_snapshot(config, SystemTime::now())?;
+    // The fast tier's own clock: the collect just above stamped every section
+    // it read, so the schedule starts now, not at the next keystroke.
+    let mut last_fast = SystemTime::now();
+    // Which snapshot the scheduled pass is allowed to land on: every manual
+    // refresh bumps it, so a pass computed over a replaced snapshot is dropped
+    // instead of overwriting the newer one (`TUI.md` T8's generation counter).
+    let mut epoch = 0u64;
+    let mut pass: Option<RefreshPass> = None;
     let mut session: Option<FetchSession> = None;
     let mut notice: Option<Notice> = None;
     let mut help = false;
@@ -157,7 +167,33 @@ fn run_interactive(
             "the log flag outlived its session"
         );
 
-        if session.as_ref().is_some_and(FetchSession::running) {
+        // The fast tier is re-read on a schedule, not on the next keypress:
+        // pending counts and artifact ages have to advance with the clock
+        // (`TUI.md` T8). A running fetch owns the redraw and holds pacman's
+        // lock, so its own poll is the only reader then. The pass itself runs
+        // on a worker: `yay -Qua` can exceed the fast budget, and a frame that
+        // waited on it would read no keypress for its whole duration.
+        let running = session.as_ref().is_some_and(FetchSession::running);
+        if !running && pass.is_none() && fast_due(last_fast, SystemTime::now()) {
+            let now = SystemTime::now();
+            pass = Some(RefreshPass::start(config, &snapshot, now, epoch));
+            last_fast = now;
+        }
+        // Never waited on: `finished` is a try, so the loop reads keys and
+        // draws the carried ages while the pass runs.
+        if let Some((applies, result)) = pass.as_ref().and_then(|current| {
+            current
+                .finished()
+                .map(|result| (current.applies(epoch), result))
+        }) {
+            pass = None;
+            if applies {
+                snapshot = result?;
+                dirty = true;
+            }
+        }
+
+        if running {
             let tick = session
                 .as_mut()
                 .expect("a running session is present")
@@ -220,10 +256,11 @@ fn run_interactive(
             dirty = false;
         }
 
-        let wait = if session.as_ref().is_some_and(FetchSession::running) {
+        let wait = if running || pass.is_some() {
+            // Wake often enough to pick up the pass's result without a key.
             Duration::from_millis(100)
         } else {
-            Duration::from_millis(250)
+            poll_window(Duration::from_millis(250), last_fast, SystemTime::now())
         };
         if !event::poll(wait)
             .map_err(|err| Error::failed(format!("cannot read the terminal: {err}")))?
@@ -300,7 +337,7 @@ fn run_interactive(
                                 terminal.clear().map_err(|err| {
                                     Error::failed(format!("cannot clear the terminal: {err}"))
                                 })?;
-                                snapshot = collect_snapshot(config, SystemTime::now())?;
+                                recollect(config, &mut snapshot, &mut last_fast, &mut epoch)?;
                                 post_install = Some(receipt);
                                 notice = Some(Notice::install(outcome));
                                 news_attested = false;
@@ -349,7 +386,7 @@ fn run_interactive(
                         } else if session.take().is_some() {
                             // Dismissing a session closes its log with it.
                             log_open = false;
-                            snapshot = collect_snapshot(config, SystemTime::now())?;
+                            recollect(config, &mut snapshot, &mut last_fast, &mut epoch)?;
                         } else {
                             notice = None;
                         }
@@ -437,7 +474,7 @@ fn run_interactive(
                             session = None;
                             notice = None;
                             log_open = false;
-                            snapshot = collect_snapshot(config, SystemTime::now())?;
+                            recollect(config, &mut snapshot, &mut last_fast, &mut epoch)?;
                             dirty = true;
                         }
                     }
@@ -455,10 +492,15 @@ fn run_interactive(
                                 // Ending the session closes its log, so a refusal
                                 // below cannot leave the flag orphaned.
                                 log_open = false;
-                                snapshot = collect_snapshot(config, SystemTime::now())?;
+                                recollect(config, &mut snapshot, &mut last_fast, &mut epoch)?;
                             }
                             match start_fetch(config, &snapshot, SystemTime::now(), motion) {
                                 Ok(started) => {
+                                    // A pass still running read the system before
+                                    // the fetch took pacman's lock; its result
+                                    // would paint a lock error mid-fetch. The
+                                    // session owns the snapshot from here.
+                                    pass = None;
                                     session = Some(started);
                                     notice = None;
                                     log_open = false;
@@ -736,15 +778,112 @@ fn collect_snapshot(config: &Config, now: SystemTime) -> Result<Snapshot, Error>
     Ok(snapshot)
 }
 
+/// Re-read everything and restart the fast tier's schedule. Every refresh the
+/// user asks for goes through here, so a pass just taken cannot fire again on
+/// the next loop iteration.
+fn recollect(
+    config: &Config,
+    snapshot: &mut Snapshot,
+    last_fast: &mut SystemTime,
+    epoch: &mut u64,
+) -> Result<(), Error> {
+    let now = SystemTime::now();
+    *snapshot = collect_snapshot(config, now)?;
+    *last_fast = now;
+    // A pass already running read the snapshot this one replaces.
+    *epoch += 1;
+    Ok(())
+}
+
+/// One scheduled fast pass, running on a worker.
+///
+/// A pass is a handful of `pacman` calls plus a cache scan, and `yay -Qua`
+/// alone can exceed the 500ms fast budget. `TUI.md` T8 says a slow pass is
+/// shown as a stale age, never as a blocked frame, so the loop starts one and
+/// polls for its result instead of waiting on it.
+struct RefreshPass {
+    receiver: Receiver<Result<Snapshot, Error>>,
+    epoch: u64,
+}
+
+impl RefreshPass {
+    fn start(config: &Config, previous: &Snapshot, now: SystemTime, epoch: u64) -> Self {
+        // One slot is enough for one result: the worker fills it and exits.
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let config = config.clone();
+        let previous = previous.clone();
+        thread::spawn(move || {
+            let _ = sender.send(refresh_snapshot(&config, &previous, now));
+        });
+        Self { receiver, epoch }
+    }
+
+    /// The pass's result, if it has one. Never blocks: `None` means still
+    /// running, so the frame is drawn over the carried snapshot instead. A
+    /// worker that exited without sending is a failed pass, not a silent one.
+    fn finished(&self) -> Option<Result<Snapshot, Error>> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Err(Error::failed(
+                "the refresh worker stopped without a snapshot",
+            ))),
+        }
+    }
+
+    /// Whether this pass may overwrite the snapshot on screen. A manual
+    /// refresh bumps `epoch`, and the pass it superseded is dropped.
+    fn applies(&self, epoch: u64) -> bool {
+        self.epoch == epoch
+    }
+}
+
+/// Re-read the fast tier over the snapshot already on screen. The slow
+/// sections come back as they were, so nothing on the frame claims to be
+/// fresher than it is.
+fn refresh_snapshot(
+    config: &Config,
+    previous: &Snapshot,
+    now: SystemTime,
+) -> Result<Snapshot, Error> {
+    let mut snapshot = check::refresh_fast(config, &SystemRunner, now, previous)?;
+    snapshot.prefetch = progress::collect(config, &SystemRunner, &snapshot, now);
+    Ok(snapshot)
+}
+
+/// The fast tier's re-read interval. `TUI.md` T8 promises a 60s refresh, and
+/// this is the one place the number lives.
+const FAST_REFRESH: Duration = Duration::from_secs(60);
+
+/// Whether a scheduled fast pass is due. A clock that went backwards reads as
+/// due: re-reading is cheap next to a fact shown with no age at all.
+fn fast_due(last: SystemTime, now: SystemTime) -> bool {
+    match now.duration_since(last) {
+        Ok(elapsed) => elapsed >= FAST_REFRESH,
+        Err(_) => true,
+    }
+}
+
+/// The idle poll window, shortened so the scheduled pass lands on time instead
+/// of after the next keystroke.
+fn poll_window(idle: Duration, last: SystemTime, now: SystemTime) -> Duration {
+    let elapsed = now.duration_since(last).unwrap_or(Duration::ZERO);
+    idle.min(FAST_REFRESH.saturating_sub(elapsed))
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    use std::sync::mpsc;
+    use std::time::{Duration, UNIX_EPOCH};
+
     use super::{
-        BodyKind, Context, Keymap, Notice, ensure_interactive, frame_parts, resolve, static_keys,
-        use_color,
+        BodyKind, Context, FAST_REFRESH, Keymap, Notice, RefreshPass, ensure_interactive, fast_due,
+        frame_parts, poll_window, resolve, static_keys, use_color,
     };
     use crate::keymap::Action;
+    use crate::report::Snapshot;
 
     fn press(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -865,5 +1004,126 @@ mod tests {
         assert_eq!(body, BodyKind::Notice);
         assert!(gates.is_some(), "a notice reports its own gate list");
         assert_eq!(footer.status, Some(notice.status.as_str()));
+    }
+
+    /// The loop's own refresh decision, one pass per simulated second. The
+    /// clock is a parameter, so this counts passes without sleeping. A pass
+    /// here lands within the second it starts, so the in-flight guard never
+    /// holds one back.
+    fn scheduled_passes(seconds: u64, running: bool) -> usize {
+        let start = UNIX_EPOCH;
+        let mut last = start;
+        let mut passes = 0;
+        for second in 0..=seconds {
+            let now = start + Duration::from_secs(second);
+            if !running && fast_due(last, now) {
+                passes += 1;
+                last = now;
+            }
+        }
+        passes
+    }
+
+    #[test]
+    fn the_fast_pass_is_due_at_the_minute_mark_and_not_before() {
+        let start = UNIX_EPOCH;
+
+        assert!(!fast_due(start, start), "the pass that just ran is not due");
+        assert!(!fast_due(
+            start,
+            start + FAST_REFRESH - Duration::from_secs(1)
+        ));
+        assert!(fast_due(start, start + FAST_REFRESH));
+        // A clock that stepped backwards reads as due: a fact with no age is
+        // worse than one re-read a little early.
+        assert!(fast_due(start, start - Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_simulated_idle_run_re_reads_the_fast_tier_on_schedule() {
+        // Two minutes of one-second passes: the tick lands at 60 and at 120,
+        // not on every pass and not never.
+        assert_eq!(scheduled_passes(130, false), 2);
+        // A running fetch owns the redraw, so its passes re-read nothing.
+        assert_eq!(scheduled_passes(130, true), 0);
+    }
+
+    /// The pass is polled, never waited on: a frame drawn while the worker
+    /// runs reads its keys instead of sitting in a `recv` (issue #135).
+    #[test]
+    fn a_scheduled_pass_is_polled_and_never_waited_on() {
+        let (sender, receiver) = mpsc::channel();
+        let pass = RefreshPass { receiver, epoch: 7 };
+
+        assert!(
+            pass.finished().is_none(),
+            "a worker still running has no result"
+        );
+        assert!(
+            pass.finished().is_none(),
+            "polling twice never blocks the loop on the same pass"
+        );
+
+        sender
+            .send(Ok(Snapshot::default()))
+            .expect("send one result");
+        assert!(
+            matches!(pass.finished(), Some(Ok(_))),
+            "the result is drained once the worker is done"
+        );
+    }
+
+    /// A worker that exited without sending is a failure, not a pass that
+    /// silently never lands.
+    #[test]
+    fn a_worker_that_died_without_a_snapshot_fails_the_pass() {
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        let pass = RefreshPass { receiver, epoch: 0 };
+
+        let outcome = pass.finished().expect("a disconnected pass reports");
+        assert!(
+            outcome.is_err(),
+            "the loop must not treat a dead worker as a running pass"
+        );
+    }
+
+    /// A pass computed over a snapshot a manual refresh has replaced is
+    /// dropped, so a slow pass cannot overwrite a newer one (`TUI.md` T8).
+    #[test]
+    fn a_superseded_pass_does_not_apply() {
+        let (_sender, receiver) = mpsc::channel();
+        let pass = RefreshPass { receiver, epoch: 3 };
+
+        assert!(pass.applies(3), "the epoch it was started under applies");
+        assert!(!pass.applies(4), "a newer recollect supersedes it");
+    }
+
+    #[test]
+    fn the_poll_window_shortens_so_the_tick_lands_on_time() {
+        let start = UNIX_EPOCH;
+        let idle = Duration::from_millis(250);
+
+        assert_eq!(poll_window(idle, start, start), idle, "nothing is due yet");
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(10)),
+            idle,
+            "a fresh pass never shortens the idle wait"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(59)),
+            idle,
+            "a whole second left still fits in the idle wait"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_millis(59_900)),
+            Duration::from_millis(100),
+            "the wake is the time left once that is shorter"
+        );
+        assert_eq!(
+            poll_window(idle, start, start + Duration::from_secs(120)),
+            Duration::ZERO,
+            "an overdue pass polls without waiting"
+        );
     }
 }
