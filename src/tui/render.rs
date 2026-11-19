@@ -2683,6 +2683,23 @@ mod tests {
     }
 
     #[test]
+    fn the_field_set_is_pinned_so_the_compile_fail_doctest_cannot_drift() {
+        // Inside the module a struct literal is legal. If the fields change,
+        // this stops compiling, which forces the compile_fail doctest above to
+        // be looked at instead of quietly passing on E0063.
+        let literal = RenderCtx {
+            ascii: false,
+            color: true,
+        };
+        assert_eq!(literal, RenderCtx::new(false, true));
+        let gated = RenderCtx {
+            ascii: true,
+            color: false,
+        };
+        assert_eq!(gated, RenderCtx::new(true, true));
+    }
+
+    #[test]
     fn every_statically_planned_row_is_drawn() {
         // The live path passed while the static path still planned one row too
         // many: `plan_frame` reserved the notes but not the summary that
