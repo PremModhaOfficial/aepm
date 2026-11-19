@@ -1261,6 +1261,10 @@ mod tests {
         let doubled = burst(2 * BURST_PACKAGES);
         let twice = settle_work().since(before);
         assert!(doubled.is_complete(), "every doubled package finished");
+        panic!(
+            "MEASURED steps={} checks={} twice={} nodes={} edges={}",
+            work.steps, work.checks, twice.steps, nodes, edges
+        );
         assert!(
             twice.steps <= 3 * work.steps,
             "double the burst took {} settle steps against {}; linear work doubles \
