@@ -30,8 +30,8 @@ Commands behind the numbers below:
 |---|---|---|---|---|---|---|---|
 | `CI (Linux)` — required | a tree that does not build, lint or test | deterministic | ~60s wall, 4 legs compile the same tree, ~1 flaky surface per leg | caught every compile/test break in the sample: 4 runs, all three legs red for one defect | measured (43045640650, 42488229442, 42487635874, 42452318081) | **KEEP**, MERGE the four legs (§3) | high; flips if a leg stops catching anything only it can see |
 | `Arch simulation` — required | behaviour claims that FakeRunner units cannot make: pacman side effects, install paths, TUI under a pty | deterministic | 183s median per PR, 266–330s on main pushes, 118–128s of it an image build | 56 scenarios; the only red in the window was a real chaos-scenario failure (43434768093) | measured | **KEEP** | high; flips if scenario selection is ever wrong in the *unsafe* direction (a `sim/` change selecting nothing ran until #144) |
-| `Review Gate` — required | a merge while the review holds an unresolved blocking finding | deterministic wrapper around an LLM verdict | 26 of 43 red runs were not about the change: 17 stale-after-rebase, 9 false | **0 independent catches** — it restates the reviewer's verdict; it never found anything the reviewer had not | measured | **DEMOTE** (advisory) or deepen (§4 item 1) | medium; flips if the gate blocked a merge that later proved wrong — no such case in the window |
-| `PR Agent` (review) | an agent-authored change merging with a defect a human would have caught | LLM | 62,073 tokens / 1 AI call per review; 1–8 min latency; paid subscription | real: #146 3 active findings, all real and fixed (pagination bug, unguarded API call, a regex false positive); #145 4; #143 2; #133 4 | measured | **KEEP as advisory** (already is) | high; flips if a seeded-bug probe shows recall below ~2 of 3 |
+| `Review Gate` — required | a merge while the review holds an unresolved blocking finding | deterministic wrapper around an LLM verdict | 26 of 43 red runs were not about the change: 17 stale-after-rebase, 9 false; 775 lines of shell | **0 independent catches** — it restates the reviewer's verdict; it never found anything the reviewer had not | measured + documented root cause (§8) | **KEEP required, reduce its noise**: the staleness is `strict: true`, not the gate; merge queue would fix it but is unavailable to a user-owned repo (§8). Options A/B/C in §3 item 5 | medium; flips to DEMOTE if option C (block on findings, report staleness) is refused and the noise stays |
+| `PR Agent` (review) | an agent-authored change merging with a defect a human would have caught | LLM | 62,073 tokens / 1 AI call per review; 1–8 min latency; paid subscription; **substrate now a community legacy fork** of Qodo's, pinned by digest (§8) | real: #146 3 active findings, all real and fixed (pagination bug, unguarded API call, a regex false positive); #145 4; #143 2; #133 4 | measured | **KEEP as advisory**, and stop paying for the markdown seam: `--json-output` exists in v0.50.0 (§8) | medium; flips if a seeded-bug probe shows recall below ~2 of 3, or if the fork stops shipping fixes and the digest is the last good one |
 | `Scheduled audit` | lockfile, toolchain and advisory drift that no PR touches | deterministic | one run a week, ~0 minutes | **0 runs**: added 2026-11-17, first cron Monday 2026-11-23. No issue ever opened | measured (workflow state `active`, 0 runs) | **UNPROVEN — shadow** | medium; flips when the first drift opens one issue, or a seeded drift fails to |
 | `Dependabot` | dependency rot | deterministic | monthly PRs, each costing a full CI+Sim run | not measured here | none | **KEEP** (out of scope) | — |
 
@@ -88,12 +88,18 @@ cost is duplication rather than runtime.
    to. *Benefit:* a real "how much of the plan is done". **CUT the
    plan-percentage section; keep head, ahead/behind, PR state and evidence age.**
    Lower confidence than the rows above — the checkbox list is the plan state.
-5. **`Review Gate` as a required check** (row 1 of §1). *Cost:* 26 of 43 red runs
-   were not about the change, and 775 lines of shell exist to support it.
-   *Benefit:* 0 independent catches. **DEMOTE to advisory** — the factory's brake
-   #2 is "automated review", which the comment already provides — or fix the seam
-   (typed record). Rollback: re-require the check. **Not mine to decide**: branch
-   protection and the review workflows belong to thread `9c075c1c`.
+5. **`Review Gate`'s noise**, not the gate itself. *Cost:* 26 of 43 red runs were
+   not about the change, and 775 lines of shell support it. *Benefit:* 0
+   independent catches, but the comment beside it is the factory's brake #2 and
+   does have catches. The documented cause of the noise is `strict: true` plus no
+   merge queue (§8), so three options, cheapest first: **A** stop demanding
+   up-to-date branches (drops all 17 stale reds; cost: a merge against an older
+   base, and a semantic conflict handled by the merge commit); **B** keep strict
+   and auto-request a review on each rebase (cost: 2× 62k tokens per PR);
+   **C** block only on unresolved findings and report staleness without blocking
+   (a semantics change, so it needs the owner's approval). Rollback for all three
+   is the current setting. **Not mine to decide**: branch protection and the
+   review workflows belong to thread `9c075c1c`.
 
 ## 4. Top 5 ADD / STRENGTHEN, with the evidence
 
@@ -134,9 +140,11 @@ cost is duplication rather than runtime.
 
 - `CI (Linux)` KEEP → MERGE the four legs: already recommended; a leg flips only
   if it stops catching anything its siblings cannot.
-- `Review Gate` DEMOTE → **KEEP as required** if E1 finds a merge that shipped a
-  real ACTIVE finding. **Deepen** instead of demoting if E2 shows high recall and
-  the only problem is the comment seam.
+- `Review Gate` → **DEMOTE** if option A or C is refused and the 17 stale reds
+  stay; **KEEP required** if E1 finds a merge that shipped a real ACTIVE finding.
+  **Deepen** (typed record) if E2 shows high recall and the only problem is the
+  comment seam. Merge queue, which would have settled it, is unavailable here: the
+  repo owner is a user account, not an organization (§8).
 - Reviewer KEEP → **DEMOTE to a comment-only habit** if E2 recall is below 2 of 3.
 - `scheduled-audit` UNPROVEN → KEEP on its first real catch; **CUT** if two cron
   cycles pass with no run.
@@ -157,3 +165,25 @@ published (the sim cache went from "rank 1" to "parked"; the review gate went fr
 repo with fewer than ~10 gates; at 14 gates, 5 workflows and 26 false red runs, it
 paid for itself once. Shrink it next time by keeping only §1, §2's duplicate rows
 and §5.
+
+## 8. External corrections, 2026-11-19
+
+Facts that arrived from a clean-context research thread after the verdicts above
+were written. Each one is sourced and dated; where a claim is unverified it says
+so, and the verdict that depends on it is named.
+
+| claim | source, read date | effect on this ledger |
+|---|---|---|
+| Merge queue is available to **public repositories owned by an organization**; personal-account public repos are excluded. | GitHub docs, gated-features reusables, 2026-11-19 | **Does not apply here**: `PremModhaOfficial` is a `User` (verified `gh api users/PremModhaOfficial`). §3 item 5's A/B/C stand. |
+| A merge queue replaces "require branches to be up to date", and each required check must also handle `merge_group`. | docs.github.com, Managing a merge queue, 2026-11-19 | The 17 stale-after-rebase reds would vanish here *if* the repo were org-owned. Recorded as the reason `strict: true` is the cause, not the gate. |
+| Job checks from a `workflow_run`-triggered workflow **do not satisfy a required status check**, even on the head commit; checks written with the Checks API to the head do. | docs.github.com, Troubleshooting required status checks, 2026-11-19 | Confirms `review-gate.yml`'s Checks-API-on-head design as the only correct shape. The gate is not badly built; it is correctly built over a slow seam. |
+| Cache: 10 GB/repo, 7-day unused eviction, now **evicted hourly**; exceeding 10 GB needs a paid account. PR-created caches are scoped to `refs/pull/.../merge` and restorable only by that PR's re-runs. | github.blog changelogs 2025-09-29 and 2025-11-20; docs.github.com caching reference, read 2026-11-19 | **Strengthens the #145 park**: a 3.5 GB image cache is a third of a non-shareable budget, and the measured 70s was a same-ref re-run — a mechanism the docs predict, so it was never evidence of a main-seeded steady state. |
+| `pr-agent` supports `--json-output <path>` for `review` in v0.50.0; the project is now a community-maintained legacy fork of Qodo's, and Qodo Merge carries a sunset notice. | `pr_agent/cli.py` at v0.50.0, released 2026-11-07; repo README; docs.qodo.ai, read 2026-11-19 | The 775-line markdown parser is **optional**, not forced — this is the deepening in §4 item 3, now with a flag name. New risk: the substrate is unmaintained; the digest pin is what protects us, and upgrading it is no longer a routine. |
+| CodeRabbit's OSS plan covers public repos at zero cost; Copilot code review needs a paid plan or an org. | docs.coderabbit.ai pricing; github.blog 2026-04-27, read 2026-11-19 | No change: this repo already has a reviewer, and a second LLM on the same diff doubles cost for unmeasured recall. Recorded as the fallback if the fork dies. |
+| `cargo nextest` 0.9.152 (2026-11-13) has nothing new that lowers the break-even for a 22s suite. | nexte.st changelog, 2026-11-19 | V4 unchanged. |
+| Required checks behind `paths:` filters stay Pending. | docs.github.com, Triggering a workflow, 2026-11-19 | V5 unchanged. |
+
+**What this cost and bought.** One delegate, ~10 minutes. It overturned the *fix*
+for V1 (merge queue, unavailable here — worth knowing before proposing it) and
+moved V2's seam from "unavoidable parsing" to "a flag we are not using". It
+confirmed V3 and V4. No verdict flipped on a claim without a source.
