@@ -491,6 +491,7 @@ mod tests {
     use crate::config::Config;
     use crate::error::Error;
     use crate::frontier::NodeState;
+    use crate::keymap::Keymap;
     use crate::report::{ArtifactState, PackageView, Repo};
     use crate::runner::{CommandOutput, CommandRunner, FakeRunner, StreamKind, StreamLine};
     use crate::tui::tree::Tree;
@@ -678,6 +679,13 @@ mod tests {
         );
     }
 
+    /// The footer's key line as the frame renders it. The pinned text is the
+    /// assertion: comparing against `footer_keys` would compare the function
+    /// with itself and could not fail.
+    fn footer_text(keys: Option<&[(super::Action, &str)]>) -> Option<String> {
+        keys.map(|keys| crate::tui::render::key_hints(&Keymap::default(), false, keys))
+    }
+
     #[test]
     fn the_running_footer_names_the_exact_argv_and_the_only_legal_keys() {
         let fixture = Fixture::new();
@@ -698,7 +706,10 @@ mod tests {
             footer.status,
             Some("fetch: running sudo -n /usr/bin/pacman -Syuw --noconfirm")
         );
-        assert_eq!(footer.keys, Some(super::footer_keys(&Phase::Running)));
+        assert_eq!(
+            footer_text(footer.keys),
+            Some("esc detach · g ledger · l log · ? help".to_string())
+        );
         assert!(!footer.failed);
         assert!(session.running());
     }
@@ -898,8 +909,8 @@ mod tests {
         let footer = session.footer();
         assert_eq!(footer.status, Some("fetch: exit 0"));
         assert_eq!(
-            footer.keys,
-            Some(super::footer_keys(&Phase::Finished { unproven: 0 }))
+            footer_text(footer.keys),
+            Some("esc dismiss · F fetch again · g ledger · l log · q quit · ? help".to_string())
         );
         assert!(!footer.failed);
         let state = fs::read_to_string(fixture.root.join("state.json")).expect("state file");
