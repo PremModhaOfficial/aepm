@@ -174,7 +174,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   credits, and it runs only the default branch's copy of the script. Only a
   comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
   block identifies one: every other marker is forgeable or shared with
-  `/describe`.
+  `/describe`. A clean review (zero findings) carries no typed block at all, so
+  the guide marker `<!-- pr-agent:review:full` selects it, its completeness is
+  reported as `unrecorded` rather than assumed, and the head comes from the
+  commit the comment quotes.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

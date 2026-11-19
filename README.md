@@ -304,8 +304,10 @@ head.
   `/review` refresh writes it there too, which is what lets a re-review clear a
   red gate. That is what makes it requireable, though whether it is required is
   a repository setting and not this file's: `main` requires `CI (Linux)` and
-  `Arch simulation` today. Only the bot's own comment counts, and only its
-  typed block identifies one, so pasting a marker by hand does not pass it.
+  `Arch simulation` today. Only the bot's own comment counts, so pasting a
+  marker by hand does not pass it. A review with no findings carries no typed
+  block: its guide header is the marker, its completeness is `unrecorded`, and
+  the commit it quotes is the head evidence.
 - A push reviews the head it created. `PR Agent` runs on `synchronize` too,
   with two bounds: a draft is skipped, and a head that already carries a
   complete review of that exact commit is not reviewed again, so a rebase that

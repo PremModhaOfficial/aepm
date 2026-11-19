@@ -151,20 +151,27 @@ fi
 
 # The marker text is forgeable: any commenter can paste a typed block carrying
 # the current head SHA, and `last` would then pick the forgery over the bot's
-# review. Author first, marker second. The marker is the typed block alone:
-# `Risk level`, `Merge recommendation` and the guide header are all emitted by
-# other bot commands too, and the newest of those shadowed the review.
+# review. Author first, marker second. Two review-only markers select the
+# comment: the typed block, and the guide header's `<!-- pr-agent:review:full`.
+# The block is not always emitted (a clean review carries none: #112 and #134
+# had zero findings and no block, while #99, #133 and #136 had findings and one),
+# and the guide does not always name its commit (#134), so the head also comes
+# from the newest bot comment that does: the persistent review line.
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
-if ! review="$(gh pr view "$pr" --json comments \
+if ! found="$(gh pr view "$pr" --json comments \
   --jq "[.comments[]
-    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
-    | select(.body | contains(\"pr-agent-review-state:v1\"))]
-    | last // {}" \
+    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
+    | {review: ([\$c[] | select(.body | test(\"pr-agent-review-state:v1|<!-- pr-agent:review:full\"))] | last // {}),
+       head_from: ([\$c[] | select(.body | test(\"commit/[0-9a-f]{7,40}\")).body
+                    | capture(\"commit/(?<s>[0-9a-f]{7,40})\").s] | last // \"\")}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
+[[ -n "$found" ]] || found='{"review":{},"head_from":""}'
+review="$(jq -c '.review' <<<"$found")"
+fallback_head="$(jq -r '.head_from // ""' <<<"$found")"
 [[ -n "$review" ]] || review='{}'
 
 review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
@@ -200,8 +207,26 @@ else
   fi
 fi
 
+# A review that found nothing emits no typed block: across five sampled PRs the
+# block was present exactly when findings existed (#99: 32, #133: 4, #136: 1;
+# #112 and #134: 0). The comment still names the commit it reviewed in
+# `commit/<sha>` form, so a clean review stays judgeable without the block; what
+# is missing is the run's own completeness flag, recorded as `unrecorded` rather
+# than assumed either way.
+if [[ -z "$state_json" && -n "$review_body" ]]; then
+  review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | head -1 | cut -d/ -f2)"
+  [[ -n "$review_head" ]] || review_head="$fallback_head"
+  [[ -n "$review_head" ]] && complete="unrecorded"
+fi
+
 if [[ -n "$review_head" ]]; then
-  [[ "$review_head" == "$head_full" ]] && stale="false" || stale="true"
+  if [[ "$review_head" == "$head_full" ]]; then
+    stale="false"
+  elif [[ ${#review_head} -lt ${#head_full} && "$head_full" == "$review_head"* ]]; then
+    stale="false"
+  else
+    stale="true"
+  fi
 else
   stale="unknown"
 fi
@@ -218,8 +243,10 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 # asked for changes still counts as reviewed.
 if [[ "$reviewed_mode" -eq 1 ]]; then
   covered="false"
-  if [[ "$present" == "true" && "$stale" == "false" && "$complete" == "true" ]]; then
-    covered="true"
+  if [[ "$present" == "true" && "$stale" == "false" ]]; then
+    # `unrecorded` is a clean review with no findings ledger; asking for another
+    # review of that commit would spend a model call for the same answer.
+    [[ "$complete" == "true" || "$complete" == "unrecorded" ]] && covered="true"
   fi
   printf 'reviewed: %s\npr: %s\nhead: %s\n' "$covered" "$number" "$head"
   [[ "$covered" == "true" ]] && exit 0
@@ -235,13 +262,14 @@ if [[ "$gate" -eq 1 ]]; then
     if [[ "$stale" == "true" ]]; then
       printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review does not cover the head being judged\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
     else
-      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review has no typed state block and does not name the commit it reviewed\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
     exit 1
   fi
   # A truncated or timed-out run can still print a clean recommendation, so a
-  # partial review never counts.
-  if [[ "$complete" != "true" ]]; then
+  # partial review never counts; a review with no findings has no block to be
+  # partial about, which is `unrecorded` and is judged on its quoted head.
+  if [[ "$complete" != "true" && "$complete" != "unrecorded" ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
@@ -253,7 +281,7 @@ if [[ "$gate" -eq 1 ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
     exit 1
   fi
-  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\n' "$number" "$head" "$verdict"
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\nstate_block: %s\n' "$number" "$head" "$verdict" "$([[ -n "$state_json" ]] && echo present || echo absent)"
   exit 0
 fi
 
@@ -277,6 +305,7 @@ printf '  stale: %s\n' "$stale"
 printf '  risk: %s\n' "$risk"
 printf '  verdict: %s\n' "$verdict"
 printf '  coverage: %s\n' "$coverage"
+printf '  complete: %s\n' "$complete"
 printf '  findings: %s\n' "$findings_total"
 printf '  active: %s\n' "$findings_active"
 if [[ -n "$review_url" ]]; then

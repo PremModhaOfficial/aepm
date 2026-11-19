@@ -87,6 +87,14 @@ HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BOT="github-actions[bot]"
 
+# A clean review carries no typed block: five sampled PRs had one exactly when
+# findings existed (#99: 32, #133: 4, #136: 1; #112 and #134: 0). The comment
+# still names the commit it reviewed, so a clean review stays judgeable.
+clean_body() {
+  local head="${1:-$HEAD}" verdict="${2:-No concerns found}"
+  printf '## PR Reviewer Guide 🔍\n\n<!-- pr-agent:review:full -->\n\n<table>\n<tr><td>⚠️&nbsp;<strong>Risk level</strong>: Low</td></tr>\n<tr><td>✅&nbsp;<strong>Merge recommendation</strong>: %s</td></tr>\n</table>\n\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$verdict" "$head"
+}
+
 comment() {
   local body="$1" author="${2:-$BOT}"
   jq -cn --arg body "$body" --arg author "$author" \
@@ -132,7 +140,20 @@ run missing 1 'from the bot'
 # A typed block that records no head commit reports that, not staleness.
 nohead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true}}\n-->\n')"
 export FAKE_COMMENTS="[$(comment "$nohead")]"
-run untracked 1 'does not record a head'
+run untracked 1 'no typed state block'
+
+export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
+run clean-no-block 0 'gate: pass'
+
+export FAKE_COMMENTS="[$(comment "$(clean_body "$OLD")")]"
+run clean-no-block-stale 1 'does not cover the head being judged'
+
+export FAKE_COMMENTS="[$(comment "$(clean_body "$HEAD" 'Changes required')")]"
+run clean-no-block-nonclean 1 'did not clear the merge'
+
+nobody="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"
+export FAKE_COMMENTS="[$(comment "$nobody")]"
+run no-block-no-head 1 'no typed state block'
 
 # A timed-out or truncated run can still print a clean recommendation.
 incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
@@ -234,4 +255,4 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-printf 'review gate: 24/24\n'
+printf 'review gate: 28/28\n'
