@@ -64,15 +64,22 @@ jobs:
         id: r
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Values reach the shell as environment, never interpolated into the
+          # script body: a dispatch value or a branch name containing $(...) or a
+          # backtick would otherwise be evaluated on a runner with a write token.
+          EVENT: ${{ github.event_name }}
+          DISPATCH_PR: ${{ inputs.pr }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            num="${{ inputs.pr }}"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            num="$DISPATCH_PR"
             gh pr checkout "$num"
             base="$(gh pr view "$num" --json baseRefName --jq .baseRefName)"
           else
-            num="${{ github.event.pull_request.number }}"
-            base="${{ github.event.pull_request.base.ref }}"
+            num="$PR_NUMBER"
+            base="$PR_BASE_REF"
           fi
           git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
           printf 'num=%s\nbase=origin/%s\n' "$num" "$base" >> "$GITHUB_OUTPUT"
@@ -88,12 +95,19 @@ jobs:
 
       - name: Count reviewable files
         id: files
+        env:
+          BASE: ${{ steps.r.outputs.base }}
         run: |
           set -euo pipefail
           # --preview runs no model: this step is free.
-          n=$(ocr review --from "${{ steps.r.outputs.base }}" --to HEAD --preview 2>/dev/null \
-              | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p')
-          n=${n:-0}
+          out=$(ocr review --from "$BASE" --to HEAD --preview 2>&1)
+          n=$(printf '%s\n' "$out" | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p')
+          # Never let a changed message turn into a silent skip that still passes.
+          if ! printf '%s' "$n" | grep -qxE '[0-9]+'; then
+            echo "::error::could not read the reviewable-file count from --preview output"
+            printf '%s\n' "$out" | tail -n 20
+            exit 1
+          fi
           echo "reviewable=$n" >> "$GITHUB_OUTPUT"
           {
             echo "### OCR Review (advisory)"
@@ -138,9 +152,11 @@ jobs:
       - name: Review
         id: ocr
         if: steps.files.outputs.reviewable != '0'
+        env:
+          BASE: ${{ steps.r.outputs.base }}
         run: |
           set +e
-          ocr review --from "${{ steps.r.outputs.base }}" --to HEAD \
+          ocr review --from "$BASE" --to HEAD \
             --format json --audience agent --effort low --concurrency 4 \
             --max-tokens-budget "${OCR_MAX_TOKENS_BUDGET}" \
             -o "$RUNNER_TEMP/ocr.json" 2>"$RUNNER_TEMP/ocr.err"
@@ -152,9 +168,11 @@ jobs:
           if [ -s "$j" ]; then
             status=$(jq -r '.status // "missing"' "$j" 2>/dev/null || echo unparsed)
             echo "comments=$(jq -r '(.comments // []) | length' "$j" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
-            # The contract is the array, not the status word. The tool reports
-            # "complete", so a literal "completed" check rejected a good run.
-            if [ "$rc" = 0 ] && jq -e '.comments | type == "array"' "$j" >/dev/null 2>&1; then ok=1; fi
+            # A review happened only if it exited cleanly, reported "complete", and
+            # its comment list is an array. The status word must be checked: an empty
+            # array is still an array, so exit 0 plus status "failed" with [] would
+            # otherwise pass — the exact false green this job exists to measure.
+            if [ "$rc" = 0 ] && [ "$status" = "complete" ] && jq -e '.comments | type == "array"' "$j" >/dev/null 2>&1; then ok=1; fi
             # One object's key names, so the comment renderer is verified against
             # the real schema instead of guessed field names.
             jq -c '(.comments // [])[0] // empty | keys' "$j" 2>/dev/null | sed 's/^/first-comment-keys: /' || true
@@ -176,6 +194,7 @@ jobs:
         if: steps.files.outputs.reviewable != '0' && steps.ocr.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ steps.r.outputs.num }}
         run: |
           set -euo pipefail
           j="$RUNNER_TEMP/ocr.json"
@@ -207,13 +226,13 @@ jobs:
           } > "$RUNNER_TEMP/body.md"
 
           repo="$GITHUB_REPOSITORY"
-          id=$(gh api --paginate "repos/${repo}/issues/${{ steps.r.outputs.num }}/comments" \
+          id=$(gh api --paginate "repos/${repo}/issues/${PR_NUM}/comments" \
                  --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null | head -1)
           if [ -n "${id}" ]; then
             gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
             echo "updated comment ${id}"
           else
-            gh api -X POST "repos/${repo}/issues/${{ steps.r.outputs.num }}/comments" \
+            gh api -X POST "repos/${repo}/issues/${PR_NUM}/comments" \
               -F body=@"$RUNNER_TEMP/body.md" >/dev/null
             echo "created a new comment"
           fi

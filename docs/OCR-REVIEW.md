@@ -124,3 +124,30 @@ was wrong with the review; the check was testing a literal I had guessed.
 The guard now keys on the contract — exit `0` **and** `.comments` is an array —
 and prints one object's key names, so the comment renderer is verified against
 the real schema rather than against field names inferred from documentation.
+
+## Its first readable review, and what it caught
+
+Once the renderer read the real fields, the tool reviewed this very workflow and
+returned four findings. All four hold up:
+
+| sev | finding | outcome |
+|---|---|---|
+| high | `inputs.pr` interpolated into the `run:` body → shell injection | fixed: values now arrive as `env:` |
+| medium | step outputs (`base`, `num`) interpolated into shell; a branch name may contain `$( )` | fixed: same, plus `PR_NUM` |
+| high | the `ok` gate checked exit code and array shape but **not** `status`, so `status: "failed"` with `[]` passes | **fixed — this was a regression introduced in this same PR** |
+| medium | `n` defaults to `0` if the `Will review (N)` text changes → silent skip forever | fixed: unreadable output is now an error |
+
+The third is the most valuable output in the whole experiment: it is the exact
+false green this workflow exists to measure, reintroduced by the commit that
+loosened the guard to accept `status: "complete"`. pr-agent, over eleven
+reviews, did not report anything on this class.
+
+## Flake rate, n=2
+
+Run 4 failed with `comments: null`, `status` absent, and
+`review failed: all 1 file review(s) failed — check your LLM configuration and
+API key` **after** `ocr llm test` passed; the identical commit passed on a plain
+re-run. So the endpoint is fine and the per-file call is flaky, not systematic.
+One failure in two attempts on a single-file review is not enough to characterise
+it, and it is the main reason this stays advisory: at that rate a required check
+would be worse than the one it replaced.
