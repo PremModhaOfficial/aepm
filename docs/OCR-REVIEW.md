@@ -114,3 +114,13 @@ Proven without the real key: with `protocol: openai` the same call becomes
 `POST /provider/v1/chat/completions`, and the gateway answers `401 Invalid
 'Authorization' header or token` — reachable, right route, key refused. `llm test`
 takes no provider flag, so the config file is the only non-interactive way to pin it.
+
+## Verify the artefact, never the status word
+
+The endpoint fix landed and the review ran, and the job still failed: the guard
+compared `status` to `"completed"`, and the envelope says **`complete`**. Nothing
+was wrong with the review; the check was testing a literal I had guessed.
+
+The guard now keys on the contract — exit `0` **and** `.comments` is an array —
+and prints one object's key names, so the comment renderer is verified against
+the real schema rather than against field names inferred from documentation.

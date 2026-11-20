@@ -147,18 +147,25 @@ jobs:
           rc=$?
           set -e
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          status=missing
-          if [ -s "$RUNNER_TEMP/ocr.json" ]; then
-            status=$(jq -r '.status // "missing"' "$RUNNER_TEMP/ocr.json" 2>/dev/null || echo unparsed)
-            echo "comments=$(jq -r '(.comments // []) | length' "$RUNNER_TEMP/ocr.json" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          status=missing; ok=0
+          j="$RUNNER_TEMP/ocr.json"
+          if [ -s "$j" ]; then
+            status=$(jq -r '.status // "missing"' "$j" 2>/dev/null || echo unparsed)
+            echo "comments=$(jq -r '(.comments // []) | length' "$j" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+            # The contract is the array, not the status word. The tool reports
+            # "complete", so a literal "completed" check rejected a good run.
+            if [ "$rc" = 0 ] && jq -e '.comments | type == "array"' "$j" >/dev/null 2>&1; then ok=1; fi
+            # One object's key names, so the comment renderer is verified against
+            # the real schema instead of guessed field names.
+            jq -c '(.comments // [])[0] // empty | keys' "$j" 2>/dev/null | sed 's/^/first-comment-keys: /' || true
           fi
+          echo "exit=$rc status=$status ok=$ok"
           echo "status=$status" >> "$GITHUB_OUTPUT"
-          echo "exit=$rc status=$status"
-          # A review happened only if it completed AND its comment list is present.
-          # Anything else is 'no review', which must be loud: the earlier version of
-          # this workflow posted "0 findings" over a review whose status was
-          # "failed", which is the same false green this job exists to measure.
-          if [ "$rc" != 0 ] || [ "$status" != "completed" ] || [ "$(jq -r 'has("comments")' "$RUNNER_TEMP/ocr.json" 2>/dev/null)" != "true" ]; then
+          # A review happened only if it exited cleanly and its comment list is an
+          # array. Anything else is 'no review', which must be loud: an earlier
+          # version of this workflow posted "0 findings" over a review whose status
+          # was "failed", the same false green this job exists to measure.
+          if [ "$ok" != 1 ]; then
             echo "::error::no review happened (exit $rc, status $status)"
             tail -n 30 "$RUNNER_TEMP/ocr.err" || true
             exit 1
