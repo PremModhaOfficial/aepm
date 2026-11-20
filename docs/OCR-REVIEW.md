@@ -19,21 +19,33 @@ open-code-review always emits a `comments` array, empty or not, plus a
 `session_id`, and can write SARIF. That is the primitive `review-state.sh` has to
 reconstruct from prose today.
 
-## Measured limit, before adopting it for anything load-bearing
+## The markdown exclusion is a default, not a limit
 
-It excludes any file whose extension is outside its code set, as
-`unsupported_ext`, **before** the model sees the diff:
+Out of the box it drops any file outside its code extension set, as
+`unsupported_ext`, **before** the model sees the diff. Measured with the default:
 
-| | |
+| | default |
 |---|---|
 | PRs where every changed file was excluded | 5 of 15 (#147, #128, #143, #133, #119) |
 | files reviewable / excluded | 28 / 27 |
-| #134 — two prose claims plus tests | reviews the 2 test files; both prose files excluded |
+| #134 — two prose claims plus tests | the 2 test files only |
 
-So: **it cannot verify a prose claim.** On #134 it would return zero findings
-because the claims are not in its input — a stronger failure than pr-agent's.
-The workflow counts reviewable files with `--preview` (no model call) and skips
-without spending tokens when the count is zero.
+That default is wrong for this repo, where the most expensive defects have been
+prose claims, so `.github/ocr/rules.json` sets `"include": ["**/*.md"]`. A matching
+entry in `include` bypasses the extension filter entirely. Verified with
+`ocr review --preview --rule`:
+
+| PR | default | with the policy |
+|---|---|---|
+| #134 (two prose claims + tests) | 2 files, tests only | **4 files**, both prose claims |
+| #143 (docs only) | *invisible* | **3 files** |
+| #147 | — | 3 changed, **1 reviewed** (`docs/research/**` excluded) |
+
+So "it cannot verify a prose claim" describes the default configuration, not the
+tool. When the policy is missing from the base branch the old behaviour returns,
+which is why the comment footer names the policy that was used. The workflow still
+counts reviewable files with `--preview` (no model call) and skips without spending
+tokens when the count is zero under the active policy.
 
 It also cannot gate a merge on its own: `ocr review --help` states that
 budget-limited partial reviews exit `0`. Exit `0` means *completed*, not *no
@@ -65,10 +77,15 @@ spending, set `on.pull_request` to nothing — `workflow_dispatch` remains.
 # free: no model call, just the file filter
 ocr review --from origin/main --to <ref> --preview
 
-# with a key in the environment
-OCR_LLM_URL=... OCR_LLM_TOKEN=... OCR_LLM_MODEL=deepseek/deepseek-v4.1-flash \
-  ocr review --from origin/main --to <ref> --format json --audience agent \
-  --effort low --max-tokens-budget 120000
+# with a key: the protocol must be named, or this reproduces the 404 documented below
+ocr config set provider cc-gateway
+ocr config set custom_providers.cc-gateway.url      https://api.commandcode.ai/provider/v1
+ocr config set custom_providers.cc-gateway.protocol openai
+ocr config set custom_providers.cc-gateway.api_key  "$OCR_LLM_TOKEN"
+ocr config set model deepseek/deepseek-v4.1-flash
+ocr review --from origin/main --to <ref> --format json --audience agent \
+  --effort low --max-tokens-budget 120000 --rule .github/ocr/rules.json \
+  -B .github/ocr/background.md
 ```
 
 ## The incident this workflow caused first time out
@@ -84,8 +101,8 @@ Two changes came out of it, and both stay:
 1. `ocr llm test` runs before the review. A bad credential or model now costs one
    tiny call and fails with the endpoint's own error, instead of being
    indistinguishable from a review that found nothing.
-2. A review counts as having happened only when `status == "completed"` **and**
-   the `comments` key is present. Every other outcome is loud and posts nothing,
+2. A review counts as having happened only when `status == "complete"` **and**
+   `.comments` is an array. Every other outcome is loud and posts nothing,
    because a comment that says "no findings" over a review that never ran is
    worse than a red check.
 
@@ -115,15 +132,24 @@ Proven without the real key: with `protocol: openai` the same call becomes
 'Authorization' header or token` — reachable, right route, key refused. `llm test`
 takes no provider flag, so the config file is the only non-interactive way to pin it.
 
-## Verify the artefact, never the status word
+## The guard: artefact and status, both
 
-The endpoint fix landed and the review ran, and the job still failed: the guard
-compared `status` to `"completed"`, and the envelope says **`complete`**. Nothing
-was wrong with the review; the check was testing a literal I had guessed.
+The endpoint fix landed, the review ran, and the job still failed: the guard
+compared `status` to `"completed"` while the envelope says **`complete`**. That was
+a guessed literal, not a broken review.
 
-The guard now keys on the contract — exit `0` **and** `.comments` is an array —
-and prints one object's key names, so the comment renderer is verified against
-the real schema rather than against field names inferred from documentation.
+The guard now requires all three, and the `status` check is not optional: an empty
+`comments` array is still an array, so exit `0` with `status: "failed"` and
+`comments: []` would sail through and post "No findings" — the false green this
+workflow exists to measure. Concretely:
+
+```sh
+[ "$rc" = 0 ] && [ "$status" = complete ] && jq -e '.comments | type == "array"' "$j"
+```
+
+Anything else is treated as *no review happened*: the job fails and nothing is
+posted. The step also prints one comment object's key names once, so the renderer
+is verified against the real schema instead of field names inferred from docs.
 
 ## Its first readable review, and what it caught
 

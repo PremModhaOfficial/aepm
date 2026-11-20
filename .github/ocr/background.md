@@ -1,8 +1,9 @@
 # Review background: aepm
 
 `aepm` (`aur-prefetch`, binary `aepm`) is a Rust CLI that makes pacman's update
-preview honest. Six subcommands: `fetch`, `check`, `install`, `doctor`, `tui`, `replay`.
-It changes pacman state, so a mistake is a broken machine, not a bad afternoon.
+preview honest. Six subcommands: `init`, `check`, `fetch`, `install`, `clean`,
+`doctor`, plus the `tui` surface. It changes pacman state, so a mistake is a broken
+machine, not a bad afternoon.
 
 ## What it must never do
 

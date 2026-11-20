@@ -12,10 +12,12 @@ name: OCR Review (advisory)
 # and its recall is unmeasured. open-code-review always emits a `comments`
 # array, empty or not, which is the primitive that check is missing.
 #
-# Known, measured limit (docs/OCR-REVIEW.md): markdown is excluded from review
-# before the model sees it, so 5 of 15 sampled PRs are invisible to this tool and
-# 27 of 55 changed files were dropped. The file count is checked first so a
-# docs-only PR does not spend a model call to find nothing.
+# Review targets come from .github/ocr/rules.json, read from the BASE branch so a
+# PR cannot weaken the rules that judge it. Its "include": ["**/*.md"] bypasses the
+# tool's default extension filter, which otherwise drops markdown before the model
+# sees it (the default dropped 27 of 55 files across 15 sampled PRs). Without a
+# policy, that default returns, so the footer names the policy that ran. The file
+# count is checked first so a run with nothing reviewable spends no model call.
 
 on:
   pull_request:
@@ -143,8 +145,11 @@ jobs:
             echo "### OCR Review (advisory)"
             echo "Reviewable files after OCR's own file filter: **$n**"
             if [ "$n" = 0 ]; then
-              echo "Nothing reviewable — every changed file was excluded. This is the"
-              echo "measured markdown blind spot, not a clean review. No model call made."
+              echo "Nothing reviewable under the active policy: every changed file was"
+              echo "excluded, so this is not a clean review. If the footer says"
+              echo "\`policy built-in\`, the base branch has no .github/ocr/rules.json and"
+              echo "markdown is being dropped by the tool's default filter."
+              echo "No model call was made."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
