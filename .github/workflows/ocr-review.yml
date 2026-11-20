@@ -104,6 +104,23 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Spend a tiny call to prove the endpoint before spending a review. Without
+      # this, a bad credential or wrong model surfaces as a completed review that
+      # quietly found nothing.
+      - name: Check LLM connectivity
+        if: steps.files.outputs.reviewable != '0'
+        env:
+          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
+        run: |
+          set +e
+          out=$(timeout 90 ocr llm test 2>&1); rc=$?
+          set -e
+          printf '%s\n' "$out" | tail -n 20
+          if [ "$rc" != 0 ]; then
+            echo "::error::ocr llm test failed (exit $rc): the review would have run blind"
+            exit 1
+          fi
+
       - name: Review
         id: ocr
         if: steps.files.outputs.reviewable != '0'
@@ -118,19 +135,26 @@ jobs:
           rc=$?
           set -e
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          status=missing
           if [ -s "$RUNNER_TEMP/ocr.json" ]; then
+            status=$(jq -r '.status // "missing"' "$RUNNER_TEMP/ocr.json" 2>/dev/null || echo unparsed)
             echo "comments=$(jq -r '(.comments // []) | length' "$RUNNER_TEMP/ocr.json" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
           fi
-          # Loud when no review happened; quiet when a review happened and found
-          # something, because findings are reported in the comment, not a check.
-          if [ "$rc" != 0 ] && [ ! -s "$RUNNER_TEMP/ocr.json" ]; then
-            echo "::error::open-code-review could not run (exit $rc)"
-            tail -n 20 "$RUNNER_TEMP/ocr.err" || true
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "exit=$rc status=$status"
+          # A review happened only if it completed AND its comment list is present.
+          # Anything else is 'no review', which must be loud: the earlier version of
+          # this workflow posted "0 findings" over a review whose status was
+          # "failed", which is the same false green this job exists to measure.
+          if [ "$rc" != 0 ] || [ "$status" != "completed" ] || [ "$(jq -r 'has("comments")' "$RUNNER_TEMP/ocr.json" 2>/dev/null)" != "true" ]; then
+            echo "::error::no review happened (exit $rc, status $status)"
+            tail -n 30 "$RUNNER_TEMP/ocr.err" || true
             exit 1
           fi
+          echo "ok=1" >> "$GITHUB_OUTPUT"
 
       - name: Post or update the advisory comment
-        if: steps.files.outputs.reviewable != '0' && steps.ocr.outputs.rc != ''
+        if: steps.files.outputs.reviewable != '0' && steps.ocr.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

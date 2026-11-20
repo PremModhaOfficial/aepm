@@ -70,3 +70,24 @@ OCR_LLM_URL=... OCR_LLM_TOKEN=... OCR_LLM_MODEL=deepseek/deepseek-v4.1-flash \
   ocr review --from origin/main --to <ref> --format json --audience agent \
   --effort low --max-tokens-budget 120000
 ```
+
+## The incident this workflow caused first time out
+
+Its first live run reported **success** while the review's own status was
+`failed`, and it posted a comment reading "0 finding(s) … No findings". The guard
+only treated a *missing* JSON file as failure, so a failed review that still
+wrote an envelope passed as a clean one — the identical false green this workflow
+exists to measure, reproduced in its first attempt.
+
+Two changes came out of it, and both stay:
+
+1. `ocr llm test` runs before the review. A bad credential or model now costs one
+   tiny call and fails with the endpoint's own error, instead of being
+   indistinguishable from a review that found nothing.
+2. A review counts as having happened only when `status == "completed"` **and**
+   the `comments` key is present. Every other outcome is loud and posts nothing,
+   because a comment that says "no findings" over a review that never ran is
+   worse than a red check.
+
+The general lesson, which predates this file: "the command exited 0" is not
+"the review ran". Verify the artefact, not the exit code.
