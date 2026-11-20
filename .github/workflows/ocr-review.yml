@@ -1,0 +1,174 @@
+name: OCR Review (advisory)
+
+# A second reviewer, beside pr-agent, for measurement — not for gating.
+#
+# It is deliberately NOT a required check: required names are fixed by the main
+# ruleset and owned elsewhere. It never fails a PR for a finding, because the
+# repo's own rule is that a red review means "no review happened", not "there
+# are findings". It fails only when OCR could not run at all.
+#
+# Why a second reviewer exists at all: pr-agent emits no typed block on a
+# zero-finding review, so a clean PR can never satisfy Review Gate (#141/#142),
+# and its recall is unmeasured. open-code-review always emits a `comments`
+# array, empty or not, which is the primitive that check is missing.
+#
+# Known, measured limit (docs/OCR-REVIEW.md): markdown is excluded from review
+# before the model sees it, so 5 of 15 sampled PRs are invisible to this tool and
+# 27 of 55 changed files were dropped. The file count is checked first so a
+# docs-only PR does not spend a model call to find nothing.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+
+concurrency:
+  group: ocr-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  OCR_VERSION: v1.13.13
+  # Integrity pin: the binary is fetched over the network on every run.
+  OCR_SHA256: e3eb634c8205a120c16e9943de00aef895e2cd86d6b13c38e25427c924275ec8
+  # The same subscription and model the existing CI reviewer uses; the endpoint
+  # is OpenAI-compatible (see .pr_agent.toml and pr-agent.yml).
+  OCR_LLM_URL: https://api.commandcode.ai/provider/v1
+  OCR_LLM_MODEL: deepseek/deepseek-v4.1-flash
+  OCR_ENABLE_TELEMETRY: "0"
+  OCR_MAX_TOKENS_BUDGET: "120000"
+
+jobs:
+  review:
+    name: OCR Review (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A fork PR gets a read-only token, so the comment cannot be posted and the
+    # LLM key would not be exposed: skip rather than fail.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the PR head and base
+        id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            num="${{ inputs.pr }}"
+            gh pr checkout "$num"
+            base="$(gh pr view "$num" --json baseRefName --jq .baseRefName)"
+          else
+            num="${{ github.event.pull_request.number }}"
+            base="${{ github.event.pull_request.base.ref }}"
+          fi
+          git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+          printf 'num=%s\nbase=origin/%s\n' "$num" "$base" >> "$GITHUB_OUTPUT"
+
+      - name: Install open-code-review
+        run: |
+          set -euo pipefail
+          url="https://github.com/alibaba/open-code-review/releases/download/${OCR_VERSION}/opencodereview-linux-amd64"
+          curl -fsSL --retry 3 -o /usr/local/bin/ocr "$url"
+          echo "${OCR_SHA256}  /usr/local/bin/ocr" | sha256sum -c -
+          chmod +x /usr/local/bin/ocr
+          ocr --version
+
+      - name: Count reviewable files
+        id: files
+        run: |
+          set -euo pipefail
+          # --preview runs no model: this step is free.
+          n=$(ocr review --from "${{ steps.r.outputs.base }}" --to HEAD --preview 2>/dev/null \
+              | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p')
+          n=${n:-0}
+          echo "reviewable=$n" >> "$GITHUB_OUTPUT"
+          {
+            echo "### OCR Review (advisory)"
+            echo "Reviewable files after OCR's own file filter: **$n**"
+            if [ "$n" = 0 ]; then
+              echo "Nothing reviewable — every changed file was excluded. This is the"
+              echo "measured markdown blind spot, not a clean review. No model call made."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Review
+        id: ocr
+        if: steps.files.outputs.reviewable != '0'
+        env:
+          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
+        run: |
+          set +e
+          ocr review --from "${{ steps.r.outputs.base }}" --to HEAD \
+            --format json --audience agent --effort low --concurrency 4 \
+            --max-tokens-budget "${OCR_MAX_TOKENS_BUDGET}" \
+            -o "$RUNNER_TEMP/ocr.json" 2>"$RUNNER_TEMP/ocr.err"
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ -s "$RUNNER_TEMP/ocr.json" ]; then
+            echo "comments=$(jq -r '(.comments // []) | length' "$RUNNER_TEMP/ocr.json" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          fi
+          # Loud when no review happened; quiet when a review happened and found
+          # something, because findings are reported in the comment, not a check.
+          if [ "$rc" != 0 ] && [ ! -s "$RUNNER_TEMP/ocr.json" ]; then
+            echo "::error::open-code-review could not run (exit $rc)"
+            tail -n 20 "$RUNNER_TEMP/ocr.err" || true
+            exit 1
+          fi
+
+      - name: Post or update the advisory comment
+        if: steps.files.outputs.reviewable != '0' && steps.ocr.outputs.rc != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          j="$RUNNER_TEMP/ocr.json"
+          MARKER='<!-- ocr-review:v1 -->'
+          [ -s "$j" ] || { echo "no JSON produced; nothing to post"; exit 0; }
+          count=$(jq -r '(.comments // []) | length' "$j" 2>/dev/null || echo 0)
+          touched=$(jq -r '(.comments // []) | map(.path // .file // "?") | unique | length' "$j" 2>/dev/null || echo 0)
+          rows=$(jq -r '
+            (.comments // [])[]
+            | "| `\(.path // .file // "?")` | \(.line // .line_number // .end_line // "-") | \(.severity // .category // "-") | \(.title // .message // .body // "" | tostring | gsub("[\\n|]"; " ") | .[0:180]) |"
+          ' "$j" 2>/dev/null || true)
+          {
+            printf '%s\n' "$MARKER"
+            echo "## OCR review (advisory)"
+            echo
+            echo "**${count} finding(s)** across ${touched} file(s) · \`$(jq -r '.status // "?"' "$j" 2>/dev/null)\` · effort \`low\`"
+            echo
+            if [ "$count" = 0 ] || [ -z "$rows" ]; then
+              echo "_No findings._ This check is advisory: it does not gate the merge, and it is not Review Gate."
+            else
+              echo "| file | line | severity | finding |"
+              echo "|---|---|---|---|"
+              printf '%s\n' "$rows"
+            fi
+            echo
+            echo "<sub>open-code-review ${OCR_VERSION} · model \`${OCR_LLM_MODEL}\` · budget ${OCR_MAX_TOKENS_BUDGET} tokens · markdown files are excluded by the tool, so docs-only changes are not reviewed here</sub>"
+          } > "$RUNNER_TEMP/body.md"
+
+          repo="$GITHUB_REPOSITORY"
+          id=$(gh api --paginate "repos/${repo}/issues/${{ steps.r.outputs.num }}/comments" \
+                 --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null | head -1)
+          if [ -n "${id}" ]; then
+            gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+            echo "updated comment ${id}"
+          else
+            gh api -X POST "repos/${repo}/issues/${{ steps.r.outputs.num }}/comments" \
+              -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+            echo "created a new comment"
+          fi
