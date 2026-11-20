@@ -311,6 +311,11 @@ GATE_ARGS=(--gate)
 export FAKE_COMMENTS="[$(comment "$(printf 'See commit/%s for the earlier attempt.\n\n%s' "$OLD" "$(clean_body "$HEAD")")")]"
 run header-beats-earlier-link 0 'gate: pass'
 
+# And with the quote after the header, where only a pattern that reaches the sha
+# through the URL can find the header at all.
+export FAKE_COMMENTS="[$(comment "$(printf '%s\n\nSee commit/%s for the earlier attempt.\n' "$(clean_body "$HEAD")" "$OLD")")]"
+run header-beats-later-link 0 'gate: pass'
+
 # The marker in prose is not a review: only a line-start block or the guide
 # header selects the comment, so a newer comment merely writing about the
 # marker cannot be judged in place of the real review.

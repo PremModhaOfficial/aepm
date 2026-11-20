@@ -219,14 +219,22 @@ fi
 # that ever had a finding always carries one (#99: 32, #133: 4 with 0 active,
 # #136: 1, #143: 2 with 0 active). Only a PR the bot has never found anything in
 # has no block at all (#112, #134, #144). So absence means "nothing to record"
-# only while no block has ever been posted here: once one has, its absence is a
-# fault to fail on, not a clean review.
+# only while no block survives on this PR: once one has, its absence is a fault
+# to fail on, not a clean review.
+#
+# `prior_blocks` counts the comments that exist now, and the review is one
+# comment updated in place, so this catches a vanished block only when the older
+# one survived beside it. A run that rewrites its own comment without the block
+# is indistinguishable here from a clean review: what catches that is the
+# `Review` check, which fails when a review run cannot complete.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
   # The guide header is the evidence: it names the head the run checked out. A
   # bare `commit/<sha>` anywhere in the body is not, because a review that
   # discusses an earlier fix quotes one, and taking the first match judged a
   # clean review against that older commit.
-  review_head="$(sed -n 's/.*Review updated until commit[^0-9a-f]*commit\/\([0-9a-f]\{7,40\}\).*/\1/p' <<<"$review_body" | head -1)"
+  # `[^)]*` spans the URL: a `[^0-9a-f]*` gap stops at the `c` of `.com` and
+  # never reaches `commit/`, which silently handed every head to the fallback.
+  review_head="$(sed -n 's/.*Review updated until commit[^)]*commit\/\([0-9a-f]\{7,40\}\).*/\1/p' <<<"$review_body" | head -1)"
   [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
   [[ -n "$review_head" ]] || review_head="$fallback_head"
   if [[ "$prior_blocks" -eq 0 ]]; then
