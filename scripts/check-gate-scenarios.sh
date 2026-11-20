@@ -61,7 +61,13 @@ git -C "$repo" -c commit.gpgsign=false merge -q --no-ff -m merge "$drift"
 merge="$(git -C "$repo" rev-parse HEAD)"
 
 status=0
-ok() { printf '  ok   %s\n' "$*"; }
+# The closing line reports this counter, not a number typed by hand, so the claim
+# and the run cannot drift apart: every passing block calls `ok` exactly once.
+count=0
+ok() {
+    count=$((count + 1))
+    printf '  ok   %s\n' "$*"
+}
 bad() {
     printf '  FAIL %s\n' "$*" >&2
     status=1
@@ -138,6 +144,23 @@ else
     bad "--list <base> did not default to HEAD: ${out:-nothing}"
 fi
 
+# 7. The real workflow must pass the head, and fetch enough history to resolve
+# it. The fixture above is one argument wide on purpose, so this reads
+# `.github/workflows/sim.yml` itself: dropping HEAD_SHA from the call, or
+# `fetch-depth: 0` from the checkout, is a red self-test rather than the silent
+# drift the head argument was added to fix (#143).
+workflow="$ROOT/.github/workflows/sim.yml"
+call="$(grep -h 'gate-scenarios\.sh --list' "$workflow" || true)"
+if [[ $call == *'--list "$BASE" "$HEAD_SHA"'* ]]; then
+    if grep -q 'fetch-depth: 0' "$workflow"; then
+        ok "the real workflow passes both --list arguments and fetches the head"
+    else
+        bad "$workflow passes HEAD_SHA but no longer fetches it (fetch-depth: 0): the head sha cannot be resolved"
+    fi
+else
+    bad "$workflow does not pass the head: expected --list \"\$BASE\" \"\$HEAD_SHA\", got: ${call:-no call}"
+fi
+
 # 8. A diff that cannot be computed must fail rather than select nothing. An
 # unrelated root shares no history with the branch, so `base...head` exits 128;
 # the failure used to vanish inside a process substitution, leaving an empty list
@@ -154,4 +177,4 @@ else
 fi
 
 ((status == 0)) || { printf 'gate-scenarios self-test FAILED\n' >&2; exit 1; }
-printf 'gate-scenarios self-test: 8 assertions hold\n'
+printf 'gate-scenarios self-test: %s assertions hold\n' "$count"
