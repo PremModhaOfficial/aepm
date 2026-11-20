@@ -347,6 +347,14 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
+# Two greens, named apart: a review that carried a ledger is not the same
+# answer as one that had nothing to record, even though both may merge.
+export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
+run green-cleared 0 'review_state: cleared'
+
+export FAKE_COMMENTS="[$(comment "$(clean_body "$HEAD")")]"
+run green-no-findings 0 'review_state: no_findings'
+
 # The guide header is the evidence, not the first bare commit link: a clean
 # review that discusses an earlier fix quotes one, and reading that as the
 # reviewed head judged a current review as stale.

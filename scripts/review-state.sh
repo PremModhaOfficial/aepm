@@ -332,7 +332,12 @@ if [[ "$gate" -eq 1 ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
     exit 1
   fi
-  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\nstate_block: %s\n' "$number" "$head" "$verdict" "$([[ -n "$state_json" ]] && echo present || echo absent)"
+  # Two greens, named apart: `cleared` is a review that carried a ledger and a
+  # verdict; `no_findings` is a review with no ledger to carry, which a truncated
+  # run that still prints a clean recommendation can also produce. Both may
+  # merge, but only one means the reviewer read the diff and recorded a result.
+  if [[ "$complete" == "true" ]]; then review_state="cleared"; else review_state="no_findings"; fi
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\nreview_state: %s\n' "$number" "$head" "$verdict" "$review_state"
   exit 0
 fi
 
