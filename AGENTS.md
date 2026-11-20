@@ -188,17 +188,14 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   reports nothing, because that head has its own run and a verdict about it from
   an older review would be a lie; the check it left on the older commit is read
   by no rollup, because checks are per-commit.
-- **Required:** `Review Gate` is a required status check on `main` since
-  `#115` made a push review its own head. The context that gates a PR is the
-  check-run written onto that head, not the job's own check, which is anchored
-  to the default branch (`PR-AGENT.md` D32).
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict, and it is requireable because every head with a review run of its
-  own gets a `Review Gate` conclusion on itself.
-  Whether it is a required status check in the `main` ruleset is a one-time
-  repository setting and not something this repo can assert (`PR-AGENT.md` N5).
-  Until that setting exists the gate reports and the verdict stays advisory. A
-  human override is an admin merge, and it is a decision, not a formality.
+  the verdict. All three are required on `main`, with `strict`, admins enforced
+  and no force push, re-measured 2026-11-20T16:01Z:
+  `gh api repos/PremModhaOfficial/aepm/branches/main/protection --jq '.required_status_checks.contexts'`.
+  The context that gates a PR is the check-run D32 writes onto the pinned head,
+  not the job's own check, which is anchored to the default branch, so an
+  unreviewed head is blocked only until its review lands. Overriding it is an
+  admin merge, and that is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
