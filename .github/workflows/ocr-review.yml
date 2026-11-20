@@ -183,9 +183,11 @@ jobs:
           [ -s "$j" ] || { echo "no JSON produced; nothing to post"; exit 0; }
           count=$(jq -r '(.comments // []) | length' "$j" 2>/dev/null || echo 0)
           touched=$(jq -r '(.comments // []) | map(.path // .file // "?") | unique | length' "$j" 2>/dev/null || echo 0)
+          # Field names verified from the artefact, not guessed: content, severity,
+          # category, start_line, end_line, suggestion_code.
           rows=$(jq -r '
             (.comments // [])[]
-            | "| `\(.path // .file // "?")` | \(.line // .line_number // .end_line // "-") | \(.severity // .category // "-") | \(.title // .message // .body // "" | tostring | gsub("[\\n|]"; " ") | .[0:180]) |"
+            | "| `\(.path // .file // "?")` | \(.start_line // .line // "-") | \(.severity // "-") | \(.category // "-") | \((.content // .message // "") | tostring | gsub("[\\n|]"; " ") | .[0:220]) |"
           ' "$j" 2>/dev/null || true)
           {
             printf '%s\n' "$MARKER"
@@ -196,8 +198,8 @@ jobs:
             if [ "$count" = 0 ] || [ -z "$rows" ]; then
               echo "_No findings._ This check is advisory: it does not gate the merge, and it is not Review Gate."
             else
-              echo "| file | line | severity | finding |"
-              echo "|---|---|---|---|"
+              echo "| file | line | severity | category | finding |"
+              echo "|---|---|---|---|---|"
               printf '%s\n' "$rows"
             fi
             echo
