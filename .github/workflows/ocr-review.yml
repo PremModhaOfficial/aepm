@@ -104,13 +104,27 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Configure the LLM endpoint
+        if: steps.files.outputs.reviewable != '0'
+        # The protocol must be named. With only OCR_LLM_* env vars set, the CLI
+        # speaks the Anthropic protocol and POSTs <base>/v1/messages, which this
+        # endpoint answers with 404. Protocol "openai" POSTs /chat/completions,
+        # which it answers 401 for a bad key — i.e. the correct route.
+        env:
+          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
+        run: |
+          set -euo pipefail
+          timeout 60 ocr config set provider cc-gateway
+          timeout 60 ocr config set custom_providers.cc-gateway.url "${OCR_LLM_URL}"
+          timeout 60 ocr config set custom_providers.cc-gateway.protocol openai
+          timeout 60 ocr config set custom_providers.cc-gateway.api_key "${OCR_LLM_TOKEN}"
+          timeout 60 ocr config set model "${OCR_LLM_MODEL}"
+
       # Spend a tiny call to prove the endpoint before spending a review. Without
       # this, a bad credential or wrong model surfaces as a completed review that
       # quietly found nothing.
       - name: Check LLM connectivity
         if: steps.files.outputs.reviewable != '0'
-        env:
-          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
         run: |
           set +e
           out=$(timeout 90 ocr llm test 2>&1); rc=$?
@@ -124,8 +138,6 @@ jobs:
       - name: Review
         id: ocr
         if: steps.files.outputs.reviewable != '0'
-        env:
-          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
         run: |
           set +e
           ocr review --from "${{ steps.r.outputs.base }}" --to HEAD \

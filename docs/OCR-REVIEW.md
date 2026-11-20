@@ -91,3 +91,26 @@ Two changes came out of it, and both stay:
 
 The general lesson, which predates this file: "the command exited 0" is not
 "the review ran". Verify the artefact, not the exit code.
+
+## The endpoint needs its protocol named
+
+With only `OCR_LLM_URL` / `OCR_LLM_TOKEN` / `OCR_LLM_MODEL` set, the CLI speaks the
+**Anthropic** protocol and POSTs `<base>/v1/messages`. Against an OpenAI-compatible
+gateway whose base already ends in `/v1`, that becomes `/provider/v1/v1/messages` and
+returns `404 … is not a registered API route`.
+
+The protocol has no environment variable. It comes from a provider, so the workflow
+writes one before reviewing:
+
+```sh
+ocr config set provider cc-gateway
+ocr config set custom_providers.cc-gateway.url  "$OCR_LLM_URL"
+ocr config set custom_providers.cc-gateway.protocol openai
+ocr config set custom_providers.cc-gateway.api_key "$OCR_LLM_TOKEN"
+ocr config set model "$OCR_LLM_MODEL"
+```
+
+Proven without the real key: with `protocol: openai` the same call becomes
+`POST /provider/v1/chat/completions`, and the gateway answers `401 Invalid
+'Authorization' header or token` — reachable, right route, key refused. `llm test`
+takes no provider flag, so the config file is the only non-interactive way to pin it.
