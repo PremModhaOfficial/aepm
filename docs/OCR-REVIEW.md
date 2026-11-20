@@ -151,3 +151,11 @@ re-run. So the endpoint is fine and the per-file call is flaky, not systematic.
 One failure in two attempts on a single-file review is not enough to characterise
 it, and it is the main reason this stays advisory: at that rate a required check
 would be worse than the one it replaced.
+
+The next run, on those fixes, returned four more. Three held and are fixed here:
+the dispatch path bypassed the same-repo guard, so it could check a **fork** PR
+out and run the model key inside untrusted code; `set -o pipefail` with `| head -1`
+on a paginated `gh api` is an intermittent EPIPE; and the review call was the one
+OCR invocation with no `timeout`.
+
+Two runs, eight findings, eight that survive inspection. On one file.

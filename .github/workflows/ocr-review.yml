@@ -75,6 +75,13 @@ jobs:
           set -euo pipefail
           if [ "$EVENT" = "workflow_dispatch" ]; then
             num="$DISPATCH_PR"
+            # The job-level if: guard only covers pull_request events, so a
+            # dispatch could otherwise point this at a fork and run the model key
+            # inside untrusted code.
+            if [ "$(gh pr view "$num" --json isCrossRepository --jq .isCrossRepository)" = "true" ]; then
+              echo "::error::PR #$num comes from a fork; refusing to run with the model key"
+              exit 1
+            fi
             gh pr checkout "$num"
             base="$(gh pr view "$num" --json baseRefName --jq .baseRefName)"
           else
@@ -156,7 +163,7 @@ jobs:
           BASE: ${{ steps.r.outputs.base }}
         run: |
           set +e
-          ocr review --from "$BASE" --to HEAD \
+          timeout 900 ocr review --from "$BASE" --to HEAD \
             --format json --audience agent --effort low --concurrency 4 \
             --max-tokens-budget "${OCR_MAX_TOKENS_BUDGET}" \
             -o "$RUNNER_TEMP/ocr.json" 2>"$RUNNER_TEMP/ocr.err"
@@ -226,8 +233,10 @@ jobs:
           } > "$RUNNER_TEMP/body.md"
 
           repo="$GITHUB_REPOSITORY"
-          id=$(gh api --paginate "repos/${repo}/issues/${PR_NUM}/comments" \
-                 --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null | head -1)
+          # Not `| head -1`: with pipefail, gh gets EPIPE on the next page and fails.
+          ids=$(gh api --paginate "repos/${repo}/issues/${PR_NUM}/comments" \
+                 --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null || true)
+          id=$(printf '%s\n' "${ids}" | sed -n '1p')
           if [ -n "${id}" ]; then
             gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
             echo "updated comment ${id}"
