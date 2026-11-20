@@ -167,17 +167,25 @@ if ! found="$(gh pr view "$pr" --json comments \
        head_from: ([\$c[] | select(.body | test(\"Review updated until commit\")) | .body
                     | (capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\")? // empty).s]
                    | last // \"\"),
-       blocks: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1\"))] | length)}" \
+       blocks: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1\"))] | length),
+       # The gate's append-only ledger: one comment per judged head, never edited,
+       # so a block a later run erased from the review is still on record.
+       ledger_blocks: ([\$c[]
+         | select(.body | test(\"(^|\\n)[[:space:]]*<!-- review-gate-ledger:v1\"))
+         | (.body | capture(\"review-gate-ledger:v1 head=[0-9a-f]{40} block=(?<b>true|false)\")? | select(.b == \"true\"))]
+         | length)}" \
   2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
 [[ -n "$found" ]] || found='{"review":{},"head_from":""}'
 review="$(jq -c '.review' <<<"$found")"
 fallback_head="$(jq -r '.head_from // ""' <<<"$found")"
-# Whether this PR has ever carried a findings ledger: a block keeps its resolved
+# Whether this PR has ever carried a findings block: a block keeps its resolved
 # findings, so a PR with any finding history always has one. Absence is only
-# explainable as "no findings yet" when there never was a block.
-prior_blocks="$(jq -r '.blocks // 0' <<<"$found")"
+# explainable as "no findings yet" when nothing ever recorded one, and two
+# sources record it: the block-bearing review comments that exist now, and the
+# gate's ledger rows, which say whether a block existed at each judged head.
+prior_blocks="$(jq -r '((.blocks // 0) + (.ledger_blocks // 0))' <<<"$found")"
 [[ -n "$review" ]] || review='{}'
 
 review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
@@ -222,18 +230,21 @@ fi
 # only while no block survives on this PR: once one has, its absence is a fault
 # to fail on, not a clean review.
 #
-# `prior_blocks` counts the comments that exist now, and the review is one
-# comment updated in place, so this catches a vanished block only when the older
-# one survived beside it. A run that rewrites its own comment without the block
-# is indistinguishable here from a clean review: what catches that is the
-# `Review` check, which fails when a review run cannot complete.
+# `prior_blocks` counts the comments that exist now plus the gate's ledger rows.
+# The first alone was not enough: the review is one comment a run rewrites in
+# place, so a run that wrote it without the block erased the only evidence that a
+# block had existed, and the gate read the review as clean (finding 09d3fb2ec6ef).
+# The ledger is appended, never edited, so a block that vanished in place still
+# leaves a row saying one was there.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
   # The guide header is the evidence: it names the head the run checked out. A
   # bare `commit/<sha>` anywhere in the body is not, because a review that
   # discusses an earlier fix quotes one, and taking the first match judged a
   # clean review against that older commit.
-  # `[^)]*` spans the URL: a `[^0-9a-f]*` gap stops at the `c` of `.com` and
-  # never reaches `commit/`, which silently handed every head to the fallback.
+  # The match spans the whole URL up to the closing paren, because an earlier
+  # version allowed only non-hex characters between the phrase and the link, and
+  # the `c` of the `.com` host ends such a span before the link: every head then
+  # fell through to the fallback.
   review_head="$(sed -n 's/.*Review updated until commit[^)]*commit\/\([0-9a-f]\{7,40\}\).*/\1/p' <<<"$review_body" | head -1)"
   [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
   [[ -n "$review_head" ]] || review_head="$fallback_head"
@@ -280,6 +291,11 @@ if [[ "$reviewed_mode" -eq 1 ]]; then
 fi
 
 if [[ "$gate" -eq 1 ]]; then
+  # The workflow appends this as one ledger comment per judged head, before its
+  # own exit decision, so the fields are machine-readable rather than re-derived
+  # from the prose below. Printed on every gate exit, pass or fail.
+  printf 'ledger: head=%s block=%s complete=%s verdict=%s\n' "$head_full" \
+    "$([[ -n "$state_json" ]] && echo true || echo false)" "$complete" "$verdict"
   if [[ "$present" != "true" ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
     exit 1

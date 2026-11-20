@@ -157,7 +157,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread.
+  thread. The gate's ledger rows are the one exception: they are separate
+  comments, appended once per judged head and never edited, because a block the
+  review's own rewrite erased has to remain on record somewhere.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
@@ -179,11 +181,16 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   reported as `unrecorded` rather than assumed, and the head comes from the
   commit the comment quotes. The block keeps resolved findings, so a PR that
   still carries one cannot pass on a missing block: the gate fails on it. That
-  covers only a block that survives beside the new comment, and the review is a
-  single comment updated in place, so a run that rewrites its own comment
-  without the block reads here as a clean review. What catches that run is the
-  `Review` check, which fails when a review cannot complete; the gate judges
-  the head, not whether a review happened.
+  evidence alone would not survive the review's own rewrite — one comment,
+  updated in place, so a run that wrote it without the block erased it — so the
+  gate also appends one row per judged head to an append-only ledger comment
+  (`<!-- review-gate-ledger:v1 head=… block=… complete=… verdict=… -->`, never
+  edited, one line) and reads it back: a row that records a block while the
+  review now carries none is a vanished block, not a clean review. A ledger row
+  that cannot be written is a `::warning::` on the job and never fails a PR; the
+  verdict on the head is the decision. The review selection still matches only
+  the typed block and the guide marker, so a ledger comment is never judged as
+  the review.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

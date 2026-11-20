@@ -2,7 +2,9 @@ name: Review Gate
 
 # Model-free coverage gate. It reads the newest review comment and decides
 # whether that review covers one commit: the PR head. It never calls a model and
-# never spends credits.
+# never spends credits. It also appends one ledger row per judged head, because
+# the review is a single comment updated in place and a block erased by such a
+# rewrite would otherwise leave no trace (finding 09d3fb2ec6ef).
 #
 # #115: a pushed head used to have no `Review Gate` check at all, because the
 # review bot did not run on push. `PR Agent` now reviews a pushed head too, and
@@ -27,7 +29,8 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  # Read the review comments, and append the ledger row: a comment on the PR.
+  pull-requests: write
   # Reading the triggering run's name and pull_requests.
   actions: read
   # Writing the verdict onto the PR head.
@@ -137,6 +140,22 @@ jobs:
           summary="$(sed -n 's/^reason: //p' <<<"$verdict" | head -1)"
           [[ -n "$summary" ]] || summary="the review gate reported $conclusion"
           echo "report=$conclusion" >> "$GITHUB_OUTPUT"
+          # The review is one comment a run rewrites in place, so a run that wrote
+          # it without the block erased the only evidence one had existed, and
+          # the gate would judge the review clean (finding 09d3fb2ec6ef). This row
+          # is that evidence: one separate comment per judged head, appended and
+          # never edited, carrying the fields the gate printed. It is posted before
+          # the verdict below, and a row that cannot be written is a warning, not
+          # a failed PR: a ledger is an aid to judging, never the verdict itself.
+          ledger="$(sed -n 's/^ledger: //p' <<<"$verdict" | head -1)"
+          if [[ -z "$ledger" ]]; then
+            echo "::warning::the gate printed no ledger line, so no row was appended for $head"
+          elif ! gh api -X POST "repos/$GH_REPO/issues/$pr/comments" \
+            -f body="<!-- review-gate-ledger:v1 $ledger -->" >/dev/null; then
+            echo "::warning::could not append the ledger row for $head; the verdict below stands"
+          else
+            echo "::notice::ledger row appended for $head: $ledger"
+          fi
           body="$(mktemp)"
           trap 'rm -f "$body"' EXIT
           jq -n --arg name 'Review Gate' --arg sha "$head" --arg conclusion "$conclusion" \

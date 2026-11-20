@@ -58,8 +58,8 @@ end = next(i for i, l in enumerate(lines) if sys.argv[3] in l)
 print("\n".join(l[10:] for l in lines[start:end]))
 PY
 
-# The fake `gh`: one head commit, one run title, a capture of the check-run body,
-# and a switch for a refused write.
+# The fake `gh`: one head commit, one run title, a capture of the check-run body
+# and of the ledger row, and a switch for a refused write to each.
 mkdir -p "$root/bin" "$root/scripts"
 cat >"$root/bin/gh" <<'GH'
 #!/usr/bin/env bash
@@ -69,6 +69,18 @@ case "${1:-}" in
   api)
     case " $* " in
       *"actions/runs/"*) printf 'Review PR #%s\n' "${FAKE_TITLE_PR:-9}" ;;
+      *"/comments"*)
+        [[ "${FAKE_LEDGER_FAIL:-0}" == 1 ]] && { echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; }
+        body=""
+        prev=""
+        for arg in "$@"; do
+          [[ "$prev" == "-f" ]] && body="$arg"
+          prev="$arg"
+        done
+        [[ -n "$body" ]] || { echo "fake gh: comment without a body" >&2; exit 1; }
+        printf '%s\n' "${body#body=}" >"${FAKE_LEDGER:?FAKE_LEDGER is required}"
+        printf '{}\n'
+        ;;
       *"check-runs"*)
         [[ "${FAKE_CHECKRUN_FAIL:-0}" == 1 ]] && { echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; }
         input=""
@@ -110,6 +122,11 @@ if [[ "$pin" != "${FAKE_GATE_HEAD:?}" ]]; then
 fi
 printf 'gate: %s\npr: 9\nhead: %s\nreason: the review does not cover the head being judged\n' \
   "${FAKE_VERDICT:-pass}" "${FAKE_GATE_HEAD:0:7}"
+# The row the workflow appends. `FAKE_NO_LEDGER` is a default-branch script that
+# predates the ledger: nothing to append, and the job must say so and carry on.
+if [[ "${FAKE_NO_LEDGER:-0}" != 1 ]]; then
+  printf 'ledger: head=%s block=true complete=true verdict=no_concerns_found\n' "$FAKE_GATE_HEAD"
+fi
 [[ "${FAKE_VERDICT:-pass}" == "pass" ]] && exit 0
 exit 1
 SH
@@ -117,14 +134,20 @@ chmod +x "$root/scripts/review-state.sh"
 
 # Each case: label, RUN_EVENT, RUN_SHA, RUN_PR, fake PR head, fake verdict,
 # expected exit, expected check-run (created|none), expected conclusion,
-# expected text in the log, and whether the write is refused.
+# expected text in the log, whether the check-run write is refused, whether the
+# ledger write is refused, the exact ledger row expected (empty: unchecked), and
+# whether the fake gate prints no ledger line at all.
 failures=0
+passed=0
+CASES="$(grep -c '^run_case ' "$0")"
 run_case() {
   local label=$1 event=$2 run_sha=$3 run_pr=$4 fake_head=$5 verdict=$6
   local want_exit=$7 want_body=$8 want_conclusion=$9 want_text=${10:-} write_fail=${11:-0}
-  local out_file checkrun case_file out rc body problem=""
+  local ledger_fail=${12:-0} want_ledger=${13:-} no_ledger=${14:-0}
+  local out_file checkrun ledger case_file out rc body problem=""
   out_file="$root/out"; : >"$out_file"
   checkrun="$root/checkrun"; rm -f "$checkrun"
+  ledger="$root/ledger"; rm -f "$ledger"
   case_file="$root/case.sh"
   {
     echo "GITHUB_OUTPUT=$out_file; : >$out_file"
@@ -132,6 +155,7 @@ run_case() {
     echo 'RUN_BRANCH=main; RUN_ID=42; DEFAULT_BRANCH=main; GH_REPO=o/r'
     echo "GH_TOKEN=x; export FAKE_HEAD='$fake_head' FAKE_CHECKRUN=$checkrun"
     printf 'export FAKE_VERDICT=%s FAKE_TITLE_PR=9 FAKE_CHECKRUN_FAIL=%s\n' "$verdict" "$write_fail"
+    printf 'export FAKE_LEDGER=%s FAKE_LEDGER_FAIL=%s FAKE_NO_LEDGER=%s\n' "$ledger" "$ledger_fail" "$no_ledger"
     printf 'export FAKE_GATE_HEAD=%s\n' "$HEAD"
     printf 'PATH=%s/bin:$PATH\n' "$root"
     cat "$block"
@@ -164,11 +188,19 @@ run_case() {
   if [[ -z "$problem" && -n "$want_text" && "$out" != *"$want_text"* ]]; then
     problem="output has no '$want_text'"
   fi
+  if [[ -z "$problem" && -n "$want_ledger" ]]; then
+    if [[ ! -f "$ledger" ]]; then
+      problem="no ledger row was appended"
+    elif [[ "$(cat "$ledger")" != "$want_ledger" ]]; then
+      problem="ledger row '$(cat "$ledger")', want '$want_ledger'"
+    fi
+  fi
 
   if [[ -n "$problem" ]]; then
     printf 'FAIL %s: %s\n%s\n' "$label" "$problem" "$out"
     failures=$((failures + 1))
   else
+    passed=$((passed + 1))
     printf 'ok   %s\n' "$label"
   fi
 }
@@ -187,6 +219,15 @@ run_case review-failed  issue_comment "$OTHER" 9 "$HEAD" fail 0 created failure 
 run_case review-resolved issue_comment "$OTHER" "" "$HEAD" fail 0 created failure 'reported on the PR head'
 # A push run whose head moved on reviewed a commit that has its own run.
 run_case superseded     pull_request  "$OTHER" 9 "$HEAD" fail 0 none  ""          'reports nothing'
+# The ledger row is what makes a block that vanished from the one review comment
+# detectable, so its exact shape is a contract with `review-state.sh`: one line,
+# appended to the judged head, never an edit (finding 09d3fb2ec6ef).
+run_case ledger-row     pull_request  "$HEAD"  9 "$HEAD" pass 0 created success 'ledger row appended for' 0 0 "<!-- review-gate-ledger:v1 head=$HEAD block=true complete=true verdict=no_concerns_found -->"
+# A ledger that cannot be written must not fail a PR: the row is an aid to
+# judging, the verdict written on the head is the decision.
+run_case ledger-write-refused pull_request "$HEAD" 9 "$HEAD" fail 0 created failure 'could not append the ledger row' 0 1
+# A default branch whose gate predates the ledger appends nothing and says so.
+run_case ledger-missing-line pull_request "$HEAD" 9 "$HEAD" pass 0 created success 'printed no ledger line' 0 0 "" 1
 # Faults the block cannot decide around: each must fail the job, because a
 # silent pass would read as a passing gate.
 run_case unreadable-head pull_request "$HEAD"  9 ""      fail 1 none  ""          'cannot read the head'
@@ -207,4 +248,4 @@ grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
-echo "review-gate self-check: 9/9"
+echo "review-gate self-check: $passed/$CASES"
