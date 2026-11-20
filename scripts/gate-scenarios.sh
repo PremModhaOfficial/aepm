@@ -104,9 +104,15 @@ list() {
         || die "unknown head ref: $head"
 
     local -a changed=() unmapped=() scenarios=()
-    local file list scenario
+    local file list scenario diff_out
     local -A picked=()
-    mapfile -t changed < <(git diff --name-only "$base"..."$head")
+    # Process substitution hides the exit status: a three-dot diff with no merge
+    # base (or a ref the clone did not fetch) yields an empty list, which selects
+    # zero scenarios, exits 0, and reports the build green having run nothing.
+    if ! diff_out="$(git diff --name-only "$base"..."$head")"; then
+        die "cannot diff $base...$head (no merge base, or an unfetched ref)"
+    fi
+    [[ -z $diff_out ]] || mapfile -t changed <<<"$diff_out"
 
     for file in "${changed[@]}"; do
         # Scenarios this branch edits always run, whatever the map says.
