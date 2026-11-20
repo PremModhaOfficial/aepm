@@ -215,3 +215,43 @@ so, and the verdict that depends on it is named.
 for V1 (merge queue, unavailable here — worth knowing before proposing it) and
 moved V2's seam from "unavoidable parsing" to "a flag we are not using". It
 confirmed V3 and V4. No verdict flipped on a claim without a source.
+
+## 9. open-code-review (Alibaba), measured 2026-11-19
+
+`alibaba/open-code-review` v1.13.13, static `linux-amd64` binary (no npm needed).
+Everything below was run from this checkout; `--preview` needs no model key and
+costs nothing, so the coverage numbers are free and exact.
+
+**The gate contract is still ours.** `ocr review --help`: *"Budget-only partial
+reviews with usable coverage exit 0."* Exit 0 means completed, **not** "no
+defect"; 1 means fatal. So it cannot sit behind a required check any more than
+pr-agent can. Its `--format json` envelope does carry `comments: []` **always
+present** with a `session_id`, which is precisely the primitive the zero-finding
+review lacks — so it proves the gate fix is a flag (`--json-output`), not a
+775-line subsystem.
+
+**It cannot read the prose, and this repo is half prose.** Files with an
+extension outside the code set are dropped as `unsupported_ext` before review:
+
+| | value |
+|---|---|
+| PRs where **every** changed file is excluded | **5 of 15** (#147, #128, #143, #133, #119) |
+| files reviewable / files excluded | **28 / 27** |
+| #134 (two prose claims + tests) | 2 reviewed — the two test files; GLOSSARY.md and docs/STATE-MACHINES.md excluded |
+
+So on #134 it would return zero findings for a *stronger* reason than pr-agent
+did: the claims are not in the input. The two reviewers' blind spots are
+**different, not ranked** — pr-agent reads prose but emits nothing when it finds
+nothing; OCR has the contract but cannot see prose at all. "Alongside" is real
+and asymmetric: 9 code-visible PRs, not 15.
+
+**The key blocker is gone.** Delegate mode uses the *host* agent's model and
+credentials (`README` L157: "No separate LLM configuration or credentials are
+needed in OCR"), so a shadow pass costs no new key. It does confound the
+comparison — pr-agent runs `deepseek-v4.1-flash`, the host runs something else —
+so a same-model A/B still needs a provider key, and a delegate-mode pass measures
+*pipeline* (diff selection, rule matching, output contract), not model.
+
+**Corrected from §9's first draft** (written before the preview pass): the replay
+is not "blocked on a key". It is blocked on nothing for 9 PRs, and on a key only
+for a like-for-like model comparison.
