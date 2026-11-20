@@ -152,5 +152,20 @@ else
     bad "--list <base> did not default to HEAD: ${out:-nothing}"
 fi
 
+# 8. A diff that cannot be computed must fail rather than select nothing. An
+# unrelated root shares no history with the branch, so `base...head` exits 128;
+# the failure used to vanish inside a process substitution, leaving an empty list
+# that selected zero scenarios and reported the build green having run none.
+orphan="$(git -C "$repo" commit-tree \
+    "$(git -C "$repo" hash-object -t tree -w /dev/null)" -m "unrelated root")"
+if out="$(listed "$orphan" "$head")"; then
+    bad "a diff with no merge base exited 0: ${out:-no output}"
+else
+    case $out in
+        *"cannot diff"*) ok "a diff with no merge base fails instead of selecting nothing" ;;
+        *) bad "no-merge-base diff failed for the wrong reason: ${out:-no output}" ;;
+    esac
+fi
+
 ((status == 0)) || { printf 'gate-scenarios self-test FAILED\n' >&2; exit 1; }
-printf 'gate-scenarios self-test: 7 assertions hold\n'
+printf 'gate-scenarios self-test: 8 assertions hold\n'
