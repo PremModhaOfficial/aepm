@@ -44,6 +44,7 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # The workflow's own reporting block, extracted from review-gate.yml and run
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
+bash scripts/check-ocr-review.sh
 
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings

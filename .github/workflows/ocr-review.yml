@@ -53,10 +53,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # A fork PR gets a read-only token, so the comment cannot be posted and the
-    # LLM key would not be exposed: skip rather than fail.
+    # LLM key would not be exposed: skip rather than fail. A draft is skipped the
+    # same way (AGENTS.md, as pr-agent does at its line 60): it is not ready to
+    # have its claims judged. A closed or merged PR is skipped too, so a
+    # `synchronize` that races a close cannot spend a review on it.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.state == 'open' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,7 +138,10 @@ jobs:
           [ -s "$RUNNER_TEMP/rule.json" ] && args+=(--rule "$RUNNER_TEMP/rule.json")
           [ -s "$RUNNER_TEMP/bg.md" ] && args+=(-B "$RUNNER_TEMP/bg.md")
           out=$(ocr review --from "$BASE" --to HEAD --preview "${args[@]}" 2>&1)
-          n=$(printf '%s\n' "$out" | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p')
+          # `1p`: if the output ever carries more than one such line, `n` would be
+          # a multi-line value, which `$GITHUB_OUTPUT` rejects with an opaque
+          # "Invalid format" instead of this step's own message.
+          n=$(printf '%s\n' "$out" | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p' | sed -n '1p')
           # Never let a changed message turn into a silent skip that still passes.
           if ! printf '%s' "$n" | grep -qxE '[0-9]+'; then
             echo "::error::could not read the reviewable-file count from --preview output"
@@ -269,8 +277,15 @@ jobs:
 
           repo="$GITHUB_REPOSITORY"
           # Not `| head -1`: with pipefail, gh gets EPIPE on the next page and fails.
-          ids=$(gh api --paginate "repos/${repo}/issues/${PR_NUM}/comments" \
-                 --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null || true)
+          #
+          # A failed lookup is NOT "no matching comment". Posting on failure
+          # creates a second advisory comment that the next successful run cannot
+          # find, so the PR carries a stale duplicate forever. Fail loudly instead.
+          if ! ids=$(gh api --paginate "repos/${repo}/issues/${PR_NUM}/comments" \
+                 --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null); then
+            echo "::error::could not list PR comments; not posting (a duplicate would be unfindable next run)"
+            exit 1
+          fi
           id=$(printf '%s\n' "${ids}" | sed -n '1p')
           if [ -n "${id}" ]; then
             gh api -X PATCH "repos/${repo}/issues/comments/${id}" -F body=@"$RUNNER_TEMP/body.md" >/dev/null
