@@ -724,6 +724,6 @@ Checked 2026-11-07.
 - [ ] Docker layer cache between CI runs.
 - [x] Coverage report for unit tests: `scripts/gate-coverage.sh`, floor in
       `coverage-floor.txt`, lcov artifact.
-- [x] Branch protection requiring `CI` and `Sim` before merge. Live on
-      `main`: strict, both checks required, admins enforced, no force push,
+- [x] Branch protection requiring `CI`, `Sim` and `Review Gate` before merge.
+      Live on `main`: strict, all three required, admins enforced, no force push,
       no branch deletion (`gh api repos/PremModhaOfficial/aepm/branches/main/protection`).
