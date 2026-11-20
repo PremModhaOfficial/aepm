@@ -159,3 +159,29 @@ on a paginated `gh api` is an intermittent EPIPE; and the review call was the on
 OCR invocation with no `timeout`.
 
 Two runs, eight findings, eight that survive inspection. On one file.
+
+## The options, chosen for this project
+
+The defaults are written for a generic code review. These are the ones that change
+behaviour here, each picked against a requirement rather than a preference.
+
+| option | our setting | why |
+|---|---|---|
+| `include` (in `rules.json`) | `**/*.md` | **This is the big one.** It bypasses `unsupported_ext`, so prose is reviewed. Measured on #134: 2 files → 4, and docs-only #143 went from *invisible* to 3 files. The earlier "markdown is blind" finding in this file was a default, not a limit. |
+| `exclude` | `docs/research/**`, `Cargo.lock`, `target/**` | Research notes are measurement logs, not claims to verify: they were 2 of 3 files on #147 and would have dominated the token budget. Confirmed excluded with reason `user_exclude`. |
+| `rules[].rule` | 6 layers: `src/**/*.rs`, `**/*.md`, workflows, `scripts/**/*.sh`, `sim/**`, `PKGBUILD`/`packaging/**` | The project's own hard rules, so the reviewer checks *our* invariants (fetch writes only the sync DB and cache; `check`/`doctor` write nothing; `install` never rebuilds; nothing runs `yay`/`makepkg` as root) instead of generic Rust advice. |
+| `rules[].merge_system_rule` | `true` for code, `false` for `**/*.md` | Keep the built-in Rust, YAML and shell rules and add ours. For markdown, *replace* them: the built-in prose rules are style-shaped, and this repo only wants true/false and sourced/unsourced. |
+| `-B background.md` | `.github/ocr/background.md` | Product context: what the tool may never do, how this repo decides things, and the four failure modes that actually happened. Cheaper than repeating it in every rule layer. |
+| policy source | `git show <base>:…` | A PR must not be able to weaken the rules that judge it, the same way `.pr_agent.toml` is read from `main`. |
+| `--timeout`, job `timeout-minutes` | 11 / 780s / 15 min | Nested so OCR's own budget ends first, then the wrapper, then the job: a hang is reported by the guard rather than killed silently. |
+| `--max-tokens-budget` | 120000 | Hard ceiling per run. Markdown inclusion raises file counts, so the cap matters more than before. |
+
+Left at default, deliberately:
+
+- `--no-filter` **off** — the built-in post-filter drops low-value comments. Given
+  the flake rate and the noise budget of a PR thread, filtering stays on.
+- `--effort` **low** — the default is `medium`, which costs more and, in the
+  three runs measured here, `low` already produced 13 findings that survived
+  inspection. Raise it if recall on real defects ever looks thin.
+- `--concurrency 4`, `--max-git-procs` — diff sizes here are small; raising
+  concurrency buys nothing and adds provider contention.

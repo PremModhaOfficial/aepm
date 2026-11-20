@@ -91,6 +91,26 @@ jobs:
           git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
           printf 'num=%s\nbase=origin/%s\n' "$num" "$base" >> "$GITHUB_OUTPUT"
 
+      - name: Load the review policy from the base branch
+        # The policy comes from the base branch, never from the PR head: a pull
+        # request must not be able to weaken the rules that judge it.
+        env:
+          BASE: ${{ steps.r.outputs.base }}
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/rule.json" "$RUNNER_TEMP/bg.md"
+          if git show "${BASE}:.github/ocr/rules.json" > "$RUNNER_TEMP/rule.json" 2>/dev/null; then
+            echo "rules: ${BASE}"
+          else
+            rm -f "$RUNNER_TEMP/rule.json"
+            echo "rules: absent in ${BASE}; built-in rules only, markdown will be skipped"
+          fi
+          if git show "${BASE}:.github/ocr/background.md" > "$RUNNER_TEMP/bg.md" 2>/dev/null; then
+            echo "background: ${BASE}"
+          else
+            rm -f "$RUNNER_TEMP/bg.md"
+          fi
+
       - name: Install open-code-review
         run: |
           set -euo pipefail
@@ -107,7 +127,10 @@ jobs:
         run: |
           set -euo pipefail
           # --preview runs no model: this step is free.
-          out=$(ocr review --from "$BASE" --to HEAD --preview 2>&1)
+          args=()
+          [ -s "$RUNNER_TEMP/rule.json" ] && args+=(--rule "$RUNNER_TEMP/rule.json")
+          [ -s "$RUNNER_TEMP/bg.md" ] && args+=(-B "$RUNNER_TEMP/bg.md")
+          out=$(ocr review --from "$BASE" --to HEAD --preview "${args[@]}" 2>&1)
           n=$(printf '%s\n' "$out" | sed -n 's/.*Will review (\([0-9]*\)).*/\1/p')
           # Never let a changed message turn into a silent skip that still passes.
           if ! printf '%s' "$n" | grep -qxE '[0-9]+'; then
@@ -163,8 +186,13 @@ jobs:
           BASE: ${{ steps.r.outputs.base }}
         run: |
           set +e
-          timeout 900 ocr review --from "$BASE" --to HEAD \
-            --format json --audience agent --effort low --concurrency 4 \
+          args=()
+          [ -s "$RUNNER_TEMP/rule.json" ] && args+=(--rule "$RUNNER_TEMP/rule.json")
+          [ -s "$RUNNER_TEMP/bg.md" ] && args+=(-B "$RUNNER_TEMP/bg.md")
+          # --timeout is OCR's own task budget in minutes; keep it well under the
+          # job's timeout-minutes so the guard reports rather than the job being killed.
+          timeout 780 ocr review --from "$BASE" --to HEAD "${args[@]}" \
+            --timeout 11 --format json --audience agent --effort low --concurrency 4 \
             --max-tokens-budget "${OCR_MAX_TOKENS_BUDGET}" \
             -o "$RUNNER_TEMP/ocr.json" 2>"$RUNNER_TEMP/ocr.err"
           rc=$?
@@ -229,7 +257,9 @@ jobs:
               printf '%s\n' "$rows"
             fi
             echo
-            echo "<sub>open-code-review ${OCR_VERSION} · model \`${OCR_LLM_MODEL}\` · budget ${OCR_MAX_TOKENS_BUDGET} tokens · markdown files are excluded by the tool, so docs-only changes are not reviewed here</sub>"
+            policy="built-in"
+            [ -s "$RUNNER_TEMP/rule.json" ] && policy=".github/ocr/rules.json@base"
+            echo "<sub>open-code-review ${OCR_VERSION} · model \`${OCR_LLM_MODEL}\` · policy ${policy} · effort low · budget ${OCR_MAX_TOKENS_BUDGET} tokens</sub>"
           } > "$RUNNER_TEMP/body.md"
 
           repo="$GITHUB_REPOSITORY"

@@ -1,0 +1,43 @@
+{
+  "include": ["**/*.md"],
+  "exclude": [
+    "Cargo.lock",
+    "target/**",
+    "docs/research/**",
+    ".t3/**",
+    "sim/images/**",
+    "**/*.snap.new"
+  ],
+  "rules": [
+    {
+      "path": "src/**/*.rs",
+      "merge_system_rule": true,
+      "rule": "#### Pacman side-effect invariants (this project's hard rules)\n- `fetch` may write ONLY to the pacman sync database and the download cache. Flag ANY write to `/usr`, `/etc`, or `/var/lib/pacman/local`.\n- `check` and `doctor` must write nothing at all: no file, no directory, no state file, no log.\n- `install` must never rebuild a package that was already built; rebuilding an existing package is a defect, not a nicety.\n- Nothing may invoke `yay` or `makepkg` as root, and nothing may invoke `pacman` outside the sim harness.\n\n#### Evidence for behaviour changes\n- A change that alters pacman behaviour needs a scenario under `sim/scenarios/`. A unit test with a fake runner does not prove a side effect; say so if it is the only cover.\n- Flag any claim in a comment or doc comment that the code does not implement (stub presented as done).\n\n#### Dependencies and scope\n- A new crate in `Cargo.toml` is a design decision, not a detail: flag it and say what it replaces.\n\n#### TUI (src/tui/**)\n- Colour must come from the ANSI-16 palette; no truecolor escape.\n- Every glyph added must also exist in `--ascii` output, or ASCII mode breaks.\n- The render path is budgeted at 16 ms for 2,000 packages: flag per-frame allocation, sorting, or cloning inside a draw function."
+    },
+    {
+      "path": "**/*.md",
+      "merge_system_rule": false,
+      "rule": "#### Verify every claim against the code\nThis file is prose. Its whole value is whether each factual claim is true, so review it as claims, not as sentences.\n- For EVERY claim about behaviour, locate the code that implements it and state the `file:line`. If no such code exists, that is the finding: name the claim and say it is unsupported.\n- For EVERY number (a duration, a token count, a coverage percentage, a scenario count), demand its source: a named command, a log path, or a file. A number with no source is a finding even when it is probably right.\n- Flag a claim that describes work as complete when the code shows a stub, a TODO, or an unimplemented branch. Say exactly what is missing.\n- Flag a measurement older than the commit it describes as stale rather than silently accepting it.\n- Terminology must match `GLOSSARY.md`. A synonym for a named concept (for example a different word for `fetch`, `check`, `prefetch`, or a `badge`) is a finding, because test names and commits rely on those exact words.\n- Do not report style, tone, or wording preferences. Only true/false, sourced/unsourced, current/stale."
+    },
+    {
+      "path": ".github/workflows/**/*.{yml,yaml}",
+      "merge_system_rule": true,
+      "rule": "#### Gate honesty\n- A check that cannot run must fail loudly. Flag any path where a missing input, an unparsed message, or a skipped step still prints success or exits 0.\n- A green result must be evidence that something ran. Flag any assertion on an exit code where the artefact (JSON, report, file) is the thing that should be checked.\n- Flag a required check placed behind a `paths:` filter: it stays Pending and blocks forever.\n- Flag untrusted text interpolated into a `run:` body (`${{ }}` inside shell). Values belong in `env:`.\n- Flag any reviewer or bot output that is posted, or merged, without sanitising model-generated text."
+    },
+    {
+      "path": "scripts/**/*.sh",
+      "merge_system_rule": true,
+      "rule": "#### Scripts are gates\n- Flags must be parsed without `eval`, and untrusted text must never reach a shell word unquoted.\n- A script that inspects state must exit non-zero when it cannot read that state; silence that reads as success is the defect this repo has hit repeatedly.\n- `set -euo pipefail` unless there is a stated reason; if errors are ignored, the ignore must be visible in the same three lines.\n- A script that claims a number must print where the number came from."
+    },
+    {
+      "path": "sim/**",
+      "merge_system_rule": true,
+      "rule": "#### The simulation is the only place pacman may run\n- Nothing in `sim/` may touch the host: no host `pacman`, `yay`, `makepkg`, `aurto`, `systemctl`. Everything happens in the disposable container with `--network none`.\n- A scenario must assert the side effect it exists to prove (the database row, the cache file, the refusal), not just that a command exited 0.\n- A fault scenario must prove the failure path: a partial download, a bad signature, a non-zero pacman exit.\n- Scenario numbers are stable identifiers: flag a renumbering or a duplicate."
+    },
+    {
+      "path": "{PKGBUILD,packaging/**}",
+      "merge_system_rule": true,
+      "rule": "#### Packaging\n- The version in `PKGBUILD` must match `Cargo.toml`; a mismatch is a broken AUR release.\n- Flag a file installed outside its declared destination, and any unit installed system-wide that belongs under the user units directory."
+    }
+  ]
+}
