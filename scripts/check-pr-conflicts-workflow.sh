@@ -197,9 +197,17 @@ declared=$(( $(grep -c '^run_case ' "$0") + 3 ))
 # Every mention must agree: `head -1` let a stale row coexist with a correct one
 # and pass on whichever came first. Anchored to the D38 row shape, because a
 # count quoted in the row's own [VERIFIED] prose is not the row's count.
-doc_rows="$(grep -oE '\| *`scripts/check-pr-conflicts-workflow\.sh` *\| *[0-9]+/[0-9]+' "$DOC" \
-  | grep -oE '[0-9]+/[0-9]+' | sort -u)"
+# Read every mention, not just the row shape: D38's [VERIFIED] prose quotes the
+# same count and the row-only pattern left it uncompared, which is the defect
+# the conflicts-suite guard above already had fixed.
+doc_all="$(grep -oE 'scripts/check-pr-conflicts-workflow\.sh`?[^0-9]{0,6}[0-9]+/[0-9]+' "$DOC" \
+  | grep -oE '[0-9]+/[0-9]+')"
+doc_rows="$(printf '%s\n' "$doc_all" | sort -u)"
+n_doc_mentions=$(printf '%s\n' "$doc_all" | grep -c . || true)
 doc_row="$doc_rows"
+if [[ "$n_doc_mentions" -lt 2 ]]; then
+  fail doc-count "PR-AGENT.md quotes this suite $n_doc_mentions time(s); expected the D38 sentence and the coverage row: '${doc_rows:-nothing}'"
+fi
 [[ "$(printf '%s\n' "$doc_rows" | grep -c .)" -le 1 ]] || doc_row="$doc_rows (disagree)"
 if [[ "$declared" -ne "$checks" ]]; then
   fail doc-count "the suite counted $checks case(s) but its source declares $declared"

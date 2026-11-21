@@ -91,7 +91,7 @@ fi
 # 4b. The distinct script count is asserted too: a new script added next to a
 #     gate raises this number without changing the invocation count, and a
 #     prose number nothing compares said 13 while 12 were invoked.
-scripts_actual=$(grep -oE '(bash |\./)?scripts/[A-Za-z0-9_-]+\.sh|\./sim/[a-z]+\.sh' ci.sh \
+scripts_actual=$(grep -oE '(bash |\./)?(sim|scripts)/[A-Za-z0-9_-]+\.(sh|py)' ci.sh \
   | sed 's/^bash //;s#^\./##' | sort -u | grep -c . || true)
 scripts_quoted=$(grep -oE 'invocations over [0-9]+ scripts' "$DOC" | grep -oE '[0-9]+' || true)
 if [ -n "$scripts_quoted" ] && [ "$scripts_quoted" = "$scripts_actual" ]; then
