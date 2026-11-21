@@ -66,6 +66,14 @@ echo "=== ci architecture doc matches the repository ==="
 # those drifts shut, offline, on any PR.
 bash scripts/check-ci-architecture.sh
 
+echo "=== pr-triage doc: the prose counts match the table beside them ==="
+# PR-TRIAGE.md states its counts twice, as a table read from the API and as the
+# sentence a reader acts on. Both drifted and a reviewer found them: "three of
+# the four open PRs look missing checks" against a table with one conflicting
+# head, and a merge order that "costs nothing" under `strict: true`, where the
+# first merge is what puts the next PR behind. Every count is derived here.
+bash scripts/gate-doc-claims.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 
