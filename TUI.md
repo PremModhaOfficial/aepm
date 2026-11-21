@@ -525,9 +525,14 @@ attestation and only when no gate failed; it suspends the TUI, runs the exact
 `yay -Syuu` attached with the CLI's options, restores the terminal and opens
 the post-install receipt. While a fetch is running, `i` is ignored: one
 mutation at a time. A gate refusal before `yay` starts produces a "not run"
-receipt, never a fabricated command exit. The receipt is read-only: its attached `p` (sudo
-pacdiff), copy and install-log keys are not wired yet, and it says to run
-`sudo pacdiff` after closing.
+receipt, never a fabricated command exit. The receipt is read-only: its copy
+and install-log keys are not wired, and it prints `sudo pacdiff` for the user
+to run after closing. An attached `p` cannot ship on this contract: `init`
+writes one sudoers rule, for `pacman -Syuw --noconfirm`
+(`sed -n 191,196p src/commands/init.rs`), so a second escalation from the
+receipt would be a rule the installer never wrote — and a passwordless rule for
+an interactive tool that writes `/etc` widens privilege past the one path
+`fetch` uses (`PENDING.md`).
 
 ```
 ┌ Install ─────────────────────────────────────────────────────────────────── 3 packages ┐
@@ -588,10 +593,10 @@ The block is built from `PostInstall` on success **and** failure:
 ┌ post-install ──────────────────────────────────────────────────────────────────────────┐
 │ ✓  yay -Syuu exited 0                                                                  │
 │ ▲  kernel   running 6.11.5-arch1 · on disk 6.11.6.arch1-1 · reboot required            │
-│ ▲  pacdiff  3 .pacnew files                     press p to run sudo pacdiff            │
+│ ▲  pacdiff   2 .pacnew file(s); run sudo pacdiff after closing                         │
 │ –  reboot   recommended: kernel and glibc changed                                      │
 │                                                                                        │
-│ enter close      p run pacdiff (leaves the TUI)      y copy summary                    │
+│ enter / esc close                                                                      │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌ post-install ─ failure ────────────────────────────────────────────────────────────────┐
@@ -599,13 +604,12 @@ The block is built from `PostInstall` on success **and** failure:
 │ ▲  repair   disk-full mid-install is possible; run pacman -Qkk <pkg> for each package  │
 │ –  pacdiff  not run because the upgrade failed                                         │
 │                                                                                        │
-│ enter close      c copy repair commands      l open the log                            │
+│ enter / esc close                                                                      │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Cover all six cases from the review: `success`, `failure`, `disk_full`,
-`pacdiff`, `kernel`, `reboot`. `p` runs `sudo pacdiff` attached. The TUI never
-edits `/etc` itself.
+`pacdiff`, `kernel`, `reboot`. The TUI never edits `/etc` itself.
 
 ### Caches
 
@@ -770,7 +774,6 @@ bound to two actions in the same resolved context.
 | install | `enter` / `esc` | install / cancel |
 | confirm | `y` / `esc` / `enter` | confirm / cancel / activate focused button |
 | palette | `C` | copy cache path |
-| post-install | `p` | run `sudo pacdiff` attached |
 
 All keys come from the keymap; every one is rebindable in `tui.conf`. The v1
 action names, in `src/keymap.rs`, are `quit`, `interrupt`, `suspend`, `help`,
@@ -1267,7 +1270,8 @@ T3d landed: the receipt is built from `post_install::collect` and shows the
 real exit, the running kernel against `/usr/lib/modules`, the `.pacnew` count,
 kernel-based reboot advice, and a repair line on failure. It is read-only and
 closes with enter or esc; sim 36 proves the success receipt. The attached `p`
-(sudo pacdiff), copy and install-log keys remain unwired.
+(sudo pacdiff), copy and install-log keys remain unwired, and `p` cannot be
+wired on the one-rule privilege contract stated above (`PENDING.md`).
 
 T4 stuck-flag fix landed: the log screen belongs to its session. Ending a
 session (`esc` on a finished one, or a `F` that a gate refuses) closes the log
