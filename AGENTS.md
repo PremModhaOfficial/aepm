@@ -119,9 +119,7 @@ lives there, in the `claimed` label.
   is false, the fix is to delete the claim or replace it with a command whose
   output anyone can re-run. Adding a sentence, a qualifier, or a counter that
   watches the sentence is a new claim of the same kind, and it will be the next
-  finding. Four rounds of the CI-architecture document each fixed one false claim
-  by writing another; two of those rounds then failed on the claim they had
-  written.
+  finding.
 - **One PR, one of these.** A pull request may touch at most one of {a workflow,
   the gate script that checks it, the document that describes it} per concern.
   Two of them in one PR is two owners for one fact, and the second copy drifts.
