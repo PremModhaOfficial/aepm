@@ -58,8 +58,8 @@ end = next(i for i, l in enumerate(lines) if sys.argv[3] in l)
 print("\n".join(l[10:] for l in lines[start:end]))
 PY
 
-# The fake `gh`: one head commit, one run title, a capture of the check-run body
-# and a switch for a refused check-run write.
+# The fake `gh`: one head commit, one run title, a capture of the check-run body,
+# and a switch for a refused write.
 mkdir -p "$root/bin" "$root/scripts"
 cat >"$root/bin/gh" <<'GH'
 #!/usr/bin/env bash
@@ -117,12 +117,12 @@ chmod +x "$root/scripts/review-state.sh"
 
 # Each case: label, RUN_EVENT, RUN_SHA, RUN_PR, fake PR head, fake verdict,
 # expected exit, expected check-run (created|none), expected conclusion,
-# expected text in the log, and whether the check-run write is refused.
+# expected text in the log, and whether the write is refused.
+cases=0
 failures=0
-passed=0
-CASES="$(grep -c '^run_case ' "$0")"
 run_case() {
   local label=$1 event=$2 run_sha=$3 run_pr=$4 fake_head=$5 verdict=$6
+  cases=$((cases + 1))
   local want_exit=$7 want_body=$8 want_conclusion=$9 want_text=${10:-} write_fail=${11:-0}
   local out_file checkrun case_file out rc body problem=""
   out_file="$root/out"; : >"$out_file"
@@ -171,7 +171,6 @@ run_case() {
     printf 'FAIL %s: %s\n%s\n' "$label" "$problem" "$out"
     failures=$((failures + 1))
   else
-    passed=$((passed + 1))
     printf 'ok   %s\n' "$label"
   fi
 }
@@ -206,25 +205,227 @@ run_case no-gate-on-base pull_request "$HEAD"  9 "$HEAD" pass 1 none  ""        
 
 # A `/review` run that was not authorized changes nothing, so the job never
 # starts; that is a workflow-level `if` and is asserted here as text.
+cases=$((cases + 1))
 grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
-# The evidence table states this suite's count, and a count the run refutes is a
-# claim, not evidence: the row said 12/12 for a suite that prints 9/9. Read for
-# this script's own line, so adding a case fails here until the table says what
-# the suite prints rather than drifting a revision behind it.
-doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
-  | grep -oE '[0-9]+/[0-9]+' | head -1)"
-# The total is the source's own case count, not the counter at this point: a case
-# appended after this check would otherwise raise the printed total while the row
-# still matched (finding 91f0289550e3).
-if [[ "$doc_row" != "$CASES/$CASES" ]]; then
-  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $CASES case(s)"
+# The docs state the protection this gate depends on, so each stated setting
+# names a proof that shows it. Narrowing a proof back to the contexts array
+# leaves `strict`, admins-enforced and no-force-push as memory, and a doc that
+# offers an admin merge as the way past the gate contradicts `enforce_admins`.
+#
+# Both assertions are functions so the fixtures at the end can hand them the doc
+# they must reject: a check that cannot reject its own regression proves nothing
+# about the real doc, and the fixture stops a silent revert of either one.
+
+# Prints one line per problem found in a doc's proof of the protection. No
+# output means the doc names a proof covering every setting it states beside it.
+protection_problems() {
+  local doc=$1 cmd line_missing missing="" found=0
+  if [[ ! -r "$doc" ]]; then
+    printf '%s cannot be read, so its proof cannot be checked\n' "$doc"
+    return 0
+  fi
+  while IFS= read -r cmd; do
+    if [[ "$cmd" == *--jq* ]]; then
+      # A narrowed proof must name every setting stated beside it. The contexts
+      # array carries the "all three required" claim, so it is one of them.
+      line_missing=""
+      for key in '.required_status_checks.contexts' \
+                 '.required_status_checks.strict' \
+                 '.enforce_admins.enabled' \
+                 '.allow_force_pushes.enabled' \
+                 '.allow_deletions.enabled'; do
+        case "$cmd" in *"$key"*) ;; *) line_missing="$key" ;; esac
+      done
+      if [[ -z "$line_missing" ]]; then found=1; else missing="$line_missing"; fi
+    else
+      # Only the command itself prints the whole protection object and so proves
+      # all five: a line that starts with `gh api`, or the backticked call these
+      # docs quote (`gh api repos/.../protection`), with the path ending the code
+      # span. A sentence that mentions the command -- `# run gh api ... to inspect
+      # it` -- ends the path in words, is not a proof, and is rejected.
+      if [[ "$cmd" =~ ^[[:space:]]*gh\ api\ [^[:space:]]*branches/main/protection([[:space:]]|$) ]] \
+        || [[ "$cmd" =~ \`gh\ api\ [^\`]*branches/main/protection\` ]]; then
+        found=1
+      fi
+    fi
+  done < <(grep -F 'branches/main/protection' "$doc" 2>/dev/null || true)
+  # A proof that was deleted, a narrowed proof with no full one beside it, or a
+  # doc that cannot be read is a failure: a claim with no evidence must not pass
+  # this check. A full proof anywhere in the doc answers the claim, so a second
+  # narrowed line must not turn a sourced doc into a failure.
+  if [[ "$found" -eq 0 && -n "$missing" ]]; then
+    printf '%s proves the required checks without %s, so the setting stated beside it is unsourced\n' "$doc" "$missing"
+  elif [[ "$found" -eq 0 ]]; then
+    printf '%s states the protection with no proof line, so the claim is unsourced\n' "$doc"
+  fi
+  return 0
+}
+
+# The override must be the mechanism that exists. With admins enforced no merge
+# action bypasses the gate, so advising an admin merge sends a reader after a
+# button that refuses them, and `no merge bypass` alone names no way forward.
+override_problems() {
+  local doc=$1 flat phrase
+  if [[ ! -r "$doc" ]]; then
+    printf '%s cannot be read, so its override cannot be checked\n' "$doc"
+    return 0
+  fi
+  # Squash the newlines: a reflowed paragraph must not decide this assertion.
+  flat="$(tr -s '[:space:]' ' ' <"$doc")"
+  for phrase in 'Overriding it is an admin merge' 'human override is an admin merge'; do
+    case "$flat" in
+      *"$phrase"*)
+        printf '%s offers an admin merge as the override, which admins-enforced refuses\n' "$doc"
+        return 0 ;;
+    esac
+  done
+  case "$flat" in
+    *'editing the `main` ruleset or protection'*) ;;
+    *) printf '%s names no ruleset or protection edit as the override, so a blocked merge reads as unfixable\n' "$doc" ;;
+  esac
+  return 0
+}
+
+doc_cases=0
+docs_ok=0
+# Prints what an assertion found wrong with a doc, and counts the case.
+doc_case() {  # <label> <problem output>
+  local label=$1 problems=$2 problem
+  cases=$((cases + 1))
+  doc_cases=$((doc_cases + 1))
+  if [[ -z "$problems" ]]; then
+    docs_ok=$((docs_ok + 1))
+    return 0
+  fi
+  while IFS= read -r problem; do
+    echo "FAIL docs: $problem"
+  done <<<"$problems"
+  echo "  ($label)"
   failures=$((failures + 1))
-elif [[ "$passed" -ne "$CASES" ]]; then
-  echo "FAIL doc-count: $passed case(s) passed of $CASES declared"
+}
+
+for doc in AGENTS.md .github/PR-AGENT.md; do
+  doc_case "$doc protection proof" "$(protection_problems "$repo_root/$doc")"
+done
+doc_case 'AGENTS.md override' "$(override_problems "$repo_root/AGENTS.md")"
+# Only AGENTS.md is asserted for the override, and that is the claim, not an
+# oversight: AGENTS.md is the rules file an agent reads before it acts, so a
+# merge instruction there has to name the mechanism that exists. `.github/
+# PR-AGENT.md` is the decision log; its N5 row records the setting, states
+# already that no merge bypass exists while admins are enforced, and instructs
+# no merge, so demanding the AGENTS.md override wording from the log would
+# assert a sentence it has no reason to carry (finding 4e9633e09070).
+
+# Fixtures: the docs the assertions above must reject, and the one they must
+# still accept. Each is the regression its check exists to catch, so reverting
+# the check turns this suite red instead of quietly passing the real docs.
+fixture_rejects() {  # <label> <assertion> <want text> <file>
+  local label=$1 assertion=$2 want=$3 file=$4 out
+  cases=$((cases + 1))
+  out="$("$assertion" "$file")"
+  if [[ "$out" == *"$want"* ]]; then
+    printf 'ok   %s\n' "$label"
+  else
+    printf 'FAIL %s: the check accepts a doc where %s (output: %s)\n' "$label" "$want" "${out:-none}"
+    failures=$((failures + 1))
+  fi
+}
+
+fixture_accepts() {  # <label> <assertion> <file>
+  local label=$1 assertion=$2 file=$3 out
+  cases=$((cases + 1))
+  out="$("$assertion" "$file")"
+  if [[ -z "$out" ]]; then
+    printf 'ok   %s\n' "$label"
+  else
+    printf 'FAIL %s: the check rejects a doc that names the whole proof (%s)\n' "$label" "$out"
+    failures=$((failures + 1))
+  fi
+}
+
+fixture="$root/fixture-prose.md"
+cat >"$fixture" <<'MD'
+The `branches/main/protection` endpoint returns the object the gate reads.
+MD
+fixture_rejects prose-is-not-proof protection_problems 'with no proof line' "$fixture"
+
+fixture="$root/fixture-narrowed.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_rejects contexts-not-required protection_problems '.required_status_checks.contexts' "$fixture"
+
+fixture="$root/fixture-full.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_accepts full-proof-is-proof protection_problems "$fixture"
+
+# A doc that quotes the whole command beside a narrowed one is sourced: the full
+# proof answers the claim, so a second, narrower line must not fail it (finding
+# 3e6224f00d99).
+fixture="$root/fixture-mixed.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{strict: .required_status_checks.strict}'`
+
+`gh api repos/o/r/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_accepts narrowed-beside-full protection_problems "$fixture"
+
+# A comment that mentions the command is not the command: the path ends in words,
+# so this proves nothing (finding f4b68b53d517).
+fixture="$root/fixture-comment.md"
+cat >"$fixture" <<'MD'
+# run gh api repos/o/r/branches/main/protection to inspect it
+MD
+fixture_rejects comment-is-not-proof protection_problems 'with no proof line' "$fixture"
+
+fixture="$root/fixture-no-way-forward.md"
+cat >"$fixture" <<'MD'
+While `enforce_admins` is on there is no merge bypass.
+MD
+fixture_rejects bypass-without-mechanism override_problems 'names no ruleset or protection edit' "$fixture"
+
+fixture="$root/fixture-admin-merge.md"
+cat >"$fixture" <<'MD'
+A human override is an admin merge, and it is a decision, not a formality.
+MD
+fixture_rejects admin-merge-override override_problems 'offers an admin merge as the override' "$fixture"
+
+# The summary counts the cases that ran. A count typed in as a constant is the
+# regression this guards: it keeps printing the old total while the suite grows,
+# so a dropped case reads as a pass.
+cases=$((cases + 1))
+if grep -qE '^echo "review-gate self-check: [0-9]' "${BASH_SOURCE[0]}"; then
+  echo "FAIL summary: the case count is typed in, not counted, so it cannot follow the suite"
   failures=$((failures + 1))
 fi
 
-[[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
-echo "review-gate self-check: $passed/$CASES"
+# The evidence table states this suite's count, and a count the run refutes is a
+# claim, not evidence: the row said 12/12 for a suite that printed 9/9. Read the
+# row for this script and compare it with the total counted above, so adding a
+# case fails here until the table says what the suite prints (finding
+# 91f0289550e3).
+#
+# Every citation, not just the table row: the decision rows cite the same count,
+# and one that is updated while another is left behind shows one suite two
+# totals (finding 474daa440a5e), which the table row alone never catches.
+cases=$((cases + 1))
+doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+if [[ "$doc_row" != "$cases/$cases" ]]; then
+  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $cases case(s)"
+  failures=$((failures + 1))
+fi
+while IFS= read -r cite; do
+  [[ -n "$cite" && "$cite" != "$cases/$cases" ]] || continue
+  echo "FAIL doc-count: a citation says '$cite', suite has $cases case(s)"
+  failures=$((failures + 1))
+done < <(grep -oE 'scripts/gate-review-selfcheck\.sh [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+')
+
+[[ "$failures" -eq 0 ]] || { echo "$failures of $cases case(s) failed"; exit 1; }
+echo "review-gate self-check: $cases/$cases"
+echo "review-gate docs name their proof: $docs_ok/$doc_cases"
