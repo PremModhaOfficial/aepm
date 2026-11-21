@@ -28,14 +28,6 @@ pub struct Receipt {
     pub reason: Option<String>,
 }
 
-impl Receipt {
-    /// Whether the attached `sudo pacdiff` is offered. A failed upgrade may not
-    /// have run the writes pacdiff reviews, and nothing waiting needs no review.
-    pub fn pacdiff_offered(&self) -> bool {
-        !self.failed && self.data.pacdiff_count > 0
-    }
-}
-
 /// Collect the receipt for a finished install.
 pub fn collect(runner: &dyn CommandRunner, exit_code: i32, stderr: &str) -> Receipt {
     collect_paths(
@@ -88,16 +80,6 @@ pub fn collect_not_run(runner: &dyn CommandRunner, reason: &str) -> Receipt {
     receipt.failed = true;
     receipt.reason = Some(reason.to_string());
     receipt
-}
-
-/// Re-read the `.pacnew` count for an open receipt, so an attached `sudo
-/// pacdiff` cannot leave a number on screen that the run just changed.
-pub fn recount_pacdiff(receipt: &mut Receipt) {
-    recount_pacdiff_paths(receipt, Path::new(ETC));
-}
-
-fn recount_pacdiff_paths(receipt: &mut Receipt, etc: &Path) {
-    receipt.data.pacdiff_count = count_pacnew(etc, 0);
 }
 
 fn disk_kernels(modules: &Path) -> Vec<String> {
@@ -167,7 +149,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{collect_paths, count_pacnew, recount_pacdiff_paths, repair_advice};
+    use super::{collect_paths, count_pacnew, repair_advice};
     use crate::runner::{CommandOutput, FakeRunner};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -251,30 +233,6 @@ mod tests {
                 .expect("a failed install has advice")
                 .contains("disk full")
         );
-
-        fs::remove_dir_all(&root).expect("clean temp root");
-    }
-
-    #[test]
-    fn a_recount_sees_the_files_pacdiff_reviewed() {
-        let root = temp_root();
-        let etc = root.join("etc");
-        let modules = root.join("modules");
-        fs::create_dir_all(&etc).expect("etc");
-        fs::create_dir_all(&modules).expect("modules");
-        fs::write(etc.join("a.conf.pacnew"), "").expect("pacnew");
-        fs::write(etc.join("b.conf.pacnew"), "").expect("pacnew");
-        let runner = FakeRunner::new();
-        uname(&runner, "6.1");
-        let mut receipt = collect_paths(&runner, 0, "", &etc, &modules);
-        assert!(receipt.pacdiff_offered(), "two files are offered");
-
-        fs::remove_file(etc.join("a.conf.pacnew")).expect("remove");
-        fs::remove_file(etc.join("b.conf.pacnew")).expect("remove");
-        recount_pacdiff_paths(&mut receipt, &etc);
-
-        assert_eq!(receipt.data.pacdiff_count, 0);
-        assert!(!receipt.pacdiff_offered(), "nothing left to review");
 
         fs::remove_dir_all(&root).expect("clean temp root");
     }

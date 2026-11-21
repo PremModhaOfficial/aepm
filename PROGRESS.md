@@ -608,8 +608,7 @@ same checks the CLI runs, a session-only news attestation and the exact command;
 sim 32 proves it cancels without installing. T3c arms `enter` after attestation
 and runs the same CLI path attached; sim 36 proves the upgrade and the terminal
 restore. T3d collects the real exit, kernel, `.pacnew` count and reboot advice
-into the post-install receipt, whose `p` runs `sudo pacdiff` attached and
-re-reads the count. The T4 visual pass adopts bootvine's
+into the read-only post-install receipt. The T4 visual pass adopts bootvine's
 grammar instead of nom's heavy box: bracketed `[ ]`/`[|]`/`[√]`/`[×]` markers,
 a light tree, and a one-line dim footer, with regenerated goldens and an ASCII
 equivalent.

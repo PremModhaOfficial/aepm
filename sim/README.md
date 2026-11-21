@@ -82,10 +82,7 @@ fresh image.
   `pacdiff`, plus `snapper` for the optional doctor checks. Each logs argv to
   `/var/log/sim-<tool>.log`; a scenario sets the
   reply with `/etc/sim/<tool>.out`, `.err`, and `.exit`. `paccache` forwards to
-  the real tool; `pacdiff` never runs for real. Its stub stands in for the
-  receipt's attached `sudo pacdiff`, and `/etc/sim/pacdiff.removes-pacnew`
-  makes it delete the `.pacnew` files it "reviewed", so a scenario can assert
-  that the receipt re-read the count.
+  the real tool; `pacdiff` never runs for real.
 - Pacman config fixtures for default, multiple, empty, and moved `CacheDir`
   under `/usr/local/lib/sim/fixtures`
 - A slow `XferCommand` fixture (`sim-xfer` plus `pacman-slow-xfer.conf`) that
@@ -150,7 +147,7 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `33-tui-prefetch.sh` | the prefetch frame reads the real cache: missing, cached, stale, partial and built, with no writes |
 | `34-tui-live-fetch.sh` | `F` runs the real fetch under a pty, shows the PRE-FLIGHT gates, opens the captured log with a real pacman line, shows real `.part` bytes and a bar, finishes from the final artifact, never reads a zero exit as frozen, leaves `/usr` and the package DB unchanged, writes only the state file, and escalates only the allowed argv |
 | `35-tui-failure-freeze.sh` | a corrupted repo artifact behind the paced transfer makes the real fetch fail: the running row freezes, the repair card names the evidence and the hint, `/usr` is unchanged, no state is written, and only the allowed argv is escalated |
-| `36-tui-install-attached.sh` | the attested install gate runs the exact attached `yay -Syuu` path as the sim installer: the package upgrades, the scoped helper is the only escalation, no AUR build happens, the state file records the install, the terminal is restored, and the post-install receipt shows the exit, kernel and pacnew state |
+| `36-tui-install-attached.sh` | the attested install gate runs the exact attached `yay -Syuu` path as the sim installer: the package upgrades, the scoped helper is the only escalation, no AUR build happens, the state file records the install, the terminal is restored, and the read-only post-install receipt shows the exit, kernel and pacnew state |
 | `40-tui-keymap.sh` | `[keys]` in `tui.conf` is the keymap: `quit = x` makes `q` dead and `x` quit, a missing file restores the default, and an unknown action name exits 2 with the file and line before a frame is drawn |
 | `37-fetch-refuses-during-a-build.sh` | `fetch` refuses with exit 1 while any of `pacman`, `yay`, `makepkg`, `aurto` runs, even with no `db.lck`, and `check` reports the live process |
 | `38-check-and-fetch-share-the-floor.sh` | `check` refuses on the same 5 GiB snapshot floor `fetch` refuses on, so its verdict matches fetch's |
@@ -169,7 +166,6 @@ package, add it to `sim/make-repo.sh`, do not open the network.
 | `52-corrupt-cached-artifact.sh` | a prefetched artifact is corrupted in place before the install: `check` and `doctor` stay read-only, `install --yes` discards the invalid cache file, transfers the real bytes and upgrades, pacman's log records the discarded copy, and the corrupt cache never turns into an AUR rebuild or an unverified install |
 | `53-package-install.sh` | a real `makepkg` builds the AUR package offline in an AUR-style directory (PKGBUILD and `.install`, no `Cargo.toml`), with its literal `pkgver` and source tag matching the crate version; `pacman -U` installs `/usr/bin/aepm` and both units in `/usr/lib/systemd/user`, with nothing under `/etc/systemd`, and the `.install` scriptlet prints how to enable the timer instead of enabling it |
 | `55-completed-install-after-fetch.sh` | pacman's log holds a download-only fetch and, after it, the hand upgrade that finished the whole upgrade: `check` exits 0 and calls the system clean, counting no pending update and naming no partial upgrade, while writing nothing; the same log with updates still pending is the partial upgrade 44 reports |
-| `56-tui-receipt-pacdiff.sh` | the receipt's `p` runs `sudo pacdiff` attached as the sim installer: sudo logs `pacdiff` as the whole argv, the stub removes the `.pacnew` it reviewed, the TUI comes back and the receipt re-reads the count to zero, `yay` ran once, no AUR build happened, and the state file is byte-identical across `p` |
 
 41-46 are the Phase 4 chaos level from `NEXT.md`; they need the fault
 injection below. 43, 44 and 45 each drive a real fault and assert the detection

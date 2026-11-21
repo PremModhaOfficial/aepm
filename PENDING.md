@@ -31,6 +31,12 @@ release notes.
 | the GRUB menu | GRUB 2.16-1 in the sim lands on its own `grub>` prompt instead of loading its config, so the guest boots its kernel straight from `/boot`. The kernel, initramfs and default subvolume — where a rollback takes effect — are covered | a bootloader image that loads its config on a serial console |
 | `SPACE_LIMIT`'s unmet branch | btrfs reports a parent qgroup's exclusive usage as zero, so 700 MiB of snapshot-only data still satisfies a 600 MiB limit. Scenario 62 asserts today's behaviour and goes red when that closes | a btrfs that reports parent usage, or a different quota mechanism |
 
+## Not shipped
+
+| what | state now | what settles it |
+|---|---|---|
+| the receipt's attached `p` | `init` writes one sudoers rule, for `pacman -Syuw --noconfirm`: `sed -n 191,196p src/commands/init.rs`. A `sudo pacdiff` from the receipt would be a second escalation with no rule behind it, so on a real host it prompts for root from inside the TUI, and a passwordless rule for an interactive tool that writes `/etc` widens privilege past the one path `fetch` uses | nothing in this tree. The receipt prints `sudo pacdiff` for the user to run after closing, which needs no privilege from `aepm` |
+
 ## Open work, with the issue that owns it
 
 | item | why it is open |

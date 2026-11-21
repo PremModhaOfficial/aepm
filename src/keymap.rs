@@ -13,8 +13,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::error::Error;
 
-/// Every action the interactive tree has. `confirm`, `attest` and `pacdiff` are
-/// modal-only, but they are keys like any other, so they live in the same table.
+/// Every action the interactive tree has. `confirm` and `attest` are modal-only,
+/// but they are keys like any other, so they live in the same table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Quit,
@@ -31,7 +31,6 @@ pub enum Action {
     Fetch,
     Confirm,
     Attest,
-    Pacdiff,
 }
 
 /// One key: a code plus whether Ctrl must be held. Shift is ignored, so `F` and
@@ -96,7 +95,6 @@ pub const DEFAULTS: &[(&str, Action, Key)] = &[
     ("fetch", Action::Fetch, Key::plain(KeyCode::Char('F'))),
     ("confirm", Action::Confirm, Key::plain(KeyCode::Enter)),
     ("attest", Action::Attest, Key::plain(KeyCode::Char(' '))),
-    ("pacdiff", Action::Pacdiff, Key::plain(KeyCode::Char('p'))),
 ];
 
 /// The action a name refers to. The parser and the error message both read the
@@ -311,7 +309,6 @@ mod tests {
             (press(KeyCode::Char('F')), Action::Fetch),
             (press(KeyCode::Enter), Action::Confirm),
             (press(KeyCode::Char(' ')), Action::Attest),
-            (press(KeyCode::Char('p')), Action::Pacdiff),
         ] {
             assert_eq!(keymap.action_for(&key), Some(action), "{key:?}");
         }
@@ -403,7 +400,7 @@ mod tests {
             labels,
             vec![
                 "q", "ctrl-c", "ctrl-z", "?", "esc", "g", "j", "k", "l", "i", "r", "F", "enter",
-                "space", "p",
+                "space",
             ]
         );
     }

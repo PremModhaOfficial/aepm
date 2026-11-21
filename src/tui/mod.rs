@@ -37,7 +37,7 @@ use crate::keymap::{Action, Keymap};
 use crate::post_install;
 use crate::progress;
 use crate::report::{Snapshot, attention};
-use crate::runner::{CommandRunner, SystemRunner};
+use crate::runner::SystemRunner;
 use crate::tui::fetch_session::{FetchSession, StartFailure};
 use crate::tui::tree::Tree;
 
@@ -249,7 +249,7 @@ fn run_interactive(
                         render::draw_install_gate(frame, &open.preflight, news_attested, ctx);
                     }
                     if let Some(receipt) = post_install.as_ref() {
-                        render::draw_post_install(frame, receipt, keymap, ctx);
+                        render::draw_post_install(frame, receipt, ctx);
                     }
                 })
                 .map_err(|err| Error::failed(format!("cannot draw the terminal: {err}")))?;
@@ -272,31 +272,9 @@ fn run_interactive(
             .map_err(|err| Error::failed(format!("cannot read the terminal: {err}")))?
         {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                // The post-install receipt is modal: it closes, quits, or
-                // runs the one attached command it offers.
+                // The post-install receipt is read-only and modal.
                 if post_install.is_some() {
                     match resolve(Context::Receipt, keymap, &key) {
-                        Some(Action::Pacdiff) => {
-                            // Offered only on a success receipt with something
-                            // left to review; every other receipt ignores it.
-                            if post_install
-                                .as_ref()
-                                .is_some_and(post_install::Receipt::pacdiff_offered)
-                            {
-                                let (restored, back, ran) = attached(terminal, guard, || {
-                                    SystemRunner.run_interactive("sudo", &["pacdiff"])
-                                })?;
-                                terminal = restored;
-                                guard = back;
-                                // A nonzero exit is the user cancelling inside
-                                // pacdiff, not an app error. A spawn failure is
-                                // one, and the terminal is already back.
-                                ran?;
-                                if let Some(receipt) = post_install.as_mut() {
-                                    post_install::recount_pacdiff(receipt);
-                                }
-                            }
-                        }
                         Some(Action::Back | Action::Confirm) => post_install = None,
                         Some(Action::Quit) => break,
                         Some(Action::Interrupt) => return Err(Error::Interrupted),
@@ -319,29 +297,29 @@ fn run_interactive(
                             if armed {
                                 let open = install_gate.take().expect("checked above");
                                 let euid = open.preflight.euid.expect("checked above");
-                                // yay needs the plain terminal, and the helper
-                                // restores it without stopping the process: a
+                                // The attached command owns the terminal. The
+                                // same guard path as Ctrl-Z restores it after.
+                                drop(terminal);
+                                // Restore the terminal without stopping the
+                                // process: yay needs the plain terminal, and a
                                 // SIGTSTP would leave the install waiting for
                                 // `fg`.
-                                let (restored, back, outcome) = attached(terminal, guard, || {
-                                    install::run_with_status(
-                                        config,
-                                        &SystemRunner,
-                                        install::Options {
-                                            // The gate never supplies the CLI's
-                                            // confirmation: a missing or empty
-                                            // trust file blocks above, and a silent
-                                            // `--yes` here would answer a question
-                                            // the gate had just refused to ask.
-                                            yes: false,
-                                            force: false,
-                                            stdin_is_tty: true,
-                                            euid,
-                                        },
-                                    )
-                                })?;
-                                terminal = restored;
-                                guard = back;
+                                guard.restore();
+                                let outcome = install::run_with_status(
+                                    config,
+                                    &SystemRunner,
+                                    install::Options {
+                                        // The gate never supplies the CLI's
+                                        // confirmation: a missing or empty
+                                        // trust file blocks above, and a silent
+                                        // `--yes` here would answer a question
+                                        // the gate had just refused to ask.
+                                        yes: false,
+                                        force: false,
+                                        stdin_is_tty: true,
+                                        euid,
+                                    },
+                                );
                                 let receipt = match &outcome {
                                     Ok(code) => post_install::collect(&SystemRunner, *code, ""),
                                     Err(error) => post_install::collect_not_run(
@@ -349,6 +327,16 @@ fn run_interactive(
                                         &error.to_string(),
                                     ),
                                 };
+                                guard = guard::Guard::enter().map_err(|err| {
+                                    Error::failed(format!("cannot restore the terminal: {err}"))
+                                })?;
+                                terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
+                                    .map_err(|err| {
+                                        Error::failed(format!("cannot restart the terminal: {err}"))
+                                    })?;
+                                terminal.clear().map_err(|err| {
+                                    Error::failed(format!("cannot clear the terminal: {err}"))
+                                })?;
                                 recollect(config, &mut snapshot, &mut last_fast, &mut epoch)?;
                                 post_install = Some(receipt);
                                 notice = Some(Notice::install(outcome));
@@ -558,15 +546,13 @@ fn accepts(context: Context, action: Action) -> bool {
         (Context::Receipt, Action::Quit | Action::Interrupt | Action::Back | Action::Confirm) => {
             true
         }
-        (Context::Receipt, Action::Pacdiff) => true,
         (
             Context::Gate,
             Action::Quit | Action::Interrupt | Action::Back | Action::Confirm | Action::Attest,
         ) => true,
         (Context::Receipt | Context::Gate, _) => false,
-        // Enter, space and p mean nothing over the static tree: the first two
-        // arm a modal, and pacdiff belongs to the receipt alone.
-        (Context::Global, Action::Confirm | Action::Attest | Action::Pacdiff) => false,
+        // Enter and space mean nothing over the static tree.
+        (Context::Global, Action::Confirm | Action::Attest) => false,
         (Context::Global, _) => true,
     }
 }
@@ -577,28 +563,6 @@ fn resolve(context: Context, keymap: &Keymap, key: &KeyEvent) -> Option<Action> 
     keymap
         .action_for(key)
         .filter(|action| accepts(context, *action))
-}
-
-/// Run one attached command with the TUI out of the way. Both commands that
-/// leave the TUI (`yay -Syuu` and `sudo pacdiff`) use this one bracket: the
-/// terminal is restored before the command gets it and rebuilt after it, so a
-/// spawn failure still returns with a screen to draw on.
-fn attached<T>(
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    mut guard: guard::Guard,
-    command: impl FnOnce() -> T,
-) -> Result<(Terminal<CrosstermBackend<io::Stdout>>, guard::Guard, T), Error> {
-    drop(terminal);
-    guard.restore();
-    let outcome = command();
-    let guard = guard::Guard::enter()
-        .map_err(|err| Error::failed(format!("cannot restore the terminal: {err}")))?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
-        .map_err(|err| Error::failed(format!("cannot restart the terminal: {err}")))?;
-    terminal
-        .clear()
-        .map_err(|err| Error::failed(format!("cannot clear the terminal: {err}")))?;
-    Ok((terminal, guard, outcome))
 }
 
 /// The install gate screen. It is read-only and never runs `yay`.
@@ -995,20 +959,7 @@ mod tests {
             Some(Action::Confirm)
         );
         assert_eq!(
-            resolve(Context::Receipt, &keymap, &press(KeyCode::Char('p'))),
-            Some(Action::Pacdiff)
-        );
-        assert_eq!(
             resolve(Context::Receipt, &keymap, &press(KeyCode::Char(' '))),
-            None
-        );
-        // pacdiff belongs to the receipt, not to the tree or the gate.
-        assert_eq!(
-            resolve(Context::Global, &keymap, &press(KeyCode::Char('p'))),
-            None
-        );
-        assert_eq!(
-            resolve(Context::Gate, &keymap, &press(KeyCode::Char('p'))),
             None
         );
     }

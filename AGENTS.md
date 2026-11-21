@@ -305,13 +305,11 @@ repair card, freezes the failed row and blocked dependents, and adds the `g`
 ledger. T3a adds the PRE-FLIGHT gates from `fetch::plan_observed` and the `l`
 log of the real captured lines. T3b adds the read-only install gate from
 `install::preflight`. T3c runs the attached install with the CLI's exact
-`Options` and restores the terminal. T3d adds the post-install
-receipt (`post_install::collect`), whose `p` runs `sudo pacdiff` attached with
-`post_install::recount_pacdiff` after it. Sim 32 proves the gate is read-only; sim 33
+`Options` and restores the terminal. T3d adds the read-only post-install
+receipt (`post_install::collect`). Sim 32 proves the gate is read-only; sim 33
 proves the badges; sim 34 proves the live fetch, the real bytes, the gates, the
 log and the one state write; sim 35 proves the failure freeze; sim 36 proves
-the attached install, the receipt and the terminal restore; sim 56 proves the
-receipt's `p`, the return and the re-read count.
+the attached install, the receipt and the terminal restore.
 
 The keymap overrides landed as one table in `src/keymap.rs` with the `[keys]`
 section of `tui.conf`, and sim 40 proves a rebound key acts, the old one stops,
@@ -319,6 +317,7 @@ and the footer and the help overlay name the new one. `--no-motion`, the ASCII
 pass and the 2,000-package performance pass are landed: the budget measures
 7.7 ms static and 10.4 ms live against 16 ms, and a sweep test proves every
 screen is ASCII in `--ascii`. Still open from T3: the receipt's copy and
-install-log keys (`y`, `l` in `TUI.md`).
+install-log keys (`y`, `l` in `TUI.md`); its attached `p` cannot ship on the
+current privilege contract (`PENDING.md`).
 The tree reads `check::collect`, `progress::collect` and `fetch::plan`; it does
 not collect its own facts.

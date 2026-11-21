@@ -158,9 +158,8 @@ attestation. A missing `/etc/aurto/trusted-users` blocks that gate, because the
 TUI never supplies the `--yes` the CLI requires for it. Once attested and
 unblocked, `enter` suspends the TUI and runs
 `yay -Syuu` attached with the CLI's options; the terminal is restored, the tree
-re-collected, and a post-install receipt shows the exit, kernel,
-`.pacnew` count and reboot advice. `p` on that receipt runs `sudo pacdiff`
-attached and re-reads the count. The fetch's only write is its existing state
+re-collected, and a read-only post-install receipt shows the exit, kernel,
+`.pacnew` count and reboot advice. The fetch's only write is its existing state
 file after a successful exit. `?` opens the help overlay, `r` re-collects the
 snapshot (refused while the fetch runs), and `j`/`k` move the selection.
 
