@@ -35,6 +35,7 @@ a reader.
 | `Review Gate` | `workflow_run` of `PR Agent` | `Review Gate` | yes | median 10s, p90 13s, max 19s (n=21) |
 | `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 452s, p90 849s, max 2376s (n=20) |
 | `Scheduled audit` | weekly cron, `dispatch` | `Drift checks (pinned + stable)`, `One issue, not one per run` | no | n/a |
+| `PR conflicts` | daily cron, `dispatch` | `Open PRs whose merge ref cannot be built` | no (reports stuck PRs) | n/a |
 
 The wall clock column is printed by `gh run list --workflow <name> --limit N
 --json createdAt,updatedAt`, subtracting `createdAt` from `updatedAt`, successes
@@ -173,7 +174,7 @@ from the local ratio, and the first slice below measures it by removing it.
 
 The scaffolding row is what makes the column sum to the stated 57.5s; without it
 the five named parts come to 54.0s and the table silently loses 6% of the job.
-The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 13
+The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 15
 invocations over 11 scripts today (it was 10 invocations at the commit that first
 published this table). The figure is asserted by
 `scripts/check-ci-architecture.sh`, which is itself one of those invocations, so

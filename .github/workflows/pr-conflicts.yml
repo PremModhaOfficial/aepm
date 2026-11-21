@@ -37,11 +37,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # --- pr-conflicts-step:begin ---
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > conflicts.json
+          # `--paginate` is not optional: without it `gh api` reads page 1 and
+          # stops, so the 101st open PR is never inspected and this job reports
+          # success having looked at part of the list (finding 4a5a9f1d9e0b).
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > conflicts.json
           # Fails and prints each conflicted PR. A conflicted PR is stuck, not
           # broken, so the failure text says what to do rather than what broke.
-          ./scripts/check-pr-conflicts.sh < conflicts.json || {
-            echo "::error::an open PR cannot be merged into its base, so no workflow can start for it and no required check can ever appear. Rebase it or close it."
-            exit 1
-          }
+          # Exit 2 is its own outcome — the check could not evaluate a PR — and
+          # must never share the success path (finding 6ea304eea0b7).
+          rc=0
+          ./scripts/check-pr-conflicts.sh < conflicts.json || rc=$?
+          case "$rc" in
+            0) ;;
+            1) echo "::error::an open PR cannot be merged into its base, so no workflow can start for it and no required check can ever appear. Rebase it or close it." >&2
+               exit 1 ;;
+            2) echo "::error::could not determine the mergeability of at least one open PR, so this check did not run and is not a pass. Re-run the job; if it stays unknown, inspect the PR." >&2
+               exit 1 ;;
+            *) echo "::error::check-pr-conflicts exited $rc without naming an outcome" >&2
+               exit 1 ;;
+          esac
+          # --- pr-conflicts-step:end ---

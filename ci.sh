@@ -51,12 +51,21 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
 
-echo "=== pr-agent state block (appended to the review the container posts) ==="
-# #140: the pinned image posts a clean review with no typed block, so the gate
+echo "=== pr-agent state block (appended to the review the container posts) ==="# #140: the pinned image posts a clean review with no typed block, so the gate
 # read present=false on a review that ran. The block is extracted from
 # pr-agent.yml and run against a fake gh, and its output is fed back through the
 # real gate: the step is proven by the gate reading it, not by a shape.
 bash scripts/check-pr-agent-state-block.sh
+
+echo "=== pr conflicts watchdog (a conflicted head runs no workflow at all) ==="
+# A PR whose head cannot merge into its base gets no checks at all, so nothing
+# turns red and it sits forever. The check that reports it must not print
+# success having read part of the list, or having failed to read a PR: the step
+# extracted from pr-conflicts.yml is run against a fake `gh` that walks pages
+# only on `--paginate`, and its cases fail on either silent green (findings
+# 4a5a9f1d9e0b, 6ea304eea0b7).
+bash scripts/check-pr-conflicts.sh --self-test
+bash scripts/check-pr-conflicts-workflow.sh
 
 echo "=== ci architecture doc matches the repository ==="
 # The document drifted from the repo once and a reviewer had to find it: a typed
