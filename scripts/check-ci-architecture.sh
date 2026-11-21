@@ -210,5 +210,20 @@ badtable=$(awk '
   END { exit(bad?1:0) }
 ' "$DOC" 2>&1) &&   pass "every table row matches its header's cell count" ||   die "table rows with the wrong cell count: ${badtable:-see above}"
 
+# 13. A restated review duration matches the table it restates. "one review takes
+#     7.6 minutes" survived next to a 452s median (7.53 -> 7.5); prose arithmetic
+#     is unguarded everywhere else, and this is the one figure quoted twice.
+mins=$(grep -oE 'one review takes [0-9]+\.[0-9]+ minutes' "$DOC" | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)
+pramed=$(grep -E '^\| `PR Agent` \|' "$DOC" | grep -oE 'median [0-9]+s' | grep -oE '[0-9]+' | head -1 || true)
+if [ -n "$mins" ] && [ -n "$pramed" ]; then
+  if awk -v m="$mins" -v s="$pramed" 'BEGIN{e=s/60; d=m-e; if(d<0)d=-d; exit !(d<=0.05)}'; then
+    pass "the restated review duration (${mins} min) matches the table (${pramed}s)"
+  else
+    die "prose says ${mins} minutes, but the table's PR Agent median of ${pramed}s is $(awk -v s="$pramed" 'BEGIN{printf "%.1f", s/60}') minutes"
+  fi
+else
+  pass "no restated review duration in prose to check"
+fi
+
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]

@@ -4,14 +4,14 @@ What the checks cost, what they prove, and where the money and the minutes go.
 Every number here names the command that printed it. Numbers measured on
 2026-11-19 are from the Actions API run on that date; the ones dated 2026-11-21
 were re-measured then, because two of them had moved enough to invert a
-conclusion. `scripts/check-ci-architecture.sh`, run by `ci.sh`, fails when: a
-workflow file's `name:` appears nowhere in this document; the sentence naming the
-required checks stops naming all three; the `CI (Linux)` step column stops summing
-to its own total; the quoted `ci.sh` invocation count drifts; the workflows
-heading starts typing a number; or a named sim scenario matches no file. It
-checks this file against the repository — it never calls `gh`, so a change to
-branch protection is invisible to it by design, and the header used to claim
-otherwise.
+conclusion. `scripts/check-ci-architecture.sh`, run by `ci.sh`, holds the structural facts
+below shut. The numbered assertions in that script are the authoritative list; the
+ones that recur are workflow-table coverage, the sentence naming the three required
+checks, the `CI (Linux)` step column summing to its own total, the quoted `ci.sh`
+counts, citations that resolve inside their file, and tables whose rows keep their
+header's cell count. It checks this file against the
+repository — it never calls `gh`, so a change to branch protection is invisible to
+it by design, and the header used to claim otherwise.
 
 Scope: the machinery only — workflow structure, job split, caching, selection,
 required-check design, and how a failure explains itself. Review policy lives in
@@ -100,7 +100,7 @@ Those three runs are still accurate. They could not see the review chain, whose
 `PR Agent` median was 124s when they were taken and is 452s two days later. The
 conclusion that follows is the opposite of the old one:
 **CI and Sim tuning are worth zero seconds on a typical first review**, because
-neither can be the last thing it waits on while one review takes 7.6 minutes.
+neither can be the last thing it waits on while one review takes 7.5 minutes (452s).
 
 "Typical" is doing real work there. It is a median claim, not an absolute one,
 and the tail is where Sim governs: `Sim`'s own max is 453s (n=50), and the
@@ -129,7 +129,7 @@ below came to be ranked first in the previous version of this table.
 | Job total, docs-only PR (0 scenarios) | ~10s |
 | **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
 
-The 1162s outlier is outside the 50-run sample behind the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why the table's Sim range and this row disagree, and this row exists. It is the tail that the layer-cache change is sized against.
+The 1162s outlier is outside the 50-run sample behind the workflow table: the table covers the 50 newest successes, and this run is older than every one of them, so no last-N window reaches it, which is why the table's Sim range and this row disagree, and this row exists. It is the tail that the layer-cache change is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
