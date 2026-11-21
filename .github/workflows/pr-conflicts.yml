@@ -1,0 +1,47 @@
+name: PR conflicts
+
+# A pull request whose head cannot merge into its base gets no checks at all:
+# GitHub builds refs/pull/<n>/merge first, and with no merge ref there is no run,
+# so `CI (Linux)`, `Arch simulation` and `Review Gate` never appear and the PR
+# cannot be merged. Nothing turns red; it just sits there. Measured on #147.
+#
+# This cannot be a `pull_request` workflow — that is the failure it reports, so
+# it would never start either. It has to be scheduled.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-conflicts
+  cancel-in-progress: false
+
+jobs:
+  conflicts:
+    name: Open PRs whose merge ref cannot be built
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prove the check itself passes its own cases
+        run: bash scripts/check-pr-conflicts.sh --self-test
+
+      - name: List open PRs whose head conflicts with its base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > conflicts.json
+          # Fails and prints each conflicted PR. A conflicted PR is stuck, not
+          # broken, so the failure text says what to do rather than what broke.
+          ./scripts/check-pr-conflicts.sh < conflicts.json || {
+            echo "::error::an open PR cannot be merged into its base, so no workflow can start for it and no required check can ever appear. Rebase it or close it."
+            exit 1
+          }
