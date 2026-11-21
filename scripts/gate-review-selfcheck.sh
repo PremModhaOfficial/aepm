@@ -118,9 +118,11 @@ chmod +x "$root/scripts/review-state.sh"
 # Each case: label, RUN_EVENT, RUN_SHA, RUN_PR, fake PR head, fake verdict,
 # expected exit, expected check-run (created|none), expected conclusion,
 # expected text in the log, and whether the write is refused.
+cases=0
 failures=0
 run_case() {
   local label=$1 event=$2 run_sha=$3 run_pr=$4 fake_head=$5 verdict=$6
+  cases=$((cases + 1))
   local want_exit=$7 want_body=$8 want_conclusion=$9 want_text=${10:-} write_fail=${11:-0}
   local out_file checkrun case_file out rc body problem=""
   out_file="$root/out"; : >"$out_file"
@@ -203,6 +205,7 @@ run_case no-gate-on-base pull_request "$HEAD"  9 "$HEAD" pass 1 none  ""        
 
 # A `/review` run that was not authorized changes nothing, so the job never
 # starts; that is a workflow-level `if` and is asserted here as text.
+cases=$((cases + 1))
 grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
@@ -210,51 +213,162 @@ grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
 # names a proof that shows it. Narrowing a proof back to the contexts array
 # leaves `strict`, admins-enforced and no-force-push as memory, and a doc that
 # offers an admin merge as the way past the gate contradicts `enforce_admins`.
-doc_cases=0
-docs_ok=0
-for doc in AGENTS.md .github/PR-AGENT.md; do
-  doc_cases=$((doc_cases + 1))
-  missing=""
-  found=0
+#
+# Both assertions are functions so the fixtures at the end can hand them the doc
+# they must reject: a check that cannot reject its own regression proves nothing
+# about the real doc, and the fixture stops a silent revert of either one.
+
+# Prints one line per problem found in a doc's proof of the protection. No
+# output means the doc names a proof covering every setting it states beside it.
+protection_problems() {
+  local doc=$1 cmd line_missing missing="" found=0
+  if [[ ! -r "$doc" ]]; then
+    printf '%s cannot be read, so its proof cannot be checked\n' "$doc"
+    return 0
+  fi
   while IFS= read -r cmd; do
     if [[ "$cmd" == *--jq* ]]; then
-      # A narrowed proof must name every setting stated beside it.
+      # A narrowed proof must name every setting stated beside it. The contexts
+      # array carries the "all three required" claim, so it is one of them.
       line_missing=""
-      for key in '.required_status_checks.strict' '.enforce_admins.enabled' '.allow_force_pushes.enabled' '.allow_deletions.enabled'; do
+      for key in '.required_status_checks.contexts' \
+                 '.required_status_checks.strict' \
+                 '.enforce_admins.enabled' \
+                 '.allow_force_pushes.enabled' \
+                 '.allow_deletions.enabled'; do
         case "$cmd" in *"$key"*) ;; *) line_missing="$key" ;; esac
       done
       if [[ -z "$line_missing" ]]; then found=1; else missing="$line_missing"; fi
     else
-      # A bare call prints the whole protection object, so it proves all four.
-      found=1
+      # Only a bare `gh api` call prints the whole protection object and so
+      # proves all five. Prose that merely names the endpoint proves nothing.
+      case "$cmd" in *"gh api"*) found=1 ;; esac
     fi
-  done < <(grep -F 'branches/main/protection' "$repo_root/$doc" 2>/dev/null || true)
+  done < <(grep -F 'branches/main/protection' "$doc" 2>/dev/null || true)
   # A proof that was deleted, or a doc that cannot be read, is a failure: a
   # claim with no evidence must not pass this check.
   if [[ -n "$missing" ]]; then
-    echo "FAIL docs: $doc proves the required checks without $missing, so the setting stated beside it is unsourced"
-    failures=$((failures + 1))
+    printf '%s proves the required checks without %s, so the setting stated beside it is unsourced\n' "$doc" "$missing"
   elif [[ "$found" -eq 0 ]]; then
-    echo "FAIL docs: $doc states the protection with no proof line, so the claim is unsourced"
-    failures=$((failures + 1))
-  else
-    docs_ok=$((docs_ok + 1))
+    printf '%s states the protection with no proof line, so the claim is unsourced\n' "$doc"
   fi
-done
+  return 0
+}
 
-doc_cases=$((doc_cases + 1))
-# Squash the newlines: a reflowed paragraph must not decide this assertion.
-agents_flat="$(tr -s '[:space:]' ' ' <"$repo_root/AGENTS.md")"
-if [[ "$agents_flat" == *"Overriding it is an admin merge"* ]]; then
-  echo "FAIL docs: AGENTS.md offers an admin merge as the override, which admins-enforced refuses"
+# The override must be the mechanism that exists. With admins enforced no merge
+# action bypasses the gate, so advising an admin merge sends a reader after a
+# button that refuses them, and `no merge bypass` alone names no way forward.
+override_problems() {
+  local doc=$1 flat phrase
+  if [[ ! -r "$doc" ]]; then
+    printf '%s cannot be read, so its override cannot be checked\n' "$doc"
+    return 0
+  fi
+  # Squash the newlines: a reflowed paragraph must not decide this assertion.
+  flat="$(tr -s '[:space:]' ' ' <"$doc")"
+  for phrase in 'Overriding it is an admin merge' 'human override is an admin merge'; do
+    case "$flat" in
+      *"$phrase"*)
+        printf '%s offers an admin merge as the override, which admins-enforced refuses\n' "$doc"
+        return 0 ;;
+    esac
+  done
+  case "$flat" in
+    *'editing the `main` ruleset or protection'*) ;;
+    *) printf '%s names no ruleset or protection edit as the override, so a blocked merge reads as unfixable\n' "$doc" ;;
+  esac
+  return 0
+}
+
+doc_cases=0
+docs_ok=0
+# Prints what an assertion found wrong with a doc, and counts the case.
+doc_case() {  # <label> <problem output>
+  local label=$1 problems=$2 problem
+  cases=$((cases + 1))
+  doc_cases=$((doc_cases + 1))
+  if [[ -z "$problems" ]]; then
+    docs_ok=$((docs_ok + 1))
+    return 0
+  fi
+  while IFS= read -r problem; do
+    echo "FAIL docs: $problem"
+  done <<<"$problems"
+  echo "  ($label)"
   failures=$((failures + 1))
-elif [[ "$agents_flat" != *"no merge bypass"* ]]; then
-  echo "FAIL docs: AGENTS.md names no override at all, so a blocked merge reads as unfixable"
+}
+
+for doc in AGENTS.md .github/PR-AGENT.md; do
+  doc_case "$doc protection proof" "$(protection_problems "$repo_root/$doc")"
+done
+doc_case 'AGENTS.md override' "$(override_problems "$repo_root/AGENTS.md")"
+
+# Fixtures: the docs the assertions above must reject, and the one they must
+# still accept. Each is the regression its check exists to catch, so reverting
+# the check turns this suite red instead of quietly passing the real docs.
+fixture_rejects() {  # <label> <assertion> <want text> <file>
+  local label=$1 assertion=$2 want=$3 file=$4 out
+  cases=$((cases + 1))
+  out="$("$assertion" "$file")"
+  if [[ "$out" == *"$want"* ]]; then
+    printf 'ok   %s\n' "$label"
+  else
+    printf 'FAIL %s: the check accepts a doc where %s (output: %s)\n' "$label" "$want" "${out:-none}"
+    failures=$((failures + 1))
+  fi
+}
+
+fixture_accepts() {  # <label> <assertion> <file>
+  local label=$1 assertion=$2 file=$3 out
+  cases=$((cases + 1))
+  out="$("$assertion" "$file")"
+  if [[ -z "$out" ]]; then
+    printf 'ok   %s\n' "$label"
+  else
+    printf 'FAIL %s: the check rejects a doc that names the whole proof (%s)\n' "$label" "$out"
+    failures=$((failures + 1))
+  fi
+}
+
+fixture="$root/fixture-prose.md"
+cat >"$fixture" <<'MD'
+The `branches/main/protection` endpoint returns the object the gate reads.
+MD
+fixture_rejects prose-is-not-proof protection_problems 'with no proof line' "$fixture"
+
+fixture="$root/fixture-narrowed.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_rejects contexts-not-required protection_problems '.required_status_checks.contexts' "$fixture"
+
+fixture="$root/fixture-full.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_accepts full-proof-is-proof protection_problems "$fixture"
+
+fixture="$root/fixture-no-way-forward.md"
+cat >"$fixture" <<'MD'
+While `enforce_admins` is on there is no merge bypass.
+MD
+fixture_rejects bypass-without-mechanism override_problems 'names no ruleset or protection edit' "$fixture"
+
+fixture="$root/fixture-admin-merge.md"
+cat >"$fixture" <<'MD'
+A human override is an admin merge, and it is a decision, not a formality.
+MD
+fixture_rejects admin-merge-override override_problems 'offers an admin merge as the override' "$fixture"
+
+# The summary counts the cases that ran. A count typed in as a constant is the
+# regression this guards: it keeps printing the old total while the suite grows,
+# so a dropped case reads as a pass.
+cases=$((cases + 1))
+if grep -qE '^echo "review-gate self-check: [0-9]' "${BASH_SOURCE[0]}"; then
+  echo "FAIL summary: the case count is typed in, not counted, so it cannot follow the suite"
   failures=$((failures + 1))
-else
-  docs_ok=$((docs_ok + 1))
 fi
 
-[[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
-echo "review-gate self-check: 9/9"
+[[ "$failures" -eq 0 ]] || { echo "$failures of $cases case(s) failed"; exit 1; }
+echo "review-gate self-check: $cases/$cases"
 echo "review-gate docs name their proof: $docs_ok/$doc_cases"
