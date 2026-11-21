@@ -23,12 +23,17 @@ cp "$ROOT/scripts/gate-scenarios.sh" "$repo/scripts/"
 printf 'run: scripts/gate-scenarios.sh --list "$BASE"\n' > "$repo/.github/workflows/sim.yml"
 : > "$repo/sim/scenarios/01-a.sh"
 : > "$repo/sim/scenarios/02-b.sh"
+# A tracked file behind the `sim/` prefix and a tracked src file, so a deletion
+# has something to delete that the base commit already carried.
+: > "$repo/sim/run.sh"
+printf 'fn a() { v1 }\n' > "$repo/src/a.rs"
 cat > "$repo/sim/scenario-map.tsv" <<'MAP'
 # path	scenarios	why
 src/a.rs	01	the first module
 src/b.rs	02	the second module
 sim/	all	the image and the stubs every scenario runs inside
 sim/README.md	none	documentation only
+sim/scenario-map.tsv	none	the map itself
 MAP
 
 git -C "$repo" init -q -b main
@@ -95,7 +100,7 @@ fi
 # pre-merge head, so this commit is the only thing between `base` and it.
 git -C "$repo" checkout -q -b touched "$head"
 mkdir -p "$repo/src"
-printf 'fn a() {}\n' > "$repo/src/a.rs"
+printf 'fn a() { v2 }\n' > "$repo/src/a.rs"
 git -C "$repo" -c commit.gpgsign=false add -A
 git -C "$repo" -c commit.gpgsign=false commit -qm "touched: src/a.rs"
 touched="$(git -C "$repo" rev-parse HEAD)"
@@ -161,10 +166,38 @@ else
     bad "$workflow does not pass the head: expected --list \"\$BASE\" \"\$HEAD_SHA\", got: ${call:-no call}"
 fi
 
-# 8. A diff that cannot be computed must fail rather than select nothing. An
-# unrelated root shares no history with the branch, so `base...head` exits 128;
-# the failure used to vanish inside a process substitution, leaving an empty list
-# that selected zero scenarios and reported the build green having run none.
+# 8. Deleting a harness path still runs the suite. The `sim/` row is a prefix
+# that outlives the deletion, so the existence guard --list applies to a deleted
+# src/ file selected nothing when a harness file went: a PR that removed the
+# image, run.sh or a stub merged with the suite never run.
+git -C "$repo" checkout -q -b harness-deleted "$head"
+git -C "$repo" rm -q sim/run.sh
+git -C "$repo" -c commit.gpgsign=false commit -qm "harness: delete the image"
+deleted="$(git -C "$repo" rev-parse HEAD)"
+out="$(listed "$base" "$deleted" | tr '\n' ' ')"
+case $out in
+    *01-a.sh*02-b.sh* | *02-b.sh*01-a.sh*) ok "a deleted sim/ path still selects the whole suite" ;;
+    *) bad "a deleted sim/run.sh selected: ${out:-nothing}" ;;
+esac
+
+# 9. A deleted src/ file whose row went with it is not UNMAPPED: no scenario is
+# left to run, and --check-map already refuses a row with no file behind it.
+# 8 and 9 together are the whole rule: sim/ deletions run everything, src/
+# deletions run nothing and never die.
+git -C "$repo" checkout -q -b src-deleted "$head"
+git -C "$repo" rm -q src/a.rs
+grep -v '^src/a\.rs' "$repo/sim/scenario-map.tsv" > "$TMP/map"
+cat "$TMP/map" > "$repo/sim/scenario-map.tsv"
+git -C "$repo" -c commit.gpgsign=false add -A
+git -C "$repo" -c commit.gpgsign=false commit -qm "src: delete a.rs and its row"
+srcgone="$(git -C "$repo" rev-parse HEAD)"
+if out="$(listed "$base" "$srcgone")" && [[ -z $out ]]; then
+    ok "a deleted src/ file whose row is gone selects nothing and does not die"
+else
+    bad "a deleted src/a.rs with no row: ${out:-no output}"
+fi
+
+# 10. A diff that cannot be computed must fail rather than select nothing. An
 orphan="$(git -C "$repo" commit-tree \
     "$(git -C "$repo" hash-object -t tree -w /dev/null)" -m "unrelated root")"
 if out="$(listed "$orphan" "$head")"; then

@@ -126,9 +126,12 @@ list() {
         # that row inert — a sim/Dockerfile change selected nothing at all. The
         # owned files carry `none` rows, so they still select nothing.
         [[ $file == src/* || $file == sim/* ]] || continue
-        # A deleted file has no scenario left to run; --check-map catches the
-        # row it leaves behind.
-        [[ -e $file ]] || continue
+        # A deleted src/ file has no scenario left to run, and --check-map
+        # catches the row it leaves behind. Only src/ gets this skip: the sim/
+        # row is a directory prefix that outlives the file, so a deleted
+        # harness path (the image, run.sh, a stub) still owes the whole suite.
+        # Skipping it there selected nothing and merged unproven.
+        [[ $file == sim/* || -e $file ]] || continue
         list=$(lookup "$file")
         if [[ -z $list ]]; then
             unmapped+=("$file")
