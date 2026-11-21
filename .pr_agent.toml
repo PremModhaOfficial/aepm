@@ -25,8 +25,12 @@ reasoning_effort = "max"
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s, far shorter than a measured max-reasoning review (498-509s).
 # Worst case is bounded: a timeout goes to the fallback entry (same model) once,
-# so 2 x 900s = 30 min, under the workflow's 45-minute job timeout.
-ai_timeout = 900
+# so 2 x ai_timeout must stay well under the workflow's 30-minute job timeout.
+# At 900 it did not: 2 x 900s = 1800s = the whole budget, so the job was killed
+# before it could post a verdict (measured: job 1835s, two litellm timeout=900.0
+# attempts, "Tool reported success but recorded a failure; failing the action").
+# 600 leaves 600s for the action to finish and write its comment.
+ai_timeout = 600
 retry_same_model_on_timeout = false
 
 # Read the rules from the default branch, never from the PR branch, so a PR
