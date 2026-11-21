@@ -188,7 +188,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   quotes, in one order and no other: the guide header's link first (the first
   `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
   header quotes), then the persistent review line that names the commit a run
-  judged, then a bare `commit/<sha>` in the body. The body link is the last
+  judged, read in that same comment and in no other, so an older review's line
+  cannot name the head of the one being judged, then a bare `commit/<sha>` in the
+  body. The body link is the last
   resort, because a review that discusses an earlier fix quotes one, so it must
   never outrank a head a run recorded. Both kinds are read to name the failure,
   never to clear it. The block
@@ -202,9 +204,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   first review of a PR had no row when it was read, and it was posted before the
   empty-review check, so every failed gate run put another comment on the PR; it
   was deleted rather than fixed. Second, selection matches the typed block and
-  the guide marker only at a line start and outside a fenced code block, so a
-  comment that writes about either marker, or quotes a block in an example, is
-  never judged as a review and never counts as one a PR has carried.
+  the guide marker only at a line start and outside a fenced or indented code
+  block, so a comment that writes about either marker, or quotes a block in an
+  example, is never judged as a review and never counts as one a PR has carried.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

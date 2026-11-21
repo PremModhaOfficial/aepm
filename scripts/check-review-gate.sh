@@ -216,6 +216,17 @@ fenced_in_review="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recomme
 export FAKE_COMMENTS="[$(comment "$fenced_in_review")]"
 run fenced-block-in-review-is-not-a-block 1 'no completed run is recorded'
 
+# Finding e6024f4c203c: a block quoted in an example is not this review's block.
+# The example here is indented, its closing `-->` is not, which is the shape that
+# used to pass: the block awk started on the indented marker, the JSON behind it
+# parsed, and `complete: true` with the judged head cleared the gate. It also
+# counted as a block the PR had carried. The awk now starts a block only at
+# column 0 and `defenced` drops indented lines, and this one case fails when
+# either is reverted.
+indented_quote="$(printf '%s\n\nAn older run wrote this:\n\n    <!-- pr-agent-review-state:v1\n    {"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n' "$(clean_body)" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$indented_quote")]"
+run indented-block-in-review-is-not-a-block 1 'no completed run is recorded'
+
 # A timed-out or truncated run can still print a clean recommendation.
 incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$incomplete")]"
@@ -343,6 +354,12 @@ run persisted-line-odd 0 'gate: pass'
 # truncated value from clearing the gate.
 export FAKE_COMMENTS="[$(comment "$(typed_body "${HEAD:0:4}")")]"
 run short-head-is-not-current 1 'does not cover the head'
+
+# D34 (finding 13d53e61b390): seven or more hex characters match as a prefix,
+# because a review may quote an abbreviated sha. The decision row and this case
+# are what keep the stated rule and the implemented rule the same rule.
+export FAKE_COMMENTS="[$(comment "$(typed_body "${HEAD:0:12}")")]"
+run prefix-head-is-current 0 'gate: pass'
 GATE_ARGS=(--reviewed --sha "$HEAD")
 
 export FAKE_COMMENTS="[$(comment "$incomplete")]"
@@ -373,11 +390,12 @@ run header-beats-earlier-link 1 'no completed run is recorded'
 export FAKE_COMMENTS="[$(comment "$(printf '%s\n\nSee commit/%s for the earlier attempt.\n' "$(clean_body "$HEAD")" "$OLD")")]"
 run header-beats-later-link 1 'no completed run is recorded'
 
-# Finding 3de53d74d7e9: a bare link in the body must never outrank a recorded
-# head. The review's guide header omits the commit and its body quotes an earlier
-# fix, while the persistent review line names the head being judged; reading the
+# Finding 3de53d74d7e9: a bare link in the body must never outrank the head the
+# selected review recorded. Its guide header omits the commit and its body quotes
+# an earlier fix, while its own persistent review line names the head being judged
+# in a form the header pattern does not take (an abbreviated sha); reading the
 # body link first judged this current review as stale.
-export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n\nSee commit/%s for the earlier attempt.\n' "$OLD")")]"
+export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n\nReview updated until commit https://github.com/o/r/commit/%s\n\nSee commit/%s for the earlier attempt.\n' "${HEAD:0:7}" "$OLD")")]"
 run body-link-does-not-beat-recorded-head 1 'no completed run is recorded'
 
 # The marker in prose is not a review: only a line-start block or the guide
@@ -463,24 +481,23 @@ doc_claims_match_code() {
 }
 check doc-claims-match-code doc_claims_match_code
 
-# Finding bed8f31fda88, recorded as bound D36: the newest review names no head at
-# all, and an older review's persistent line does, so the fallback names the older
-# head and the gate reports the head as uncovered rather than the run as
-# unrecorded. It still fails, which is the invariant; this case is what pins the
-# named repair so the bound is a record and not a surprise.
-export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: Needs review\n\nReview updated until commit https://github.com/o/r/commit/%s\n' "$OLD")")]"
-run fallback-head-names-an-older-review 1 'does not cover'
+# Finding bed8f31fda88: the fallback head is read from the selected review and
+# from no other, so an older review's persistent line cannot supply one. The
+# newest review here names no commit at all, which is the state it is reported
+# in, rather than the older head being judged in its place.
+export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: Needs review\n\nReview updated until commit https://github.com/o/r/commit/%s\n' "$OLD")"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')")]"
+run fallback-head-from-an-older-review 1 'does not name the commit'
 
-# A bound that exists only in a code comment is re-filed as a finding on the next
-# review, so the rows that hold these two bounds are checked here: D34 states the
-# prefix rule the comparison uses (finding 13d53e61b390), and D35/D36 record the
-# two bounds the fixtures above pin.
+# A rule that exists only in a code comment is re-filed as a finding on the next
+# review, so the rows that state these rules are checked here: D34 states the
+# prefix rule the comparison uses (finding 13d53e61b390), and D35/D36 name the
+# quoted-block and selected-review rules the fixtures above pin.
 doc_bounds_are_recorded() {
   local flat_p
   flat_p() { tr '\n' ' ' <"$1" | tr -s ' '; }
   flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF 'seven or more hex characters' || return 1
-  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D35 | Quote without a fence |' || return 1
-  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D36 | Fallback head from an older review |' || return 1
+  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D35 | A quoted block is not a block |' || return 1
+  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF "| D36 | The head is the selected review's own |" || return 1
 }
 check doc-bounds-are-recorded doc_bounds_are_recorded
 
