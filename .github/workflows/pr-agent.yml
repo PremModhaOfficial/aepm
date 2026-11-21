@@ -67,8 +67,10 @@ jobs:
     runs-on: ubuntu-latest
     # p100 over 100 runs was 695s, but three reviews sharing one gateway on
     # 2026-11-20 ran past 20 minutes (44787885830 was 21 minutes in and still
-    # going), so 20 would cancel work that finishes. 30 still fails a silent run
-    # in half the old ceiling's time.
+    # going), so 20 would cancel work that finishes. 40 is the worst case plus
+    # the post: 2 x ai_timeout 900s = 1800s, leaving 600s to write the verdict
+    # (#157). Cutting this or ai_timeout alone re-creates the silent kill that
+    # posts nothing.
     timeout-minutes: 40
     steps:
       # A PR must not hand the reviewer's side its own copy of the check, so it
