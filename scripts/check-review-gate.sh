@@ -222,10 +222,11 @@ run fenced-block-in-review-is-not-a-block 1 'no completed run is recorded'
 
 # Finding e6d2f0bb258c named the info-string form: a fence line is the marker plus
 # whatever follows it, ` ```json ` as much as ` ``` `. The ```html case above
-# already skipped it, because the test is the marker and never the whole line;
-# this one says so and pins the tilde form, where a fence that needed its info
-# string to be recognised would show.
-info_fence="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n~~~text\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n~~~\n' "$HEAD" "$HEAD")"
+# skips it on the leading-text rule as well, so this case carries an attribute
+# (`~~~text title="example"`), the form only the tick-initial rule can catch: an
+# info string with a space in it does not end the line with the marker and a bare
+# language.
+info_fence="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n~~~text title="example"\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n~~~\n' "$HEAD" "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$info_fence")]"
 run info-string-fence-is-not-a-block 1 'no completed run is recorded'
 
@@ -235,6 +236,19 @@ run info-string-fence-is-not-a-block 1 'no completed run is recorded'
 pre_example="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n<pre>\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n</pre>\n' "$HEAD" "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$pre_example")]"
 run pre-example-is-not-a-block 1 'no completed run is recorded'
+
+# The same example form with the other tag name: `<code>` is quoted the same way,
+# and both names are one rule (finding e6d2f0bb258c).
+code_example="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n<code>\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n</code>\n' "$HEAD" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$code_example")]"
+run code-example-is-not-a-block 1 'no completed run is recorded'
+
+# A fence opener with text before it (`text ```html`). Markdown does not read that
+# as a fence — a fence may only be indented three spaces — so the block behind it is
+# prose, and it used to clear the gate (finding e6d2f0bb258c, shape 1).
+leading_text_fence="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\ntext ```html\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n```\n' "$HEAD" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$leading_text_fence")]"
+run leading-text-fence-is-not-a-block 1 'no completed run is recorded'
 
 # Finding e6024f4c203c: a block quoted in an example is not this review's block.
 # The example here is indented, its closing `-->` is not, which is the shape that

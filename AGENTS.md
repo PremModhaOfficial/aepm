@@ -204,9 +204,11 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   first review of a PR had no row when it was read, and it was posted before the
   empty-review check, so every failed gate run put another comment on the PR; it
   was deleted rather than fixed. Second, selection matches the typed block and
-  the guide marker only at a line start and outside a fenced or indented code
-  block, so a comment that writes about either marker, or quotes a block in an
-  example, is never judged as a review and never counts as one a PR has carried.
+  the guide marker only at a line start and outside anything a review quotes a
+  block in: a fence (including one opened after leading text), a `<pre>`/`<code>`
+  example, or an indented code block. A comment that writes about either marker,
+  or quotes a block in an example, is therefore never judged as a review and never
+  counts as one a PR has carried.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

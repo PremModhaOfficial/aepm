@@ -170,15 +170,21 @@ REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 # quotes the block, or the guide marker, in an example is writing about one, not
 # carrying one (finding f7d291ec6f97). `defenced` drops a ``` or ~~~ fence — with
 # or without an info string, which is why the test is the marker and not the whole
-# line — an indented code block, and a `<pre>`/`<code>` example, the three forms a
-# review quotes a block in (findings e6024f4c203c, e6d2f0bb258c: a quoted
-# `complete: true` cleared the gate). It is defined once, here: the state block is
-# extracted from `body_q`, which is this same filter applied, so the two cannot
-# drift. `is_review` is the review identity, and it is what a comment must be
-# before it can name a head (finding 33acdf68e0d2).
+# line — a fence opener with text before it (`text ``` html`), an indented code
+# block, and a `<pre>`/`<code>` example: the three shapes a review quotes a block
+# in (findings e6024f4c203c, e6d2f0bb258c, where a quoted `complete: true` cleared
+# the gate). It is defined once, here: the state block is extracted from `body_q`,
+# which is this same filter applied, so the two cannot drift. Two of the rules can
+# only err towards dropping a real block — a review whose prose ends in a
+# triple-backtick code span opens a fence that a later bare fence closes — and a
+# dropped block is `unrecorded`, which fails; no rule that cannot parse Markdown
+# avoids one of the two errors, and this is the one that cannot pass on a quote.
+# `is_review` is the review identity, and it is what a comment must be before it
+# can name a head (finding 33acdf68e0d2).
 JQ_SELECT='
 def defenced: reduce (split("\n")[]) as $l ({f: false, h: false, keep: []};
     if ($l | test("^[[:space:]]*(```|~~~).*$")) then .f |= not
+    elif ($l | test("^[^`~]*(```|~~~)[A-Za-z0-9_+.#-]*$")) then .f |= not
     elif ($l | test("^[[:space:]]*<(pre|code)( |>|$)")) then
       (if ($l | test("</(pre|code)>")) then . else .h = true end)
     elif ($l | test("^[[:space:]]*</(pre|code)>")) then .h = false
