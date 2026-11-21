@@ -240,14 +240,22 @@ protection_problems() {
       done
       if [[ -z "$line_missing" ]]; then found=1; else missing="$line_missing"; fi
     else
-      # Only a bare `gh api` call prints the whole protection object and so
-      # proves all five. Prose that merely names the endpoint proves nothing.
-      case "$cmd" in *"gh api"*) found=1 ;; esac
+      # Only the command itself prints the whole protection object and so proves
+      # all five: a line that starts with `gh api`, or the backticked call these
+      # docs quote (`gh api repos/.../protection`), with the path ending the code
+      # span. A sentence that mentions the command -- `# run gh api ... to inspect
+      # it` -- ends the path in words, is not a proof, and is rejected.
+      if [[ "$cmd" =~ ^[[:space:]]*gh\ api\ [^[:space:]]*branches/main/protection([[:space:]]|$) ]] \
+        || [[ "$cmd" =~ \`gh\ api\ [^\`]*branches/main/protection\` ]]; then
+        found=1
+      fi
     fi
   done < <(grep -F 'branches/main/protection' "$doc" 2>/dev/null || true)
-  # A proof that was deleted, or a doc that cannot be read, is a failure: a
-  # claim with no evidence must not pass this check.
-  if [[ -n "$missing" ]]; then
+  # A proof that was deleted, a narrowed proof with no full one beside it, or a
+  # doc that cannot be read is a failure: a claim with no evidence must not pass
+  # this check. A full proof anywhere in the doc answers the claim, so a second
+  # narrowed line must not turn a sourced doc into a failure.
+  if [[ "$found" -eq 0 && -n "$missing" ]]; then
     printf '%s proves the required checks without %s, so the setting stated beside it is unsourced\n' "$doc" "$missing"
   elif [[ "$found" -eq 0 ]]; then
     printf '%s states the protection with no proof line, so the claim is unsourced\n' "$doc"
@@ -302,6 +310,13 @@ for doc in AGENTS.md .github/PR-AGENT.md; do
   doc_case "$doc protection proof" "$(protection_problems "$repo_root/$doc")"
 done
 doc_case 'AGENTS.md override' "$(override_problems "$repo_root/AGENTS.md")"
+# Only AGENTS.md is asserted for the override, and that is the claim, not an
+# oversight: AGENTS.md is the rules file an agent reads before it acts, so a
+# merge instruction there has to name the mechanism that exists. `.github/
+# PR-AGENT.md` is the decision log; its N5 row records the setting, states
+# already that no merge bypass exists while admins are enforced, and instructs
+# no merge, so demanding the AGENTS.md override wording from the log would
+# assert a sentence it has no reason to carry (finding 4e9633e09070).
 
 # Fixtures: the docs the assertions above must reject, and the one they must
 # still accept. Each is the regression its check exists to catch, so reverting
@@ -347,6 +362,25 @@ cat >"$fixture" <<'MD'
 `gh api repos/o/r/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
 MD
 fixture_accepts full-proof-is-proof protection_problems "$fixture"
+
+# A doc that quotes the whole command beside a narrowed one is sourced: the full
+# proof answers the claim, so a second, narrower line must not fail it (finding
+# 3e6224f00d99).
+fixture="$root/fixture-mixed.md"
+cat >"$fixture" <<'MD'
+`gh api repos/o/r/branches/main/protection --jq '{strict: .required_status_checks.strict}'`
+
+`gh api repos/o/r/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`
+MD
+fixture_accepts narrowed-beside-full protection_problems "$fixture"
+
+# A comment that mentions the command is not the command: the path ends in words,
+# so this proves nothing (finding f4b68b53d517).
+fixture="$root/fixture-comment.md"
+cat >"$fixture" <<'MD'
+# run gh api repos/o/r/branches/main/protection to inspect it
+MD
+fixture_rejects comment-is-not-proof protection_problems 'with no proof line' "$fixture"
 
 fixture="$root/fixture-no-way-forward.md"
 cat >"$fixture" <<'MD'
