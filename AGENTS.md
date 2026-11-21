@@ -174,13 +174,17 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   credits, and it runs only the default branch's copy of the script. Only a
   comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
   block identifies one: every other marker is forgeable or shared with
-  `/describe`. A clean review (zero findings) carries no typed block at all, so
-  the guide marker `<!-- pr-agent:review:full` selects it, its completeness is
-  reported as `unrecorded` rather than assumed, and the head comes from the
-  commit the comment quotes, which is the guide header's link only: the first
+  `/describe`. A review with no typed block is not a passing review: a truncated
+  or timed-out run that still printed a clean recommendation is indistinguishable
+  from a clean one, so only a block that records `complete:true` for the judged
+  head clears the gate, and a review carrying none is reported as `unrecorded`
+  and fails. That review is still selected by the guide marker
+  `<!-- pr-agent:review:full`, and its head still comes from the commit the
+  comment quotes, which is the guide header's link only: the first
   `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
-  header quotes. The block keeps resolved findings, so a PR that still carries
-  one cannot pass on a missing block: the gate fails on it. Two bounds are
+  header quotes. Both are read to name the failure, never to clear it. The block
+  keeps resolved findings, so a PR that still carries one cannot pass on a
+  missing block: the gate fails on it. Two bounds are
   accepted and not fixed. First, the review is one
   comment updated in place, so a run that rewrote it without the block leaves
   nothing to detect: a PR that ever carried a block is caught only while an older
@@ -189,8 +193,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   first review of a PR had no row when it was read, and it was posted before the
   empty-review check, so every failed gate run put another comment on the PR; it
   was deleted rather than fixed. Second, selection matches the typed block and
-  the guide marker only at a line start, so a comment that writes about either
-  marker in prose is never judged as a review.
+  the guide marker only at a line start and outside a fenced code block, so a
+  comment that writes about either marker, or quotes a block in an example, is
+  never judged as a review and never counts as one a PR has carried.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

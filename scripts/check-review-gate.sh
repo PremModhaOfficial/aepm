@@ -157,14 +157,17 @@ prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-ag
 export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
 run marker-quoted-in-prose 0 'gate: pass'
 
-# Prose alone is not a block: a PR that never carried one must not read as it
-# one that lost it, or the fix for a clean review would fail on the reviewer
-# writing about the marker.
+# Prose alone is not a block: a PR that never carried one must not read as one
+# that lost it. It fails as unrecorded, not as vanished.
 export FAKE_COMMENTS="[$(comment "$(printf 'The gate reads `pr-agent-review-state:v1`, and here is why it matters.\n\n<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$HEAD")")]"
-run prose-is-not-a-block 0 'gate: pass'
+run prose-is-not-a-block 1 'no typed state block'
 
+# Finding b312598ba745: a review with no typed block is `unrecorded`, and a
+# truncated or timed-out run that still printed a clean recommendation looks the
+# same. Nothing records that the run finished, so nothing passes: this case used
+# to merge on its guide header alone.
 export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
-run clean-no-block 0 'gate: pass'
+run unrecorded-clean-does-not-pass 1 'no completed run is recorded'
 
 export FAKE_COMMENTS="[$(comment "$(clean_body "$OLD")")]"
 run clean-no-block-stale 1 'does not cover the head being judged'
@@ -185,6 +188,19 @@ run block-vanished 1 'although an earlier one on this PR did'
 # newest comment still wins, so this stays a fault rather than a pass.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(clean_body)")]"
 run block-vanished-current 1 'although an earlier one on this PR did'
+
+# Finding f7d291ec6f97: a fenced code block is a quote, not a marker. An older
+# comment showing the block in an example must not make this PR look like one
+# that carried a block and lost it, or a clean review fails for the wrong reason.
+fenced_quote="$(printf 'A hook would print:\n\n```html\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n```\n' "$OLD")"
+export FAKE_COMMENTS="[$(comment "$fenced_quote"), $(comment "$(clean_body)")]"
+run fenced-block-is-not-a-prior-block 1 'no completed run is recorded'
+
+# The same rule where the block is read: a review that shows the block in an
+# example carries none, so a quoted `complete: true` cannot clear the gate.
+fenced_in_review="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n```html\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n```\n' "$HEAD" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$fenced_in_review")]"
+run fenced-block-in-review-is-not-a-block 1 'no completed run is recorded'
 
 # A timed-out or truncated run can still print a clean recommendation.
 incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
@@ -278,10 +294,12 @@ run reviewed-despite-findings 0 'reviewed: true'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")")]"
 run reviewed-stale 1 'reviewed: false'
 
-# `--reviewed` on a clean block-less review: already reviewed, so no second run.
+# `--reviewed` on a block-less review: nothing records that the run finished, so
+# it is not reviewed either. Skipping the run would leave the gate failed with
+# nothing to repair it, which is why this answers false.
 export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
 GATE_ARGS=(--reviewed --sha "$HEAD")
-run reviewed-unrecorded 0 'reviewed: true'
+run reviewed-unrecorded 1 'reviewed: false'
 
 export FAKE_COMMENTS="[$(comment "$(clean_body "$OLD")")]"
 GATE_ARGS=(--reviewed --sha "$HEAD")
@@ -292,6 +310,15 @@ run reviewed-unrecorded-stale 1 'reviewed: false'
 export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"), $(comment "$(printf '## PR Description\n\nHead is https://github.com/o/r/commit/%s\n' "$HEAD")")]"
 GATE_ARGS=(--gate)
 run describe-quotes-head 1 'does not name the commit'
+
+# Finding 33acdf68e0d2: only a review comment may name the head. A `/describe`
+# comment quoting the persistent review line with the judged head cannot supply
+# one, or an older review would read as current off a comment that judged nothing.
+# The review here names no commit, so it is reported as naming none rather than as
+# a review whose head is current.
+export FAKE_COMMENTS="[$(comment "$nobody"), $(comment "$(printf '## PR Description\n\nReview updated until commit https://github.com/o/r/commit/%s\n' "$HEAD")")]"
+GATE_ARGS=(--gate)
+run fallback-head-from-non-review 1 'does not name the commit'
 
 # One comment quoting the phrase without a commit must not kill the whole read.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment 'Review updated until commit (the line was truncated)')]"
@@ -312,31 +339,32 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-# Two greens, named apart: a review that carried a block is not the same
-# answer as one that had nothing to record, even though both may merge.
+# One green: a pass is a review that recorded a completed run and cleared the
+# merge. There is no second green, because a review with nothing recorded is not
+# a passing review.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
-run green-cleared 0 'review_state: cleared'
-
-export FAKE_COMMENTS="[$(comment "$(clean_body "$HEAD")")]"
-run green-no-findings 0 'review_state: no_findings'
+run green 0 'gate: pass'
 
 # The guide header is the evidence, not the first bare commit link: a clean
 # review that discusses an earlier fix quotes one, and reading that as the
-# reviewed head judged a current review as stale.
+# reviewed head reported a current review as stale. Neither passes now, so the
+# header is proven by which failure is named: a body link read as the head says
+# "does not cover", and the header says the head is current and the run is not
+# recorded.
 export FAKE_COMMENTS="[$(comment "$(printf 'See commit/%s for the earlier attempt.\n\n%s' "$OLD" "$(clean_body "$HEAD")")")]"
-run header-beats-earlier-link 0 'gate: pass'
+run header-beats-earlier-link 1 'no completed run is recorded'
 
 # And with the quote after the header, where only a pattern that reaches the sha
 # through the URL can find the header at all.
 export FAKE_COMMENTS="[$(comment "$(printf '%s\n\nSee commit/%s for the earlier attempt.\n' "$(clean_body "$HEAD")" "$OLD")")]"
-run header-beats-later-link 0 'gate: pass'
+run header-beats-later-link 1 'no completed run is recorded'
 
 # Finding 3de53d74d7e9: a bare link in the body must never outrank a recorded
 # head. The review's guide header omits the commit and its body quotes an earlier
 # fix, while the persistent review line names the head being judged; reading the
 # body link first judged this current review as stale.
 export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n\nSee commit/%s for the earlier attempt.\n' "$OLD")")]"
-run body-link-does-not-beat-recorded-head 0 'gate: pass'
+run body-link-does-not-beat-recorded-head 1 'no completed run is recorded'
 
 # The marker in prose is not a review: only a line-start block or the guide
 # header selects the comment, so a newer comment merely writing about the
@@ -349,7 +377,7 @@ run prose-mention-is-not-a-review 0 'gate: pass'
 # the first commit after the phrase, and the marker is only a review at a line
 # start, so neither the quoted fix nor the prose comment can move the head.
 export FAKE_COMMENTS="[$(comment "$(printf '## PR Reviewer Guide \U0001F50D\n\n<!-- pr-agent:review:full -->\n\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s, and the earlier attempt is at commit/%s\n' "$HEAD" "$OLD")"), $(comment "$(printf '> selection matches `<!-- pr-agent:review:full` and names commit/%s\n' "$OLD")")]"
-run truncated-header-and-prose-guide-marker 0 'gate: pass'
+run truncated-header-and-prose-guide-marker 1 'no completed run is recorded'
 
 # A block that vanished after this PR carried one is the run's fault, and it is
 # named before staleness: the missing block is the cause, the stale head only

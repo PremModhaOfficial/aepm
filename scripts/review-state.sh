@@ -21,8 +21,8 @@ usage:
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
-  --gate      exit 1 when the review is missing, older than the head, or does
-              not clear the merge
+  --gate      exit 1 when the review is missing, older than the head, does not
+              record a completed run, or does not clear the merge
   --reviewed  exit 0 when a complete review covers the head, whatever its
               verdict: the "is another review worth a model call" question
   --sha <hex> judge this 40-hex commit instead of the PR's current head
@@ -160,15 +160,27 @@ fi
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
+# Every marker below is read on the body with fenced code blocks removed: a
+# review that quotes the block, or the guide marker, in an example is writing
+# about one, not carrying one (finding f7d291ec6f97). `defenced` drops everything
+# between a ``` or ~~~ pair; `is_review` is the review identity, and it is what a
+# comment must be before it can name a head (finding 33acdf68e0d2).
+JQ_SELECT='
+def defenced: reduce (split("\n")[]) as $l ({f: false, keep: []};
+    if ($l | test("^[[:space:]]*(```|~~~)")) then .f |= not
+    elif .f then . else .keep += [$l] end) | .keep | join("\n");
+def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:full");
+[.comments[]
+  | select((.author.login // "") as $a | ("$LOGINS" | split(",") | any(. == $a)))] as $c
+| {review: ([$c[] | select(.body | defenced | is_review)] | last // {}),
+   head_from: ([$c[] | select((.body | defenced) as $b
+                 | ($b | is_review) and ($b | test("Review updated until commit")))
+                | .body | defenced
+                | (capture("Review updated until commit [^\n]*?commit/(?<s>[0-9a-f]{7,40})")? // empty).s]
+               | last // ""),
+   blocks: ([$c[] | select(.body | defenced | test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1"))] | length)}'
 if ! found="$(gh pr view "$pr" --json comments \
-  --jq "[.comments[]
-    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))] as \$c
-    | {review: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\\n)[[:space:]]*<!-- pr-agent:review:full\"))] | last // {}),
-       head_from: ([\$c[] | select(.body | test(\"Review updated until commit\")) | .body
-                    | (capture(\"Review updated until commit [^\\n]*?commit/(?<s>[0-9a-f]{7,40})\")? // empty).s]
-                   | last // \"\"),
-       blocks: ([\$c[] | select(.body | test(\"(^|\\n)[[:space:]]*<!-- pr-agent-review-state:v1\"))] | length)}" \
-  2>"$GERR")"; then
+  --jq "${JQ_SELECT//\$LOGINS/$REVIEW_BOT_LOGIN}" 2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
 [[ -n "$found" ]] || found='{"review":{},"head_from":""}'
@@ -188,8 +200,14 @@ review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
 # The start rule must fire once and only on the block itself: the marker is
 # quoted inside finding bodies and in prose when the reviewer writes about the
 # gate, and a start rule that fires there swallows the JSON line, so a review at
-# the right head reads as recording no head.
-state_json="$(printf '%s\n' "$review_body" | awk '!f && /^[[:space:]]*<!-- pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
+# the right head reads as recording no head. A fenced block is a quote of one,
+# like the prose: a review that shows the block in an example carries none.
+state_json="$(printf '%s\n' "$review_body" | awk '
+  /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+  fence { next }
+  !f && /^[[:space:]]*<!-- pr-agent-review-state:v1/ { f = 1; next }
+  f && /^-->/ { exit }
+  f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   complete="$(jq -r '.last_run.complete // false' <<<"$state_json")"
   excluded="$(jq -r '(.last_run.excluded_files // []) | length' <<<"$state_json")"
@@ -225,14 +243,17 @@ fi
 #
 # `prior_blocks` counts the comments that exist now, which is the bound: the
 # review is one comment a run rewrites in place, so a run that wrote it without
-# the block erased the only evidence that a block had existed, and the gate reads
-# that review as clean. An append-only ledger recorded the absence too, but it
-# raced the gate's own first run and posted a comment on every failed gate run,
-# so it was deleted rather than fixed. The reviewer never reads this file
-# (`.pr_agent.toml` `repo_context_files` is AGENTS.md, NEXT.md and context.md),
-# so the same bound is stated in AGENTS.md, or it is re-filed as a finding.
+# the block erased the only evidence that a block had existed. That absence no
+# longer reads as a clean review, since a review with no block fails as
+# `unrecorded`, so what the count still buys is the difference between a run that
+# dropped a block and a review that never carried one: the same failure, and a
+# different repair on each. The reviewer never reads this file (`.pr_agent.toml`
+# `repo_context_files` is AGENTS.md, NEXT.md, context.md and PR-AGENT.md), so a
+# bound stated only here is re-filed as a finding unless AGENTS.md states it too.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
-  # The guide header is the evidence: it names the head the run checked out.
+  # The guide header is the evidence: it names the head the run checked out. With
+  # no block this head is reported and never clears the gate; it decides which
+  # failure a reader is told about, a stale review or an unrecorded one.
   # The span between the phrase and the link is the URL and nothing else: no
   # whitespace and no `)`, so the only `commit/` it can reach is the header's own.
   # An earlier version allowed anything but `)`, so a header with no closing paren
@@ -280,9 +301,10 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 if [[ "$reviewed_mode" -eq 1 ]]; then
   covered="false"
   if [[ "$present" == "true" && "$stale" == "false" ]]; then
-    # `unrecorded` is a clean review with no findings block; asking for another
-    # review of that commit would spend a model call for the same answer.
-    [[ "$complete" == "true" || "$complete" == "unrecorded" ]] && covered="true"
+    # A review with no typed block does not record that its run finished, so it
+    # is not a passed review either: another run is exactly what it needs, and
+    # skipping that run would leave the gate failed with nothing to repair it.
+    [[ "$complete" == "true" ]] && covered="true"
   fi
   printf 'reviewed: %s\npr: %s\nhead: %s\n' "$covered" "$number" "$head"
   [[ "$covered" == "true" ]] && exit 0
@@ -311,27 +333,30 @@ if [[ "$gate" -eq 1 ]]; then
     fi
     exit 1
   fi
-  # A truncated or timed-out run can still print a clean recommendation, so a
-  # partial review never counts; a review with no findings has no block to be
-  # partial about, which is `unrecorded` and is judged on its quoted head.
-  if [[ "$complete" != "true" && "$complete" != "unrecorded" ]]; then
-    printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
-    exit 1
-  fi
   # The verdict is the merge decision, not a footnote. A review that says
   # `changes required` or `needs review` did not clear the merge, and merging
-  # it anyway is the failure this gate exists to catch.
+  # it anyway is the failure this gate exists to catch. It is reported before the
+  # block, because it is the reason a reader can act on.
   GATE_VERDICT="${REVIEW_GATE_VERDICT:-no_concerns_found}"
   if [[ "$verdict" != "$GATE_VERDICT" ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
     exit 1
   fi
-  # Two greens, named apart: `cleared` is a review that carried a block and a
-  # verdict; `no_findings` is a review with no block to carry, which a truncated
-  # run that still prints a clean recommendation can also produce. Both may
-  # merge, but only one means the reviewer read the diff and recorded a result.
-  if [[ "$complete" == "true" ]]; then review_state="cleared"; else review_state="no_findings"; fi
-  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\nreview_state: %s\n' "$number" "$head" "$verdict" "$review_state"
+  # A clean recommendation is not evidence that the run read the diff: a
+  # truncated or timed-out run prints one too. Only the typed block records that
+  # a run finished, so only a block that says `complete:true` clears the gate for
+  # this head (finding b312598ba745). A review with no block at all cannot be
+  # told apart from such a run, so `unrecorded` fails: it is a review nobody
+  # recorded, not a clean review nobody had to.
+  if [[ "$complete" != "true" ]]; then
+    if [[ "$complete" == "unrecorded" ]]; then
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: no typed state block, so no completed run is recorded\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    else
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    fi
+    exit 1
+  fi
+  printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\n' "$number" "$head" "$verdict"
   exit 0
 fi
 

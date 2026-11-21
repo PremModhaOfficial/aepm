@@ -305,11 +305,11 @@ head.
   red gate. That is what makes it requireable, though whether it is required is
   a repository setting and not this file's: `main` requires `CI (Linux)` and
   `Arch simulation` today. Only the bot's own comment counts, so pasting a
-  marker by hand does not pass it. A review with no findings carries no typed
-  block only while it has never carried one; its guide header is the marker, its
-  completeness is `unrecorded`, and the commit it quotes is the head evidence.
-  A PR that has carried a block keeps one, resolved findings included, so a
-  vanished block fails the gate instead of reading as a clean review.
+  marker by hand does not pass it. A review that carries no typed block is not a
+  passing review: a truncated or timed-out run prints the same clean
+  recommendation, so an `unrecorded` review fails and asks for `/review`. A PR
+  that has carried a block keeps one, resolved findings included, so a vanished
+  block fails the gate as the run's fault.
 - A push reviews the head it created. `PR Agent` runs on `synchronize` too,
   with two bounds: a draft is skipped, and a head that already carries a
   complete review of that exact commit is not reviewed again, so a rebase that
