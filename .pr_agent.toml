@@ -30,10 +30,12 @@ additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # was zero, so a hung provider was killed by the job before it could write its
 # comment (measured: job 1835s, two litellm timeout=900.0 attempts, "Tool
 # reported success but recorded a failure; failing the action").
-# The first attempt at this fix cut ai_timeout to 600, which traded that death
-# for a new one: reviews whose call takes 600-900s used to succeed and would
-# have started failing. The budget is the thing that is wrong, not the timeout:
-# the job is 40 minutes, leaving 600s after the worst case.
+# Cutting ai_timeout instead (600 was tried first) trades that death for a new
+# one, and the recordings say how much: over 23 recorded calls (review comment
+# run details, PRs #130-#159) per-call time was p50 325s, p95 414s, max 848s.
+# 600 clips the single 848s call that succeeded; 900 covers every call recorded
+# with 52s to spare. So the budget is the thing that was wrong, not the timeout:
+# the job is 40 minutes (2400s), leaving 600s to post after 2 x 900s.
 ai_timeout = 900
 retry_same_model_on_timeout = false
 

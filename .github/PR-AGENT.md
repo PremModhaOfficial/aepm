@@ -28,7 +28,7 @@ repository secret, `.pr_agent.toml` policy.
 | D7 | Context window | `custom_model_max_tokens = 1000000` | pr-agent refuses an unknown id without a declared window | `[MEASURED: "Model ... is not defined in MAX_TOKENS ... set config.custom_model_max_tokens"]`; `[VERIFIED: live models list context_length=1000000]` |
 | D8 | Input cap | `max_model_tokens = 256000` | Input and output share this budget; 256k leaves 128k of input after the 128k output cap. The measured prompt is ~14k | `[VERIFIED: configuration.toml line 50 meaning]`; `[MEASURED: "leaves no input capacity" at 64k/64k]` |
 | D9 | Output cap | `max_output_tokens = 128000` | Max reasoning consumed 70,483 tokens; a 64k cap returned empty content with `finish_reason=length`, 128k finished | `[VERIFIED: configuration.toml line 60]`; `[MEASURED: 64k empty, 128k success]` |
-| D10 | Request timeout | `ai_timeout = 900`, `retry_same_model_on_timeout = false` | Measured max review: 400-509s. Worst case is primary + one fallback entry (same model) = 2 x 900s = 30 min, under the 45-minute job timeout. Same-model replay on timeout would make it 4 attempts = 60 min | `[VERIFIED: configuration.toml line 27 default 120; _should_retry_same_model; retry_with_fallback_models]`; `[MEASURED: 400s on PR #19, 498-509s locally]` |
+| D10 | Request timeout | `ai_timeout = 900`, `retry_same_model_on_timeout = false` | Worst case is primary + one fallback entry (same model) = 2 x 900s = 1800s, so the job must leave room to post after it: the workflow is 40 minutes (2400s), 600s of headroom (#157). Cutting the timeout instead was tried at 600 and rejected on data: over 23 recorded calls per-call time was p50 325s, p95 414s, max 848s, so 600 clips the one 848s call that succeeded while 900 covers all with 52s to spare. Same-model replay on timeout would make it 4 attempts = 3600s | `[VERIFIED: configuration.toml line 27 default 120; _should_retry_same_model; retry_with_fallback_models]`; `[MEASURED: run details of 23 review comments, PRs #130-#159: time cost / AI calls; 400s on PR #19]` |
 | D11 | Fallback | Same model only | Failures retry the chosen model; no silent switch to another vendor | `[VERIFIED: configuration.toml fallback_models]` |
 | D12 | Auto tools | `/describe` and `/review` on open; `/improve` manual | Chosen by the user; lowest quota, no committable suggestions | `[VERIFIED: github_action_config.auto_* defaults in github_action_runner.py]` |
 | D13 | Failure semantics | A recorded tool failure fails the check | No green check without a review | `[VERIFIED: github_action_runner.py _fail_on_recorded_tool_error, default true]` |
@@ -150,9 +150,10 @@ Invariants applied:
 
 ## Open items
 
-1. Reasoning latency: max measured 400s on PR #19 and 498-509s locally on the
-   same diff. The retry budget is 2 x 900s = 30 min, under the 45-minute job
-   timeout. A larger diff can still time out; the check fails loudly. Watch for
+1. Reasoning latency: over 23 recorded calls, p50 325s, p95 414s, max 848s
+   (review comment run details, PRs #130-#159). The retry budget is
+   2 x 900s = 1800s against the 40-minute (2400s) job timeout, leaving 600s to
+   post. A larger diff can still time out; the check fails loudly. Watch for
    `finish_reason=length` in the Action log. `[UNVERIFIABLE]` without a larger PR.
 2. Docker Hub anonymous pull limits on GitHub runners. `[UNVERIFIABLE]`; a limit
    fails the job loudly.
