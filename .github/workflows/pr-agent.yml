@@ -54,7 +54,14 @@ jobs:
       # `in_progress` from 17:55:27Z. Cancelling costs the wasted tokens of one
       # superseded review; queueing costs a full round of wall clock.
       group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: true
+      # Only a push supersedes a review: it replaces the head the review was
+      # reading. A comment run cannot supersede anything, because the head has
+      # not moved, so cancelling on it lost a review of the current head and left
+      # the gate failing closed until someone ran `/review` again (finding
+      # 8a0615637616). Comment runs still queue behind a review, and behind each
+      # other in one group, so two runs never write the same review comment at
+      # once; only a push takes the cancel path.
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     # p100 over 100 runs was 695s, but three reviews sharing one gateway on
     # 2026-11-20 ran past 20 minutes (44787885830 was 21 minutes in and still

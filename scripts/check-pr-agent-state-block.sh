@@ -325,5 +325,46 @@ if [[ -z "${PR_AGENT_STATE_BLOCK_NO_PYTHON:-}" ]]; then
   fi
 fi
 
+# Finding 8a0615637616: `cancel-in-progress: true` covered the whole
+# `pr-agent-<number>` group, and every command shares that group, so a
+# `/describe` or `/ask` comment arriving during a review cancelled it. Nothing
+# was superseded: the head had not moved, so the review of the current head was
+# lost and the gate failed closed until someone ran `/review` again. A comment
+# run may queue behind a review; only a push may cancel one, because only a push
+# replaces the head. Read as text, like the guard above (#153).
+checks=$((checks + 1))
+concurrency="$(awk '
+  /^ *concurrency: *$/ { found = 1; next }
+  found && /^ *[a-z][a-z_-]*:/ && !/^ *(group|cancel-in-progress):/ { exit }
+  found && /^ *(group|cancel-in-progress):/ {
+    line = $0
+    sub(/^ */, "", line)
+    print line
+  }' "$WORKFLOW" | tr -d '[:space:]')"
+case "$concurrency" in
+  *"group:pr-agent-\${{github.event.pull_request.number||github.event.issue.number}}"*) ;;
+  *) fail concurrency-scope \
+       "the review job's concurrency group no longer keys on the PR number, so two PRs can cancel each other's runs" \
+       "$concurrency" ;;
+esac
+case "$concurrency" in
+  *"cancel-in-progress:\${{github.event_name=='pull_request'}}"*) ;;
+  *) fail concurrency-scope \
+       "a comment run can cancel an unsuperseded review, because cancel-in-progress is not scoped to a push" \
+       "$concurrency" ;;
+esac
+
+# The decision log states this suite's count, and a count the run refutes is a
+# claim, not evidence: D33 said 12/12 while a case was added in silence. Read for
+# this script's own line, so adding a case fails here until the row says what the
+# suite prints. This check counts itself.
+checks=$((checks + 1))
+doc_row="$(grep -oE 'scripts/check-pr-agent-state-block\.sh [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+if [[ "$doc_row" != "$checks/$checks" ]]; then
+  fail doc-count \
+    "PR-AGENT.md says '${doc_row:-nothing}' for this suite, which prints '$checks/$checks'"
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
 echo "pr-agent state block: $checks/$checks"
