@@ -169,10 +169,14 @@ conflict_holds="$(bash "$ROOT/scripts/check-pr-conflicts.sh" --self-test 2>&1 \
 if [[ -z "$conflict_holds" ]]; then
   fail doc-count-conflicts "check-pr-conflicts.sh --self-test printed no hold count"
 else
-  conflict_row="$(grep -oE '\| `scripts/check-pr-conflicts\.sh --self-test` *\| *[0-9]+/[0-9]+' "$DOC" \
+  conflict_row="$(grep -oE 'scripts/check-pr-conflicts\.sh --self-test`? *[0-9]+/[0-9]+' "$DOC" \
     | grep -oE '[0-9]+/[0-9]+' | sort -u)"
-  [[ "$conflict_row" == "$conflict_holds/$conflict_holds" ]] \
-    || fail doc-count-conflicts "PR-AGENT.md says '${conflict_row:-nothing}' for the conflicts suite, which prints '$conflict_holds/$conflict_holds'"
+  n_conflict_rows=$(printf '%s\n' "$conflict_row" | grep -c . || true)
+  if [ "$n_conflict_rows" -gt 1 ]; then
+    fail doc-count-conflicts "PR-AGENT.md quotes $n_conflict_rows different counts for the conflicts suite: $conflict_row"
+  elif [[ "$conflict_row" != "$conflict_holds/$conflict_holds" ]]; then
+    fail doc-count-conflicts "PR-AGENT.md says '${conflict_row:-nothing}' for the conflicts suite, which prints '$conflict_holds/$conflict_holds'"
+  fi
 fi
 
 # The decision log states this suite's count, and a count the run refutes is a

@@ -159,7 +159,7 @@ fi
 # then jq failed on `.number` of a number, the row loop read no rows, and this
 # printed "no conflicted open PRs" with exit 0 — the false green it exists to
 # stop. Every element of every page must be an object carrying a number.
-if ! printf '%s' "$input" | jq -e -s 'all(.[][]; type == "object" and has("number"))' >/dev/null 2>&1; then
+if ! printf '%s' "$input" | jq -e -s 'all(add[]; type == "object" and has("number"))' >/dev/null 2>&1; then
   echo "check-pr-conflicts: an open-PR row is not an object with a number; refusing to report 'no conflicts'" >&2
   exit 2
 fi
@@ -170,6 +170,15 @@ fi
 
 conflicts=()
 unknown=()
+# The projection's failure is not swallowed: `done <<<"$(...)"` cannot report
+# its exit status, so a jq error there read no rows and printed "no conflicted
+# open PRs". Projected first, checked, then read.
+if ! rows=$(printf '%s' "$prs" \
+  | jq -r '.[] | [(.number | tostring), (.head.ref | if . == null or . == "" then "?" else . end), (.mergeable | tostring)] | @tsv'); then
+  echo "check-pr-conflicts: could not project the open-PR rows; refusing to report 'no conflicts'" >&2
+  exit 2
+fi
+
 while IFS=$'\t' read -r num ref mergeable; do
   [ -n "${num:-}" ] || continue
   case "$mergeable" in
@@ -187,8 +196,7 @@ while IFS=$'\t' read -r num ref mergeable; do
       esac
       ;;
   esac
-done <<<"$(printf '%s' "$prs" \
-  | jq -r '.[] | [(.number | tostring), (.head.ref | if . == null or . == "" then "?" else . end), (.mergeable | tostring)] | @tsv')"
+done <<<"$rows"
 
 if [ "${#conflicts[@]}" -gt 0 ]; then
   printf 'conflicted open PRs (no workflow can start, so required checks never appear):\n' >&2
