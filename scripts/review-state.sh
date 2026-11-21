@@ -237,17 +237,18 @@ fi
 # The ledger is appended, never edited, so a block that vanished in place still
 # leaves a row saying one was there.
 if [[ -z "$state_json" && -n "$review_body" ]]; then
-  # The guide header is the evidence: it names the head the run checked out. A
-  # bare `commit/<sha>` anywhere in the body is not, because a review that
-  # discusses an earlier fix quotes one, and taking the first match judged a
-  # clean review against that older commit.
+  # The guide header is the evidence: it names the head the run checked out.
   # The match spans the whole URL up to the closing paren, because an earlier
   # version allowed only non-hex characters between the phrase and the link, and
   # the `c` of the `.com` host ends such a span before the link: every head then
   # fell through to the fallback.
   review_head="$(sed -n 's/.*Review updated until commit[^)]*commit\/\([0-9a-f]\{7,40\}\).*/\1/p' <<<"$review_body" | head -1)"
-  [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
+  # Then the persistent review line, which is the head a run recorded. A bare
+  # `commit/<sha>` in the body is only the last resort: a review that discusses an
+  # earlier fix quotes one, so it must never outrank a recorded head (finding
+  # 3de53d74d7e9).
   [[ -n "$review_head" ]] || review_head="$fallback_head"
+  [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
   if [[ "$prior_blocks" -eq 0 ]]; then
     [[ -n "$review_head" ]] && complete="unrecorded"
   else

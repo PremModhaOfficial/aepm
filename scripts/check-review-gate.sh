@@ -155,6 +155,13 @@ nohead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"com
 export FAKE_COMMENTS="[$(comment "$nohead")]"
 run untracked 1 'does not record a head commit'
 
+# Finding e86b80a0dd79, the first-run bound D33 states: the ledger row is written
+# after the gate decides, so the first judged head has no row. What still holds is
+# the block itself — one that does not name the judged head fails closed.
+emptyhead="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":""}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n')"
+export FAKE_COMMENTS="[$(comment "$emptyhead")]"
+run block-names-no-head 1 'does not record a head commit'
+
 prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-agent-review-state:v1`, so the block is not rewritten.\n\n<!-- pr-agent-review-state:v1\n{\"findings\":[],\"last_run\":{\"complete\":true,\"excluded_files\":[],\"head_sha\":\"%s\"}}\n-->\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
 run marker-quoted-in-prose 0 'gate: pass'
@@ -365,6 +372,13 @@ run header-beats-earlier-link 0 'gate: pass'
 # through the URL can find the header at all.
 export FAKE_COMMENTS="[$(comment "$(printf '%s\n\nSee commit/%s for the earlier attempt.\n' "$(clean_body "$HEAD")" "$OLD")")]"
 run header-beats-later-link 0 'gate: pass'
+
+# Finding 3de53d74d7e9: a bare link in the body must never outrank a recorded
+# head. The review's guide header omits the commit and its body quotes an earlier
+# fix, while the persistent review line names the head being judged; reading the
+# body link first judged this current review as stale.
+export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n\nSee commit/%s for the earlier attempt.\n' "$OLD")")]"
+run body-link-does-not-beat-recorded-head 0 'gate: pass'
 
 # The marker in prose is not a review: only a line-start block or the guide
 # header selects the comment, so a newer comment merely writing about the
