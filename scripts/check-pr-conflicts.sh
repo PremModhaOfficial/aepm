@@ -121,6 +121,11 @@ GH
   t "no open PRs passes" '[]' 0
   t "an empty read is not a pass" '' 2
   t "unreadable input is exit 2, not a pass" 'not json' 2
+  # `[[1,2]]` is an array of arrays, so the shape check above let it through and
+  # the row loop then read nothing and reported clean.
+  t "a row that is not a PR object is exit 2, not a pass" '[[1,2]]' 2
+  t "a PR object with no number is exit 2, not a pass" \
+    '[{"mergeable":true,"head":{"ref":"a"}}]' 2
   t "an empty head ref is '?', so a conflict on it is not read as clean" \
     '[{"number":160,"mergeable":false,"head":{"ref":""}}]' 1
   # A bound taken from the environment is validated, not trusted: `-ge` on a
@@ -150,7 +155,18 @@ if ! printf '%s' "$input" | jq -e -s 'length > 0 and all(.[]; type == "array")' 
   echo "check-pr-conflicts: input is not a JSON array of open PRs; refusing to report 'no conflicts'" >&2
   exit 2
 fi
-prs=$(printf '%s' "$input" | flatten)
+# An array of arrays is not an array of PRs: `[[1,2]]` passed the check above,
+# then jq failed on `.number` of a number, the row loop read no rows, and this
+# printed "no conflicted open PRs" with exit 0 — the false green it exists to
+# stop. Every element of every page must be an object carrying a number.
+if ! printf '%s' "$input" | jq -e -s 'all(.[][]; type == "object" and has("number"))' >/dev/null 2>&1; then
+  echo "check-pr-conflicts: an open-PR row is not an object with a number; refusing to report 'no conflicts'" >&2
+  exit 2
+fi
+if ! prs=$(printf '%s' "$input" | flatten); then
+  echo "check-pr-conflicts: could not read the open-PR rows; refusing to report 'no conflicts'" >&2
+  exit 2
+fi
 
 conflicts=()
 unknown=()
