@@ -157,9 +157,7 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread. The gate's ledger rows are the one exception: they are separate
-  comments, appended once per judged head and never edited, because a block the
-  review's own rewrite erased has to remain on record somewhere.
+  thread.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
@@ -179,18 +177,20 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `/describe`. A clean review (zero findings) carries no typed block at all, so
   the guide marker `<!-- pr-agent:review:full` selects it, its completeness is
   reported as `unrecorded` rather than assumed, and the head comes from the
-  commit the comment quotes. The block keeps resolved findings, so a PR that
-  still carries one cannot pass on a missing block: the gate fails on it. That
-  evidence alone would not survive the review's own rewrite — one comment,
-  updated in place, so a run that wrote it without the block erased it — so the
-  gate also appends one row per judged head to an append-only ledger comment
-  (`<!-- review-gate-ledger:v1 head=… block=… complete=… verdict=… -->`, never
-  edited, one line) and reads it back: a row that records a block while the
-  review now carries none is a vanished block, not a clean review. A ledger row
-  that cannot be written is a `::warning::` on the job and never fails a PR; the
-  verdict on the head is the decision. The review selection still matches only
-  the typed block and the guide marker, so a ledger comment is never judged as
-  the review.
+  commit the comment quotes, which is the guide header's link only: the first
+  `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
+  header quotes. The block keeps resolved findings, so a PR that still carries
+  one cannot pass on a missing block: the gate fails on it. Two bounds are
+  accepted and not fixed. First, the review is one
+  comment updated in place, so a run that rewrote it without the block leaves
+  nothing to detect: a PR that ever carried a block is caught only while an older
+  one survives beside the new comment. An append-only ledger comment recorded
+  that absence too, but it was posted after the gate had already decided, so the
+  first review of a PR had no row when it was read, and it was posted before the
+  empty-review check, so every failed gate run put another comment on the PR; it
+  was deleted rather than fixed. Second, selection matches the typed block and
+  the guide marker only at a line start, so a comment that writes about either
+  marker in prose is never judged as a review.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed

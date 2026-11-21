@@ -95,15 +95,6 @@ clean_body() {
   printf '## PR Reviewer Guide 🔍\n\n<!-- pr-agent:review:full -->\n\n<table>\n<tr><td>⚠️&nbsp;<strong>Risk level</strong>: Low</td></tr>\n<tr><td>✅&nbsp;<strong>Merge recommendation</strong>: %s</td></tr>\n</table>\n\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$verdict" "$head"
 }
 
-# The gate appends one ledger row per judged head: a separate, append-only
-# comment, never edited, so a block a later run erased from the review itself is
-# still on record (finding 09d3fb2ec6ef).
-ledger() {
-  local head="$1" block="${2:-true}" complete="${3:-true}" verdict="${4:-no_concerns_found}"
-  printf '<!-- review-gate-ledger:v1 head=%s block=%s complete=%s verdict=%s -->\n' \
-    "$head" "$block" "$complete" "$verdict"
-}
-
 comment() {
   local body="$1" author="${2:-$BOT}"
   jq -cn --arg body "$body" --arg author "$author" \
@@ -166,7 +157,7 @@ prose_quoted="$(printf 'The stamp skips when the comment already contains `pr-ag
 export FAKE_COMMENTS="[$(comment "$prose_quoted")]"
 run marker-quoted-in-prose 0 'gate: pass'
 
-# Prose alone is not a ledger: a PR that never carried a block must not read as
+# Prose alone is not a block: a PR that never carried one must not read as it
 # one that lost it, or the fix for a clean review would fail on the reviewer
 # writing about the marker.
 export FAKE_COMMENTS="[$(comment "$(printf 'The gate reads `pr-agent-review-state:v1`, and here is why it matters.\n\n<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$HEAD")")]"
@@ -185,7 +176,7 @@ nobody="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</s
 export FAKE_COMMENTS="[$(comment "$nobody")]"
 run no-block-no-head 1 'no typed state block'
 
-# A PR that already had a findings ledger keeps one, resolved findings and all
+# A PR that already had a findings block keeps one, resolved findings and all
 # (#133: 4 findings, 0 active, block present). Absence after that is a fault.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(clean_body)")]"
 run block-vanished 1 'although an earlier one on this PR did'
@@ -194,39 +185,6 @@ run block-vanished 1 'although an earlier one on this PR did'
 # newest comment still wins, so this stays a fault rather than a pass.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(clean_body)")]"
 run block-vanished-current 1 'although an earlier one on this PR did'
-
-# A run that rewrites the one review comment without the block leaves nothing
-# behind in the comments a review can own. The gate's ledger row is the evidence
-# that survives the rewrite, so the same absence is a vanished block, not a
-# clean review (finding 09d3fb2ec6ef).
-export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(ledger "$OLD" true)")]"
-run ledger-block-vanished 1 'although an earlier one on this PR did'
-
-# A ledger row is not a review. It carries neither marker the selection matches,
-# so a ledger comment newer than the review must not be judged in its place: if
-# it were, the missing head would fail this case.
-export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(ledger "$OLD" true)")]"
-run ledger-is-not-a-review 0 'gate: pass'
-
-# A ledger row that recorded no block proves nothing was lost: a clean review
-# still passes.
-export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(ledger "$OLD" false)")]"
-run ledger-block-false 0 'gate: pass'
-
-# The same, stated without the verdict: a ledger row alone is no review at all.
-export FAKE_COMMENTS="[$(comment "$(ledger "$HEAD" true)")]"
-run ledger-alone-is-not-a-review 1 'from the bot'
-
-# The workflow builds each row from this line, so its fields are a contract:
-# printed on every gate exit, pass or fail, in one fixed order.
-export FAKE_COMMENTS="[$(comment "$(clean_body)")]"
-run ledger-line-clean 0 "ledger: head=$HEAD block=false complete=unrecorded verdict=no_concerns_found"
-
-export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
-run ledger-line-block 0 "ledger: head=$HEAD block=true complete=true verdict=no_concerns_found"
-
-export FAKE_COMMENTS="[$(comment "$(clean_body)"), $(comment "$(ledger "$OLD" true)")]"
-run ledger-line-missing 1 "ledger: head=$HEAD block=false complete=missing verdict=no_concerns_found"
 
 # A timed-out or truncated run can still print a clean recommendation.
 incomplete="$(printf '<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":false,"head_sha":"%s"}}\n-->\n<strong>Risk level</strong>: Low\n<strong>Merge recommendation</strong>: No concerns found\n' "$HEAD")"
@@ -354,7 +312,7 @@ run reviewed-missing 1 'reviewed: false'
 
 GATE_ARGS=(--gate)
 
-# Two greens, named apart: a review that carried a ledger is not the same
+# Two greens, named apart: a review that carried a block is not the same
 # answer as one that had nothing to record, even though both may merge.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
 run green-cleared 0 'review_state: cleared'
@@ -385,6 +343,13 @@ run body-link-does-not-beat-recorded-head 0 'gate: pass'
 # marker cannot be judged in place of the real review.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(printf '> the gate reads `<!-- pr-agent-review-state:v1` and commit/%s\n' "$HEAD")")]"
 run prose-mention-is-not-a-review 0 'gate: pass'
+
+# A truncated header names the head and then quotes an older fix on the same line,
+# and a newer bot comment only writes about the guide marker. The header's link is
+# the first commit after the phrase, and the marker is only a review at a line
+# start, so neither the quoted fix nor the prose comment can move the head.
+export FAKE_COMMENTS="[$(comment "$(printf '## PR Reviewer Guide \U0001F50D\n\n<!-- pr-agent:review:full -->\n\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s, and the earlier attempt is at commit/%s\n' "$HEAD" "$OLD")"), $(comment "$(printf '> selection matches `<!-- pr-agent:review:full` and names commit/%s\n' "$OLD")")]"
+run truncated-header-and-prose-guide-marker 0 'gate: pass'
 
 # A block that vanished after this PR carried one is the run's fault, and it is
 # named before staleness: the missing block is the cause, the stale head only
