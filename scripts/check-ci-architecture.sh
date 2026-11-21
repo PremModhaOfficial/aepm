@@ -153,5 +153,30 @@ else
   die "a ranked row waits on a row below it: $bad"
 fi
 
+# 10. Every `file:NN` citation that resolves to a real file points inside it.
+#     This document has twice cited a line that does not exist (sim.yml:189-193
+#     in a 77-line file) and twice cited the wrong existing line, which this
+#     cannot catch — but an off-the-end number is the failure that reads as a
+#     citation while being unmatchable, and it is cheap to hold shut.
+badcite=""
+n_cites=0
+while IFS= read -r c; do
+  f="${c%:*}"; n="${c##*:}"; n="${n%%-*}"
+  path=""
+  for cand in "$f" ".github/workflows/$(basename "$f")" "sim/$(basename "$f")" \
+              "scripts/$(basename "$f")" "docs/$(basename "$f")" "src/$(basename "$f")"; do
+    if [ -f "$cand" ]; then path="$cand"; break; fi
+  done
+  [ -n "$path" ] || continue
+  n_cites=$((n_cites + 1))
+  len=$(wc -l < "$path")
+  [ "$n" -le "$len" ] || badcite="$badcite $c($path has $len lines)"
+done < <(grep -oE '[A-Za-z0-9_./-]+\.(sh|yml|yaml|rs|md):[0-9]+(-[0-9]+)?' "$DOC" | sort -u)
+if [ -z "$badcite" ]; then
+  pass "all $n_cites resolvable file:line citations point inside their file"
+else
+  die "citations point past the end of their file:$badcite"
+fi
+
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]
