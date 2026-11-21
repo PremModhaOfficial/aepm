@@ -174,7 +174,7 @@ from the local ratio, and the first slice below measures it by removing it.
 
 The scaffolding row is what makes the column sum to the stated 57.5s; without it
 the five named parts come to 54.0s and the table silently loses 6% of the job.
-The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 15
+The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 16
 invocations over 13 scripts today (it was 10 invocations at the commit that first
 published this table). The figure is asserted by
 `scripts/check-ci-architecture.sh`, which is itself one of those invocations, so
