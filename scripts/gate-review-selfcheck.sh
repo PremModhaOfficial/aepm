@@ -374,6 +374,10 @@ fi
 # row for this script and compare it with the total counted above, so adding a
 # case fails here until the table says what the suite prints (finding
 # 91f0289550e3).
+#
+# Every citation, not just the table row: the decision rows cite the same count,
+# and one that is updated while another is left behind shows one suite two
+# totals (finding 474daa440a5e), which the table row alone never catches.
 cases=$((cases + 1))
 doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
   | grep -oE '[0-9]+/[0-9]+' | head -1)"
@@ -381,6 +385,12 @@ if [[ "$doc_row" != "$cases/$cases" ]]; then
   echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $cases case(s)"
   failures=$((failures + 1))
 fi
+while IFS= read -r cite; do
+  [[ -n "$cite" && "$cite" != "$cases/$cases" ]] || continue
+  echo "FAIL doc-count: a citation says '$cite', suite has $cases case(s)"
+  failures=$((failures + 1))
+done < <(grep -oE 'scripts/gate-review-selfcheck\.sh [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+')
 
 [[ "$failures" -eq 0 ]] || { echo "$failures of $cases case(s) failed"; exit 1; }
 echo "review-gate self-check: $cases/$cases"
