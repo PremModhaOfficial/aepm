@@ -189,13 +189,15 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   an older review would be a lie; the check it left on the older commit is read
   by no rollup, because checks are per-commit.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict. All three are required on `main`, with `strict`, admins enforced
-  and no force push, re-measured 2026-11-20T16:01Z:
-  `gh api repos/PremModhaOfficial/aepm/branches/main/protection --jq '.required_status_checks.contexts'`.
+  the verdict. All three are required on `main`, with `strict`, admins enforced,
+  no force push and no branch deletion, re-measured 2026-11-21T11:10Z:
+  `gh api repos/PremModhaOfficial/aepm/branches/main/protection --jq '{contexts: .required_status_checks.contexts, strict: .required_status_checks.strict, admins: .enforce_admins.enabled, force: .allow_force_pushes.enabled, deletions: .allow_deletions.enabled}'`.
   The context that gates a PR is the check-run D32 writes onto the pinned head,
   not the job's own check, which is anchored to the default branch, so an
-  unreviewed head is blocked only until its review lands. Overriding it is an
-  admin merge, and that is a decision, not a formality.
+  unreviewed head is blocked only until its review lands. While `enforce_admins`
+  is on there is no merge bypass: the only override is editing the `main`
+  ruleset or protection (turn `enforce_admins` off or drop `Review Gate`), and
+  that is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite

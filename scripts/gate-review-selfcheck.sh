@@ -206,5 +206,42 @@ run_case no-gate-on-base pull_request "$HEAD"  9 "$HEAD" pass 1 none  ""        
 grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
+# The docs state the protection this gate depends on, so each stated setting
+# names a proof that shows it. Narrowing a proof back to the contexts array
+# leaves `strict`, admins-enforced and no-force-push as memory, and a doc that
+# offers an admin merge as the way past the gate contradicts `enforce_admins`.
+doc_cases=0
+docs_ok=0
+for doc in AGENTS.md .github/PR-AGENT.md; do
+  doc_cases=$((doc_cases + 1))
+  missing=""
+  while IFS= read -r cmd; do
+    case "$cmd" in *--jq*) ;; *) continue ;; esac
+    for key in '.required_status_checks.strict' '.enforce_admins.enabled' '.allow_force_pushes.enabled' '.allow_deletions.enabled'; do
+      case "$cmd" in *"$key"*) ;; *) missing="$key" ;; esac
+    done
+  done < <(grep -F 'branches/main/protection' "$repo_root/$doc" || true)
+  if [[ -n "$missing" ]]; then
+    echo "FAIL docs: $doc proves the required checks without $missing, so the setting stated beside it is unsourced"
+    failures=$((failures + 1))
+  else
+    docs_ok=$((docs_ok + 1))
+  fi
+done
+
+doc_cases=$((doc_cases + 1))
+# Squash the newlines: a reflowed paragraph must not decide this assertion.
+agents_flat="$(tr -s '[:space:]' ' ' <"$repo_root/AGENTS.md")"
+if [[ "$agents_flat" == *"Overriding it is an admin merge"* ]]; then
+  echo "FAIL docs: AGENTS.md offers an admin merge as the override, which admins-enforced refuses"
+  failures=$((failures + 1))
+elif [[ "$agents_flat" != *"no merge bypass"* ]]; then
+  echo "FAIL docs: AGENTS.md names no override at all, so a blocked merge reads as unfixable"
+  failures=$((failures + 1))
+else
+  docs_ok=$((docs_ok + 1))
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
 echo "review-gate self-check: 9/9"
+echo "review-gate docs name their proof: $docs_ok/$doc_cases"
