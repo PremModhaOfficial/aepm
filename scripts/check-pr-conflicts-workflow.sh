@@ -167,8 +167,12 @@ fi
 # raises both sides together and neither depends on where the check sits.
 checks=$((checks + 1))
 declared=$(( $(grep -c '^run_case ' "$0") + 2 ))
-doc_row="$(grep -oE 'scripts/check-pr-conflicts-workflow\.sh [0-9]+/[0-9]+' "$DOC" \
-  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+# Every mention must agree: `head -1` let a stale row coexist with a correct one
+# and pass on whichever came first.
+doc_rows="$(grep -oE 'scripts/check-pr-conflicts-workflow\.sh [0-9]+/[0-9]+' "$DOC" \
+  | grep -oE '[0-9]+/[0-9]+' | sort -u)"
+doc_row="$doc_rows"
+[[ "$(printf '%s\n' "$doc_rows" | grep -c .)" -le 1 ]] || doc_row="$doc_rows (disagree)"
 if [[ "$declared" -ne "$checks" ]]; then
   fail doc-count "the suite counted $checks case(s) but its source declares $declared"
 elif [[ "$doc_row" != "$declared/$declared" ]]; then
