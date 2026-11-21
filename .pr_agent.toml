@@ -39,19 +39,14 @@ reasoning_effort = "max"
 # the id is listed here (configuration.toml: additional_reasoning_effort_models).
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s, far shorter than a measured max-reasoning review (498-509s).
-# Worst case is bounded: a timeout goes to the fallback entry (same model) once,
-# so 2 x ai_timeout must stay under the workflow's job timeout with room left to
-# post. At 2 x 900s = 1800s against a 30-minute (1800s) job budget the headroom
-# was zero, so a hung provider was killed by the job before it could write its
-# comment (measured: job 1835s, two litellm timeout=900.0 attempts, "Tool
-# reported success but recorded a failure; failing the action").
-# Cutting ai_timeout instead (600 was tried first) trades that death for a new
-# one, and the recordings say how much: over 23 recorded calls (review comment
-# run details, PRs #130-#159) per-call time was p50 325s, p95 414s, max 848s.
-# 600 clips the single 848s call that succeeded; 900 covers every call recorded
-# with 52s to spare. So the budget is the thing that was wrong, not the timeout:
-# the job is 40 minutes (2400s), leaving 600s to post after 2 x 900s.
-ai_timeout = 900
+# One attempt now that fallback_models is empty, so the ceiling is per call, not
+# per run: over 23 recorded calls (review comment run details, PRs #130-#159)
+# per-call time was p50 325s, p95 414s, max 848s. 600 clips the single 848s call
+# that succeeded; 900 covers every recorded call with 52s to spare but was still
+# killed on a 589-line diff (measured on #158 b186b66: 900.36s and 900.12s, both
+# litellm timeouts, no comment posted). 1500 is 1.8x the worst recorded call and
+# with one attempt it leaves 900s of the 2400s job budget to post.
+ai_timeout = 1500
 retry_same_model_on_timeout = false
 
 # Read the rules from the default branch, never from the PR branch, so a PR
