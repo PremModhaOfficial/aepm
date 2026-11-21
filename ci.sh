@@ -45,6 +45,12 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
 
+echo "=== doc claims (the machinery docs against their own tables and the repo) ==="
+# docs/CI-ARCHITECTURE.md and docs/research/ledger.md are prose claims about this
+# repo: row counts, where each gate really runs, one verdict per fact. A review of
+# #147 found four of them drifting; this is the gate that now fails on a revert.
+bash scripts/gate-doc-claims.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

@@ -55,7 +55,7 @@ priority order of everything below.
 | Job total, docs-only PR (0 scenarios) | ~10s |
 | **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
 
-The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail §4 item 1 is sized against.
+The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail §4 item 2 is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
@@ -227,10 +227,11 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 
 ## 4. The reconciled plan
 
-Two clean-context reviewers audited the twelve items below against the repo and
+Two clean-context reviewers audited the fourteen items below against the repo and
 the Actions API, each independently, and this is what survived. It is a short
-list on purpose: eight of twelve rows were killed or deferred, and the two that
-remain are one bug fix and nothing else new. Every verdict names the number that
+list on purpose: eight of fourteen rows were killed, parked, rejected or deferred,
+and the six that remain are one merge, one experiment, two hand-overs, one ticket
+and one row deliberately left alone. Every verdict names the number that
 decided it, so a later reader can re-open a decision with a measurement rather
 than an opinion.
 
@@ -259,10 +260,11 @@ below are the API's, not the branch's.
 
 ### What that leaves
 
-One merge (#144), one experiment (item 13), one parked branch (#145), two
-hand-overs to `9c075c1c` (items 4 and 5), one ticket nobody owns (item 14). The
-flagship of the earlier ranking was parked by its own numbers, which is the
-result the audit was for.
+One merge (#144), one experiment (item 13), two hand-overs to `9c075c1c` (items
+4 and 5), one ticket nobody owns (item 14), and one row deliberately left alone
+(item 11: an accepted trade, not work). The parked branch (#145) is not in that
+six — the flagship of the earlier ranking was killed by its own numbers, which is
+the result the audit was for.
 
 ## 5. What fails, and what fails for the wrong reason
 

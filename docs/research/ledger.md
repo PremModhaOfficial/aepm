@@ -28,38 +28,46 @@ Commands behind the numbers below:
 
 | artifact | purpose (the failure it prevents) | type | cost | benefit (real catches) | evidence | verdict | confidence / what flips it |
 |---|---|---|---|---|---|---|---|
-| `CI (Linux)` — required | a tree that does not build, lint or test | deterministic | ~60s wall, 4 legs compile the same tree, ~1 flaky surface per leg | caught every compile/test break in the sample: 4 runs, all three legs red for one defect | measured (43045640650, 42488229442, 42487635874, 42452318081) | **KEEP**, MERGE the four legs (§3) | high; flips if a leg stops catching anything only it can see |
+| `CI (Linux)` — required | a tree that does not build, lint or test | deterministic | ~60s wall, 4 legs compile the same tree, ~1 flaky surface per leg | caught every compile/test break in the sample: 4 runs, all three legs red for one defect | measured (43045640650, 42488229442, 42487635874, 42452318081) | **KEEP**, no action on the four legs (`docs/CI-ARCHITECTURE.md` §4 item 11) | high; flips if a leg stops catching anything only it can see |
 | `Arch simulation` — required | behaviour claims that FakeRunner units cannot make: pacman side effects, install paths, TUI under a pty | deterministic | 183s median per PR, 266–330s on main pushes, 118–128s of it an image build | 56 scenarios; the only red in the window was a real chaos-scenario failure (43434768093) | measured | **KEEP** | high; flips if scenario selection is ever wrong in the *unsafe* direction (a `sim/` change selecting nothing ran until #144) |
 | `Review Gate` — required | a merge while the review holds an unresolved blocking finding | deterministic wrapper around an LLM verdict | 26 of 43 red runs were not about the change: 17 stale-after-rebase, 9 false; 775 lines of shell | **0 independent catches** — it restates the reviewer's verdict; it never found anything the reviewer had not | measured + documented root cause (§8) | **KEEP required, reduce its noise**: the staleness is `strict: true`, not the gate; merge queue would fix it but is unavailable to a user-owned repo (§8). Options A/B/C in §3 item 5 | medium; flips to DEMOTE if option C (block on findings, report staleness) is refused and the noise stays |
 | `PR Agent` (review) | an agent-authored change merging with a defect a human would have caught | LLM | 62,073 tokens / 1 AI call per review; 1–8 min latency; paid subscription; **substrate now a community legacy fork** of Qodo's, pinned by digest (§8) | real catches: #146 6 findings, 3 active, all real and fixed (pagination, unguarded API call, regex FP); #99 32; #133 7; #145 5. **False negatives, measured 2026-11-19: 4 of 11 reviews returned zero findings, 3 of them on diffs ≥70 lines** — #144 (234 lines, 7 files, a shell rewrite) drew a 775-byte "No concerns found", while #146 (410 lines, the same surface) drew 6 | measured | **KEEP for code-change PRs; it is blind on claim-change PRs** — its unit of work is a finding, so a PR whose only job is to make a prose claim true cannot be reviewed by it at all (#134: two claims, 0 findings, 18,312 in / 19,623 out). ADD §4a-1 and §4a-2 | high; flips if `extra_instructions` gains claim verification and the zero-finding rate on ≥70-line diffs does not fall |
 | `Scheduled audit` | lockfile, toolchain and advisory drift that no PR touches | deterministic | one run a week, ~0 minutes | **0 runs**: added 2026-11-17, first cron Monday 2026-11-23. No issue ever opened | measured (workflow state `active`, 0 runs) | **UNPROVEN — shadow** | medium; flips when the first drift opens one issue, or a seeded drift fails to |
 | `Dependabot` | dependency rot | deterministic | monthly PRs, each costing a full CI+Sim run | not measured here | none | **KEEP** (out of scope) | — |
 
-## 2. Gate scripts — fourteen deterministic checks
+## 2. Gate scripts — fifteen deterministic checks
 
-All fourteen are deterministic, run inside `bash ci.sh` (so a failure appears as
-one red `Run CI script` step), and **none fired in the last 60 red runs**: every
+All fifteen are deterministic, and **none fired in the last 60 red runs**: every
 red was a compile, test, fmt, packaging, image-build, provider or review-gate
 failure. That is the correct shape for a cheap check that names an incident in
 its introducing commit, so the default verdict is KEEP — with three rows where the
 cost is duplication rather than runtime.
 
-| artifact | prevents | cost | real catches | evidence | verdict |
+They do **not** all run in one place, and the `runs in` column is the point: a
+gate that runs nowhere surfaces nowhere, so where it executes decides whether a
+failure is visible at all. Most are steps of `bash ci.sh`, and so one red `Run CI
+script` step inside `CI (Linux)`. The exceptions: `gate-coverage.sh` is its own
+`ci.yml` job; `sim/check-scenario-numbers.sh` runs in `Sim`;
+`gate-scheduled-audit.sh` in the `scheduled-audit` workflow; `review-state.sh` in
+the two review workflows; `proof.sh` in no workflow at all.
+
+| artifact | prevents | cost | real catches | evidence | verdict | runs in |
 |---|---|---|---|---|---|
-| `scripts/gate-coverage.sh` + `coverage-floor.txt` | coverage quietly falling below a measured floor | ~12s | introduced in #83, which exists because three drifts shipped green | anecdotal (commit), measured (job step 11.6s avg) | **KEEP** — floor is out of scope to lower |
-| `scripts/gate-scenarios.sh` | a `src/` change with no scenario, or scenarios the diff cannot reach | 0.1s to select | caught the case that motivated it: a docs diff selecting 27 of 56 scenarios (218s) | measured (#143, #144) | **KEEP** — this is the strongest value-per-second in the ledger |
-| `scripts/gate-pkgbuild-version.sh` | `pkgver` drifting from `Cargo.toml` | <1s | #9/#94 | anecdotal | **KEEP** |
-| `scripts/gate-state-machines.sh` | an undocumented state machine, or a doc drifting from code | ~1s incl. `--self-test` | #45/#47 | anecdotal | **KEEP** |
-| `scripts/gate-scheduled-audit.sh` | the release-time audit being skipped | <1s | the driver of §1's scheduled audit | anecdotal | **KEEP** |
-| `scripts/gate-review-selfcheck.sh` | the gate's reporting block losing its shape | ~1s plus 210 lines to maintain | #112 (an unreadable head read as superseded) | measured (the fix), anecdotal (the cost) | **MERGE** into a script the workflow calls (§3 item 2) |
-| `scripts/check-review-gate.sh` | the gate's reader regressing | ~2s plus 237 lines and its own fake `gh` | #99; and it caught the prose-quoted-marker defect on #146 | measured | **KEEP**, MERGE the two fake-`gh` adapters (§3 item 1) |
-| `scripts/check-sim-numbers.sh` | a duplicate scenario number | <1s | #61/#64 | anecdotal | **MERGE** into `sim/check-scenario-numbers.sh`, which covers more (§3 item 3) |
-| `scripts/review-state.sh` | merging on a stale or missing review | 328 lines for one question | #99, #111, #112, #115 | measured | **KEEP pending the §1 `Review Gate` decision** — it is the gate's whole implementation |
-| `sim/check-scenario-numbers.sh` | duplicate numbers across `sim/scenarios/` **and** `sim/vm/` | <1s | #82 | anecdotal | **KEEP** — strictly stronger than the row above |
-| `sim/check-image-tag.sh` | two concurrent worktrees colliding on one image tag | <1s | #60/#63 | anecdotal | **KEEP** |
-| `sim/check-build-retry.sh` | the BuildKit retry being silently deleted | <1s | #91 | anecdotal | **KEEP** |
-| `scripts/proof.sh` | a claim made without a head, an ahead/behind count, or a fresh evidence file | ~2s | the honesty rules it anchors | anecdotal | **KEEP**, CUT its plan-percentage section (§3 item 4) |
-| `ci.sh` | any of the above being skipped | 90 lines, 9 sequential calls; the only place that knows the order | runs on every local gate and inside `CI (Linux)` | measured | **KEEP**, MERGE the ordering into the gate module (§3 item 5) |
+| `scripts/gate-coverage.sh` + `coverage-floor.txt` | coverage quietly falling below a measured floor | ~12s | introduced in #83, which exists because three drifts shipped green | anecdotal (commit), measured (job step 11.6s avg) | **KEEP** — floor is out of scope to lower | `ci.yml` (its own `Coverage (floor enforced)` job) |
+| `scripts/gate-scenarios.sh` | a `src/` change with no scenario, or scenarios the diff cannot reach | 0.1s to select | caught the case that motivated it: a docs diff selecting 27 of 56 scenarios (218s) | measured (#143, #144) | **KEEP** — this is the strongest value-per-second in the ledger | `ci.sh`, and `sim.yml` for selection |
+| `scripts/gate-pkgbuild-version.sh` | `pkgver` drifting from `Cargo.toml` | <1s | #9/#94 | anecdotal | **KEEP** | `ci.sh` |
+| `scripts/gate-state-machines.sh` | an undocumented state machine, or a doc drifting from code | ~1s incl. `--self-test` | #45/#47 | anecdotal | **KEEP** | `ci.sh` |
+| `scripts/gate-scheduled-audit.sh` | the release-time audit being skipped | <1s | the driver of §1's scheduled audit | anecdotal | **KEEP** | `scheduled-audit.yml` |
+| `scripts/gate-review-selfcheck.sh` | the gate's reporting block losing its shape | ~1s plus 210 lines to maintain | #112 (an unreadable head read as superseded) | measured (the fix), anecdotal (the cost) | **MERGE** into a script the workflow calls (§3 item 2) | `ci.sh` |
+| `scripts/check-review-gate.sh` | the gate's reader regressing | ~2s plus 237 lines and its own fake `gh` | #99; and it caught the prose-quoted-marker defect on #146 | measured | **KEEP**, MERGE the two fake-`gh` adapters (§3 item 1) | `ci.sh` |
+| `scripts/check-sim-numbers.sh` | a duplicate scenario number | <1s | #61/#64 | anecdotal | **MERGE** into `sim/check-scenario-numbers.sh`, which covers more (§3 item 3) | `ci.sh` |
+| `scripts/review-state.sh` | merging on a stale or missing review | 328 lines for one question | #99, #111, #112, #115 | measured | **KEEP pending the §1 `Review Gate` decision** — it is the gate's whole implementation | `pr-agent.yml`, `review-gate.yml` |
+| `sim/check-scenario-numbers.sh` | duplicate numbers across `sim/scenarios/` **and** `sim/vm/` | <1s | #82 | anecdotal | **KEEP** — strictly stronger than the row above | `sim.yml`, `sim/run.sh` |
+| `sim/check-image-tag.sh` | two concurrent worktrees colliding on one image tag | <1s | #60/#63 | anecdotal | **KEEP** | `ci.sh` |
+| `sim/check-build-retry.sh` | the BuildKit retry being silently deleted | <1s | #91 | anecdotal | **KEEP** | `ci.sh` |
+| `scripts/proof.sh` | a claim made without a head, an ahead/behind count, or a fresh evidence file | ~2s | the honesty rules it anchors | anecdotal | **KEEP**, CUT its plan-percentage section (§3 item 4) | nothing — run by hand |
+| `scripts/gate-doc-claims.sh` | `docs/CI-ARCHITECTURE.md` or `docs/research/ledger.md` disagreeing with their own arithmetic, their own tables, or where a check actually runs | ~1s | #147: four of them in prose no reader had checked against the tables | measured (#147) | **KEEP** | `ci.sh` |
+| `ci.sh` | any of the above being skipped | 96 lines, 11 shell checks in sequence; the only place that knows the order | runs on every local gate and inside `CI (Linux)` | measured | **KEEP**, MERGE the ordering into the gate module (§3 item 5) | `ci.yml` (`CI (Linux)` job) |
 
 ## 3. Top 5 CUT / DEMOTE / MERGE, with the evidence
 
@@ -164,8 +172,10 @@ configurable from here; recorded for the review thread.
 
 ## 6. What would flip each verdict
 
-- `CI (Linux)` KEEP → MERGE the four legs: already recommended; a leg flips only
-  if it stops catching anything its siblings cannot.
+- `CI (Linux)` KEEP → **no action on the four legs**, which is what
+  `docs/CI-ARCHITECTURE.md` §4 item 11 already decided: 0s wall clock and $0
+  against a 4× flake surface, an accepted trade rather than plan work. A leg flips
+  only if it stops catching anything its siblings cannot.
 - `Review Gate` → **DEMOTE** if option A or C is refused and the 17 stale reds
   stay; **KEEP required** if E1 finds a merge that shipped a real ACTIVE finding.
   **Deepen** (typed record) if E2 shows high recall and the only problem is the
@@ -188,7 +198,7 @@ configurable from here; recorded for the review thread.
 About half a session and one delegate, and it changed two verdicts I had already
 published (the sim cache went from "rank 1" to "parked"; the review gate went from
 "deepen" to "demote or deepen, decide first"). It would not be worth running for a
-repo with fewer than ~10 gates; at 14 gates, 5 workflows and 26 false red runs, it
+repo with fewer than ~10 gates; at 15 gates, 5 workflows and 26 false red runs, it
 paid for itself once. Shrink it next time by keeping only §1, §2's duplicate rows
 and §5.
 
