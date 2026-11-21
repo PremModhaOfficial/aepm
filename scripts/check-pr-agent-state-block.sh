@@ -57,11 +57,13 @@ case "${1:-}" in
     path=""
     input=""
     jqexpr=""
+    paginate=0
     while (($#)); do
       case "$1" in
         -X) method="$2"; shift 2 ;;
         --jq) jqexpr="$2"; shift 2 ;;
         --input) input="$2"; shift 2 ;;
+        --paginate) paginate=1; shift ;;
         -f|-F) shift 2 ;;
         -*) shift ;;
         *) path="$1"; shift ;;
@@ -74,11 +76,28 @@ case "${1:-}" in
           printf '{}\n'
           exit 0
         fi
-        if [[ -n "$jqexpr" ]]; then
-          jq -r "$jqexpr" <<<"${FAKE_COMMENTS:-[]}"
-        else
-          printf '%s\n' "${FAKE_COMMENTS:-[]}"
+        # A real `gh api` applies `--jq` once per page and prints each page's
+        # result, and it walks the pages only when `--paginate` is given. Honouring
+        # both is the point: an unpaginated fetch sees page 1 and nothing else, so
+        # a comment on a later page is invisible here exactly as it is on GitHub.
+        per=30
+        if [[ "$path" == *per_page=* ]]; then
+          per="${path##*per_page=}"
+          per="${per%%[!0-9]*}"
         fi
+        total="$(jq 'length' <<<"${FAKE_COMMENTS:-[]}")"
+        pages=$(((total + per - 1) / per))
+        ((pages > 0)) || pages=1
+        ((paginate)) || pages=1
+        for ((i = 0; i < pages; i++)); do
+          page="$(jq -c --argjson off "$((i * per))" --argjson per "$per" \
+            '.[$off:($off + $per)]' <<<"${FAKE_COMMENTS:-[]}")"
+          if [[ -n "$jqexpr" ]]; then
+            jq -c "$jqexpr" <<<"$page"
+          else
+            printf '%s\n' "$page"
+          fi
+        done
         ;;
       */pulls/*) printf '%s\n' "${FAKE_PULL_HEAD:-}" ;;
       *) printf '{}\n' ;;
@@ -116,15 +135,19 @@ state_of() { # the gate's own extraction, copied from review-state.sh
 }
 
 failures=0
+checks=0
 fail() {
   printf 'FAIL %s: %s\n%s\n' "$1" "$2" "${3:-}"
   failures=$((failures + 1))
 }
 
-run_case() { # label, body, author, PR_HEAD, want(patch|none), text, older body
-  local label=$1 original=$2 author=$3 prhead=$4 want=$5 want_text=${6:-} older=${7:-}
+run_case() { # label, body, author, PR_HEAD, want(patch|none), text, older body, all comments
+  local label=$1 original=$2 author=$3 prhead=$4 want=$5 want_text=${6:-} older=${7:-} all=${8:-}
   local patch="$root/patch" comments out rc body state
-  if [[ -n "$older" ]]; then
+  checks=$((checks + 1))
+  if [[ -n "$all" ]]; then
+    comments="$all"
+  elif [[ -n "$older" ]]; then
     comments="[$(comment_json "$older"), $(comment_json "$original" "$author")]"
   else
     comments="[$(comment_json "$original" "$author")]"
@@ -182,6 +205,7 @@ WANT_HEAD="$HEAD"
 run_case clean "$(guide_body "$HEAD" 'No concerns found')" "$BOT" "" patch 'now records a complete review'
 
 # The proof that matters: the gate reads what the step wrote.
+checks=$((checks + 1))
 [[ -f "$root/patch" ]] || { echo "FAIL gate-reads-block: no PATCH to read"; exit 1; }
 patched="$(jq -r '.body' "$root/patch")"
 set +e
@@ -223,5 +247,43 @@ run_case head-from-api "$(guide_body '-' 'No concerns found')" "$BOT" "" patch '
 WANT_HEAD="$HEAD"
 run_case newest-wins "$(guide_body "$HEAD" 'No concerns found')" "$BOT" "" patch 'now records a complete review' "$(guide_body "$OLD" 'Changes required')"
 
+# #153: more than one page of comments, and only the last one is the bot review.
+# It sits on page 2 of a 100-per-page list, so an unpaginated fetch cannot see it
+# and the step writes nothing. The case asserts the PATCH only a paginated read
+# produces, which is what makes it fail when `--paginate` is removed.
+WANT_HEAD="$HEAD"
+pagination_comments="$(jq -nc --argjson last "$(comment_json "$(guide_body "$HEAD" 'No concerns found')")" \
+  '[range(0;100) | {id: (900000000 + .), body: "chatter \(.)", user: {login: "someone"}, author: {login: "someone"}}] + [$last]')"
+run_case pagination "$(guide_body "$HEAD" 'No concerns found')" "$BOT" "" patch 'now records a complete review' '' "$pagination_comments"
+
+# #153: the job guard skips a draft and a fork, and the step must say so itself.
+# On a draft the `reviewed` step is skipped, its output is empty, and the step's
+# own condition was true, so the writer ran for a review the model never made.
+# The step's `if:` is read out of the YAML and compared with the spaces removed,
+# so the check is about the clauses rather than about formatting.
+checks=$((checks + 1))
+step_if=""
+if ! step_if="$(python3 - "$WORKFLOW" <<'PY'
+import sys
+import yaml
+
+doc = yaml.safe_load(open(sys.argv[1]))
+step = next(s for s in doc["jobs"]["review"]["steps"]
+            if s.get("name") == "Append the typed review state block")
+print("".join(str(step.get("if", "")).split()))
+PY
+)"; then
+  fail draft-guard "cannot read the append step's if: from $WORKFLOW"
+  step_if=""
+fi
+if [[ -n "$step_if" ]]; then
+  for clause in 'github.event.pull_request.draft==false' \
+                'github.event.pull_request.head.repo.full_name==github.repository' \
+                "github.event_name=='issue_comment'"; do
+    [[ "$step_if" == *"$clause"* ]] \
+      || fail draft-guard "the append step's if: does not carry '$clause'" "$step_if"
+  done
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
-echo "pr-agent state block: 7/7"
+echo "pr-agent state block: $checks/$checks"

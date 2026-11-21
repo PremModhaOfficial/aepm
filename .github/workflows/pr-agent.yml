@@ -131,7 +131,18 @@ jobs:
       # body, hence `--input` and a file. The block is run by
       # `scripts/check-pr-agent-state-block.sh`, which extracts it from here.
       - name: Append the typed review state block
-        if: github.event_name == 'issue_comment' || steps.reviewed.outputs.reviewed != 'true'
+        # The job guard already skips a draft and a fork PR; the step repeats it
+        # because the bind is here, not only there: on a draft the `reviewed` step
+        # is skipped, so its output is empty, the condition below was true, and the
+        # step could append a block naming an older head for a review the model
+        # never ran (#153). `issue_comment` carries no `pull_request`, so `/review`
+        # passes the second half untouched.
+        if: >-
+          (github.event_name == 'issue_comment' ||
+            steps.reviewed.outputs.reviewed != 'true') &&
+          (github.event_name != 'pull_request' ||
+            (github.event.pull_request.draft == false &&
+             github.event.pull_request.head.repo.full_name == github.repository))
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -145,12 +156,18 @@ jobs:
           # recommendation is deliberately not part of this selection: a review that
           # printed none must write nothing, not fall back to an older comment whose
           # recommendation describes another commit.
+          # `--paginate`, because a PR with more than one page of comments hid its
+          # newest review past page 1 and the block then landed on an older comment
+          # or nowhere at all (#153). `--jq '.[]'` streams one comment per line from
+          # every page; `jq -s` puts them back into one array, so "newest" still
+          # means the newest comment on the PR rather than the last of a page.
           comments_url="repos/$GH_REPO/issues/$PR/comments"
-          comment="$(gh api "$comments_url?per_page=100" --jq '[.[]
-            | select(.user.login == env.BOT_LOGIN)
-            | select(.body | contains("pr-agent:review"))
-            | select(.body | contains("pr-agent-review-state:v1") | not)]
-            | last // {}')"
+          comment="$(gh api --paginate "$comments_url?per_page=100" --jq '.[]' \
+            | jq -cs '[.[]
+              | select(.user.login == env.BOT_LOGIN)
+              | select(.body | contains("pr-agent:review"))
+              | select(.body | contains("pr-agent-review-state:v1") | not)]
+              | last // {}')"
           comment_id="$(jq -r '.id // empty' <<<"$comment")"
           if [[ -z "$comment_id" ]]; then
             echo "::notice::PR #$PR has no pr-agent review comment without a state block; nothing to append"
