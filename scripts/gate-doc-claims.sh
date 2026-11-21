@@ -60,28 +60,46 @@ fi
 # Flattened: the paragraph wraps, and a line-oriented grep cannot see "three of
 # the / four open PRs" — which is how the first version of this gate passed the
 # very sentence it was written for.
+flat=$(tr '\n' ' ' < "$DOC" | tr -s ' ')
+want=$(printf '%s\n' "$conflict" | sort -un | paste -sd, -)
 f4=$(awk '/^\*\*F4/{f=1} f && /^## /{exit} f' "$DOC" | tr '\n' ' ' | tr -s ' ')
 [ -n "$f4" ] || die "f4-conflict-set: no F4 section to compare against the table"
 if [ -n "$f4" ]; then
-  named=$(printf '%s\n' "$f4" | grep -oE '#[0-9]+' | sed 's/#//' | sort -un | paste -sd, -)
-  want=$(printf '%s\n' "$conflict" | sort -un | paste -sd, -)
+  named=$(printf '%s\n' "$f4" | grep -oE '#[0-9]+' | sed 's/#//' | sort -un | paste -sd, - || true)
   if [ "$named" = "$want" ]; then
     pass "f4-conflict-set: F4 names #$named, the table's conflicting head(s) are #$want"
   else
     die "f4-conflict-set: F4 names #${named:-nothing}, the table's conflicting head(s) are #${want:-none}"
   fi
+fi
 
-  # 2b. A second way to be wrong: a count word in that section, independent of
-  #     which numbers it lists. Either form has to agree with the table.
-  while IFS= read -r claim; do
-    [ -n "$claim" ] || continue
-    n=$(word "$(printf '%s' "$claim" | grep -oE '^[A-Za-z0-9]+')")
-    if [ "$n" = "$conflict_n" ]; then
-      pass "f4-conflict-count: '$claim' matches $conflict_n conflicting head(s)"
-    else
-      die "f4-conflict-count: '$claim', but the table has $conflict_n conflicting head(s)"
-    fi
-  done < <(printf '%s\n' "$f4" | grep -oiE '[A-Za-z0-9]+ of the (four|[0-9]+) open PRs')
+# 2b. The same claim is restated in "The systemic finding, stated once", which
+#     is outside the F4 block, so the count word is compared over the whole
+#     document: guarding only the block left the restatement unchecked, and both
+#     had drifted.
+while IFS= read -r claim; do
+  [ -n "$claim" ] || continue
+  n=$(word "$(printf '%s' "$claim" | grep -oE '^[A-Za-z0-9]+' | tr '[:upper:]' '[:lower:]')")
+  if [ "$n" = "$conflict_n" ]; then
+    pass "f4-conflict-count: '$claim' matches $conflict_n conflicting head(s)"
+  else
+    die "f4-conflict-count: '$claim', but the table has $conflict_n conflicting head(s)"
+  fi
+done < <(printf '%s\n' "$flat" | grep -oiE '[A-Za-z0-9]+ of the ([a-z]+|[0-9]+) open PRs')
+
+# 2c. The systemic paragraph names the same heads the F4 block does, in its own
+#     "blocked by F4" clause. A name set edited in one place and not the other
+#     is the same defect in the other direction.
+sys=$(printf '%s\n' "$flat" | grep -oiE 'blocked by F4[^.]*' || true)
+if [ -z "$sys" ]; then
+  die "f4-systemic-set: no 'blocked by F4' clause in $DOC to compare against the table"
+else
+  sys_named=$(printf '%s\n' "$sys" | grep -oE '#[0-9]+' | sed 's/#//' | sort -un | paste -sd, - || true)
+  if [ "$sys_named" = "$want" ]; then
+    pass "f4-systemic-set: the systemic clause names #$sys_named, the table's conflicting head(s) are #$want"
+  else
+    die "f4-systemic-set: the systemic clause names #${sys_named:-nothing}, the table's conflicting head(s) are #${want:-none}"
+  fi
 fi
 
 # 3. No merge is free while the table lists more than one open PR: `strict: true`

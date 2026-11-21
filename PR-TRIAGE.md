@@ -28,10 +28,12 @@ measurement) and `#146` (typed-block shim, replaced by `#142`).
 
 ## Failure classes, with the log line
 
-`gh api .../actions/runs?per_page=100` over 98 recent runs: `CI` 27 runs / 2
-failures, `Sim` 27 / 0, `Review Gate` 23 / 0, `Review PR #<n>` 23 / 2, `OCR
-Review (advisory)` 3 / 3. The brief's "35 Review Gate failures" no longer
-reproduces — that window closed when `#142` landed.
+`gh api '.../actions/workflows/<id>/runs?per_page=100'`, one query per workflow:
+`CI` 27 runs / 2 failures, `Sim` 27 / 0, `Review Gate` 23 / 0, `Review PR #<n>`
+23 / 2, `OCR Review (advisory)` 3 / 3. Five queries, not one page: each count is
+that workflow's own most recent runs, so they share no total and no window. The
+brief's "35 Review Gate failures" no longer reproduces — that window closed
+when `#142` landed.
 
 **F1 — browser golden flake (infrastructure).**
 `Prototype (web demo matches the goldens)`, run `44905058059` on `f451a8e`, a
