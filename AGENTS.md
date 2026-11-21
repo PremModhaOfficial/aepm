@@ -313,7 +313,9 @@ log and the one state write; sim 35 proves the failure freeze; sim 36 proves
 the attached install, the receipt and the terminal restore; sim 56 proves the
 receipt's `p`, the return and the re-read count.
 
-Next action: T4 is closed except the keymap overrides. `--no-motion`, the ASCII
+The keymap overrides landed as one table in `src/keymap.rs` with the `[keys]`
+section of `tui.conf`, and sim 40 proves a rebound key acts, the old one stops,
+and the footer and the help overlay name the new one. `--no-motion`, the ASCII
 pass and the 2,000-package performance pass are landed: the budget measures
 7.7 ms static and 10.4 ms live against 16 ms, and a sweep test proves every
 screen is ASCII in `--ascii`. Still open from T3: the receipt's copy and
