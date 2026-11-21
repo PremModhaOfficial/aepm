@@ -54,11 +54,46 @@ macro_rules! collect_or_fatal {
     };
 }
 
+/// Which sections one collection pass reads.
+///
+/// `du` over five caches is the slow tier (`TUI.md` T8), so the TUI's 60s wake
+/// re-reads [`Tier::Fast`] only. A fast pass carries the previous slow sections
+/// forward untouched: their own `at` is what lets the frame show how old they
+/// are, instead of presenting a carried reading as fresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Fast,
+    All,
+}
+
 /// Collect the check snapshot. This never prints and never writes.
 pub fn collect(
     config: &Config,
     runner: &dyn CommandRunner,
     now: SystemTime,
+) -> Result<Snapshot, Error> {
+    collect_tier(config, runner, now, Tier::All, &Snapshot::default())
+}
+
+/// Re-read the fast tier over a previous snapshot.
+///
+/// The slow sections survive as they were, so an idle minute never pays for a
+/// cache scan, and never reads as a fresh one either.
+pub fn refresh_fast(
+    config: &Config,
+    runner: &dyn CommandRunner,
+    now: SystemTime,
+    previous: &Snapshot,
+) -> Result<Snapshot, Error> {
+    collect_tier(config, runner, now, Tier::Fast, previous)
+}
+
+fn collect_tier(
+    config: &Config,
+    runner: &dyn CommandRunner,
+    now: SystemTime,
+    tier: Tier,
+    previous: &Snapshot,
 ) -> Result<Snapshot, Error> {
     let mut snapshot = Snapshot::default();
     let mut actionable = 0u32;
@@ -150,44 +185,62 @@ pub fn collect(
     // The system-owned caches are usually root-only. Reporting them as
     // unreadable is honest, but it is not a problem the invoking user can fix,
     // so only the user-owned caches make `check` action needed.
-    let mut caches = Vec::new();
-    for (label, path, unreadable_is_actionable, policy) in [
-        ("downloads", cache_dir.as_path(), true, Policy::KeepOne),
-        (
-            "yay builds",
-            config.yay_cache_dir.as_path(),
-            true,
-            Policy::OlderThan30DaysInstalledOnly,
-        ),
-        (
-            "aurto repo",
-            config.aurto_repo.as_path(),
-            false,
-            Policy::ReportOnly,
-        ),
-        (
-            "aurbuild chroot",
-            config.aurbuild_dir.as_path(),
-            false,
-            Policy::ReportOnly,
-        ),
-        (
-            "archbuild chroot",
-            config.archbuild_dir.as_path(),
-            false,
-            Policy::ReportOnly,
-        ),
-    ] {
-        let cache = collect_or_fatal!(
-            snapshot,
-            collect_cache(runner, label, path, unreadable_is_actionable, policy)
-        );
-        if cache.actionable {
-            actionable += 1;
+    //
+    // A fast pass does not scan them at all: `du` over five trees is the slow
+    // tier (`TUI.md` T8). It carries the last reading, and with it the
+    // actionable items already counted against it, so an idle minute does not
+    // shrink the header total just because nothing was re-read.
+    if tier == Tier::Fast {
+        actionable += cache_actionable(previous);
+        snapshot.caches = previous.caches.clone();
+    } else {
+        let mut caches = Vec::new();
+        for (label, path, unreadable_is_actionable, policy) in [
+            ("downloads", cache_dir.as_path(), true, Policy::KeepOne),
+            (
+                "yay builds",
+                config.yay_cache_dir.as_path(),
+                true,
+                Policy::OlderThan30DaysInstalledOnly,
+            ),
+            (
+                "aurto repo",
+                config.aurto_repo.as_path(),
+                false,
+                Policy::ReportOnly,
+            ),
+            (
+                "aurbuild chroot",
+                config.aurbuild_dir.as_path(),
+                false,
+                Policy::ReportOnly,
+            ),
+            (
+                "archbuild chroot",
+                config.archbuild_dir.as_path(),
+                false,
+                Policy::ReportOnly,
+            ),
+        ] {
+            // A `du` that cannot even be spawned is the slow lane's own
+            // failure, and the flag is what lets a fast pass keep it: that
+            // pass never re-reads this section, so clearing the error would
+            // leave the carried reading on screen as if it were taken.
+            let cache = match collect_cache(runner, label, path, unreadable_is_actionable, policy) {
+                Ok(cache) => cache,
+                Err(error) => {
+                    snapshot.fatal = Some(error);
+                    snapshot.slow_fatal = true;
+                    return Ok(snapshot);
+                }
+            };
+            if cache.actionable {
+                actionable += 1;
+            }
+            caches.push(cache);
         }
-        caches.push(cache);
+        snapshot.caches = Section::ready(caches, now);
     }
-    snapshot.caches = Section::ready(caches, now);
 
     let timer = collect_or_fatal!(snapshot, collect_timer(runner));
     if timer.actionable {
@@ -205,8 +258,28 @@ pub fn collect(
     snapshot.state = Section::ready(state_info(config, &state), now);
     let trust = collect_or_fatal!(snapshot, collect_trust(config));
     snapshot.trust = Section::ready(trust, now);
+    // A slow-lane failure outlives a fast pass, because the fast pass does not
+    // read the section that produced it (issue #135). Dropping it here would
+    // clear the error while the carried cache reading stayed on screen.
+    if tier == Tier::Fast && previous.slow_fatal {
+        assert!(
+            previous.fatal.is_some(),
+            "a slow fatal names the error that stopped the pass"
+        );
+        snapshot.fatal = previous.fatal.clone();
+        snapshot.slow_fatal = true;
+    }
     snapshot.actionable = actionable;
     Ok(snapshot)
+}
+
+/// The actionable items a slow-tier reading already accounted for. A fast pass
+/// carries them with the reading, so the header total is the same answer a full
+/// pass gave and not a smaller one.
+fn cache_actionable(previous: &Snapshot) -> u32 {
+    previous.caches.data().map_or(0, |caches| {
+        caches.iter().filter(|cache| cache.actionable).count() as u32
+    })
 }
 
 /// Render the same text the CLI printed before the report layer existed.
@@ -791,7 +864,7 @@ mod tests {
 
     use super::{
         collect, collect_cache, collect_drift, detect_partial_upgrade, queried_pending,
-        render_text, run_with, run_with_options, scheduled_timer,
+        refresh_fast, render_text, run_with, run_with_options, scheduled_timer,
     };
     use crate::commands::fetch;
     use crate::config::Config;
@@ -884,6 +957,28 @@ mod tests {
         for _ in 0..5 {
             runner.push_output(ok("1048576\n"));
         }
+        runner.push_output(ok(""));
+        runner.push_output(ok(""));
+    }
+
+    /// The fast tier's calls, in the order `collect_tier` makes them: no `du`
+    /// for any of the five caches.
+    fn queue_fast(runner: &FakeRunner, dir: &Path) {
+        let cache = dir.join("cache");
+        let size = "107374182400 53687091200\n";
+        runner.push_output(ok(""));
+        runner.push_output(ok(""));
+        runner.push_output(qui(0));
+        runner.push_output(ok(&format!("{}\n", cache.to_string_lossy())));
+        for output in [
+            ok(size),
+            ok("6553600 3200000\n"),
+            ok(size),
+            ok("6553600 3200000\n"),
+        ] {
+            runner.push_output(output);
+        }
+        runner.push_output(none_running());
         runner.push_output(ok(""));
         runner.push_output(ok(""));
     }
@@ -1672,6 +1767,113 @@ check: clean
 
         assert!(matches!(result, Err(Error::Failed(_))));
         assert_eq!(result.unwrap_err().exit_code(), 2);
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// A fast pass re-reads the fast tier and carries the slow one. The clock
+    /// is a parameter, so this asserts stamps and never wall time.
+    #[test]
+    fn a_fast_pass_carries_the_slow_tier_with_its_age() {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let runner = FakeRunner::new();
+        let start = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let later = start + Duration::from_secs(61);
+        queue(&runner, &dir, "", 53_687_091_200, false, 0);
+
+        let mut first = collect(&config, &runner, start).expect("full pass");
+        // One unreadable user cache is an actionable item the fast pass cannot
+        // recount, because it does not read it.
+        if let Section::Ready { data, .. } = &mut first.caches {
+            data[0].actionable = true;
+        }
+        first.actionable = 1;
+
+        // The fast tier's calls, in the order `collect_tier` makes them: no
+        // `du` for any of the five caches.
+        queue_fast(&runner, &dir);
+        let seen = runner.calls().len();
+
+        let second = refresh_fast(&config, &runner, later, &first).expect("fast pass");
+
+        assert_eq!(second.caches, first.caches, "the slow tier is carried");
+        assert_eq!(
+            second.caches.at(),
+            Some(start),
+            "the carried reading keeps the age it was taken at"
+        );
+        assert_eq!(second.official.at(), Some(later), "the fast tier is fresh");
+        assert_eq!(
+            second.actionable, 1,
+            "the carried cache item stays counted in the header total"
+        );
+        let programs: Vec<String> = runner.calls()[seen..]
+            .iter()
+            .map(|(program, _)| program.clone())
+            .collect();
+        assert!(
+            !programs.iter().any(|program| program == "du"),
+            "a fast pass must not scan the caches: {programs:?}"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// A snapshot a full pass collected, then stopped by a failure. `slow_lane`
+    /// says which lane owns it: only a full pass reads the cache scan.
+    fn snapshot_stopped_by(slow_lane: bool) -> (PathBuf, Config, FakeRunner, Snapshot) {
+        let dir = temp_dir();
+        let config = test_config(&dir);
+        let runner = FakeRunner::new();
+        queue(&runner, &dir, "", 53_687_091_200, false, 0);
+        let start = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let mut snapshot = collect(&config, &runner, start).expect("full pass");
+        snapshot.fatal = Some(Error::failed("du could not be spawned"));
+        snapshot.slow_fatal = slow_lane;
+        (dir, config, runner, snapshot)
+    }
+
+    /// Issue #135: a fatal the slow lane recorded is not cleared by a pass that
+    /// never re-reads the slow lane.
+    #[test]
+    fn a_fast_pass_keeps_a_slow_lane_fatal() {
+        let (dir, config, runner, stopped) = snapshot_stopped_by(true);
+        queue_fast(&runner, &dir);
+
+        let later = UNIX_EPOCH + Duration::from_secs(1_000_061);
+        let next = refresh_fast(&config, &runner, later, &stopped).expect("fast pass");
+
+        assert_eq!(
+            next.fatal, stopped.fatal,
+            "the error the slow lane recorded stands"
+        );
+        assert!(
+            next.slow_fatal,
+            "the next pass carries it too, instead of presenting the carried \
+             cache reading as one nobody had to read"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean temp dir");
+    }
+
+    /// The carry is not a latch: a failure the fast pass did re-read is cleared
+    /// by the pass that re-read it.
+    #[test]
+    fn a_fast_pass_clears_a_fatal_it_re_read() {
+        let (dir, config, runner, mut stopped) = snapshot_stopped_by(false);
+        stopped.fatal = Some(Error::failed("pacman -Qu exited 2: database error"));
+        queue_fast(&runner, &dir);
+
+        let later = UNIX_EPOCH + Duration::from_secs(1_000_061);
+        let next = refresh_fast(&config, &runner, later, &stopped).expect("fast pass");
+
+        assert!(
+            next.fatal.is_none(),
+            "the section that failed was re-read clean: {:?}",
+            next.fatal
+        );
+        assert!(!next.slow_fatal, "there is no slow-lane error to carry");
 
         fs::remove_dir_all(&dir).expect("clean temp dir");
     }

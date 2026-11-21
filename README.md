@@ -323,6 +323,7 @@ head.
 - [`PROGRESS.md`](PROGRESS.md) — prefetch-aware dependency tree: states, edges, tree, replay
 - [`TUI.md`](TUI.md) — terminal UI spec: screens, keys, action safety
 - [`docs/ANIMATION.md`](docs/ANIMATION.md) — DAG execution frontier: readiness, parallel fronts, replay
+- [`docs/CI-ARCHITECTURE.md`](docs/CI-ARCHITECTURE.md) — what the checks cost, measured; what good looks like; the ranked changes
 - [`context.md`](context.md) — implementation notes and edge cases
 - [`sim/README.md`](sim/README.md) — simulation harness
 - [`AGENTS.md`](AGENTS.md) — operating rules and definition of done

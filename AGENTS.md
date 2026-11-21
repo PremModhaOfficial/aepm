@@ -157,7 +157,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread.
+  thread. The typed block is appended by the workflow after the container posts,
+  because the pinned image omits it on a clean review (#140); a body that already
+  carries one is never rewritten, and a body with no merge recommendation gets
+  none rather than an invented verdict.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
@@ -215,6 +218,7 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `docs/ANIMATION.md` | DAG execution frontier: readiness, parallel fronts, replay |
 | `docs/STATE-MACHINES.md` | Every implicit machine named: states, transitions, who owns precedence |
 | `docs/FACTORY.md` | The contract every agent run follows: slots, tasks, brakes, brief shape |
+| `docs/CI-ARCHITECTURE.md` | What the checks cost (measured), what good looks like (sourced), the ranked changes |
 | `NEXT.md` | Working plan: decisions, phases, acceptance criteria |
 | `PENDING.md` | What the release does not ship or prove, each row with the command that shows it |
 | `context.md` | Implementation notes and edge cases |
