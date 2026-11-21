@@ -331,7 +331,9 @@ fi
 # was superseded: the head had not moved, so the review of the current head was
 # lost and the gate failed closed until someone ran `/review` again. A comment
 # run may queue behind a review; only a push may cancel one, because only a push
-# replaces the head. Read as text, like the guard above (#153).
+# replaces the head. The action is what is checked, not the event: `reopened` and
+# `ready_for_review` are `pull_request` events too and move nothing (finding
+# 5411d6da8710). Read as text, like the guard above (#153).
 checks=$((checks + 1))
 concurrency="$(awk '
   /^ *concurrency: *$/ { found = 1; next }
@@ -348,22 +350,26 @@ case "$concurrency" in
        "$concurrency" ;;
 esac
 case "$concurrency" in
-  *"cancel-in-progress:\${{github.event_name=='pull_request'}}"*) ;;
+  *"cancel-in-progress:\${{github.event.action=='synchronize'}}"*) ;;
   *) fail concurrency-scope \
-       "a comment run can cancel an unsuperseded review, because cancel-in-progress is not scoped to a push" \
+       "a run that does not replace the head can cancel a review: cancel-in-progress is not scoped to the push action" \
        "$concurrency" ;;
 esac
 
 # The decision log states this suite's count, and a count the run refutes is a
-# claim, not evidence: D33 said 12/12 while a case was added in silence. Read for
-# this script's own line, so adding a case fails here until the row says what the
-# suite prints. This check counts itself.
+# claim, not evidence: D33 said 12/12 while a case was added in silence. The
+# expected number is counted from this file — one literal increment per case, one
+# inside `run_case`, and one per `run_case` call — so it does not depend on where
+# this check sits: a case appended after it raises both sides together (finding
+# 91f0289550e3). Read for this script's own line, and this check counts itself.
 checks=$((checks + 1))
+declared=$(( $(grep -c 'checks=\$((checks + 1))' "$0") - 1 + $(grep -c '^run_case ' "$0") ))
 doc_row="$(grep -oE 'scripts/check-pr-agent-state-block\.sh [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
   | grep -oE '[0-9]+/[0-9]+' | head -1)"
-if [[ "$doc_row" != "$checks/$checks" ]]; then
-  fail doc-count \
-    "PR-AGENT.md says '${doc_row:-nothing}' for this suite, which prints '$checks/$checks'"
+if [[ "$declared" -ne "$checks" ]]; then
+  fail doc-count "the suite counted $checks case(s) but its source declares $declared"
+elif [[ "$doc_row" != "$declared/$declared" ]]; then
+  fail doc-count "PR-AGENT.md says '${doc_row:-nothing}' for this suite, which prints '$declared/$declared'"
 fi
 
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
