@@ -7,32 +7,17 @@
 # Command Code Provider API, OpenAI-compatible:
 # https://api.commandcode.ai/provider/v1
 model = "openai/deepseek/deepseek-v4.1-flash"
-# A fallback that names the same model doubles the worst case without changing
-# who answers: a measured run spent 900.32s and 900.10s on that one model and
-# ended `Failed to generate prediction with any model of [x, x]`. Empty means one
-# attempt, so a hung gateway fails in ~15 minutes instead of ~30.
-fallback_models = []
+fallback_models = ["openai/deepseek/deepseek-v4.1-flash"]
 
 # Live model list reports context_length = 1000000. pr-agent refuses an unknown
 # model id unless the window is declared.
 custom_model_max_tokens = 1000000
 # Input and output share this budget: max_model_tokens must exceed
-# max_output_tokens or the prompt has no input capacity left. 256000 left 128000
-# for input, a cap on the diff that the model does not impose: the live list
-# reports context_length = 1000000, so the budget is that window.
-max_model_tokens = 1000000
-# Reasoning is on at max, not high: `medium` is not a value this model accepts — the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
-# D5) and pr-agent forwards the string verbatim, so an unlisted value is swallowed
-# by the gateway with no error — measured `200` for "medium", which means it is
-# not evidence of anything. Max effort does not lose to the clock on a large diff,
-# it loses to the gateway: on a 27,798-token diff two attempts spent 900.27s and
-# 900.1s and the attempt between them returned `503 ... error 1102 ... Worker
-# exceeded resource limits` (`retryable: false`, `owner_action_required: true`).
-# The gateway caps CPU and memory per request, so a longer timeout cannot recover
-# it, and large_patch_policy is unset so the whole 27.8k diff is sent every time.
-# A 64k cap returned empty content (`finish_reason=length`); 128k finished. off
-# measured ~22s; low measured 118-417s; high is unmeasured — if a review still
-# reports 1102 at high, drop to low.
+# max_output_tokens or the prompt has no input capacity left.
+max_model_tokens = 256000
+# Reasoning is on at max. Measured on a review prompt: 70,483 reasoning tokens
+# and 498-509s. A 64k cap returned empty content (`finish_reason=length`); 128k
+# finished. off measured ~22s; low measured 118-417s.
 max_output_tokens = 128000
 reasoning_effort = "max"
 # LiteLLM does not know this id, so pr-agent only forwards reasoning_effort when
