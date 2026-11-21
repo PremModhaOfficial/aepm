@@ -58,8 +58,8 @@ end = next(i for i, l in enumerate(lines) if sys.argv[3] in l)
 print("\n".join(l[10:] for l in lines[start:end]))
 PY
 
-# The fake `gh`: one head commit, one run title, a capture of the check-run body,
-# and a switch for a refused write.
+# The fake `gh`: one head commit, one run title, a capture of the check-run body
+# and a switch for a refused check-run write.
 mkdir -p "$root/bin" "$root/scripts"
 cat >"$root/bin/gh" <<'GH'
 #!/usr/bin/env bash
@@ -117,8 +117,10 @@ chmod +x "$root/scripts/review-state.sh"
 
 # Each case: label, RUN_EVENT, RUN_SHA, RUN_PR, fake PR head, fake verdict,
 # expected exit, expected check-run (created|none), expected conclusion,
-# expected text in the log, and whether the write is refused.
+# expected text in the log, and whether the check-run write is refused.
 failures=0
+passed=0
+CASES="$(grep -c '^run_case ' "$0")"
 run_case() {
   local label=$1 event=$2 run_sha=$3 run_pr=$4 fake_head=$5 verdict=$6
   local want_exit=$7 want_body=$8 want_conclusion=$9 want_text=${10:-} write_fail=${11:-0}
@@ -169,6 +171,7 @@ run_case() {
     printf 'FAIL %s: %s\n%s\n' "$label" "$problem" "$out"
     failures=$((failures + 1))
   else
+    passed=$((passed + 1))
     printf 'ok   %s\n' "$label"
   fi
 }
@@ -206,5 +209,22 @@ run_case no-gate-on-base pull_request "$HEAD"  9 "$HEAD" pass 1 none  ""        
 grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
+# The evidence table states this suite's count, and a count the run refutes is a
+# claim, not evidence: the row said 12/12 for a suite that prints 9/9. Read for
+# this script's own line, so adding a case fails here until the table says what
+# the suite prints rather than drifting a revision behind it.
+doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+# The total is the source's own case count, not the counter at this point: a case
+# appended after this check would otherwise raise the printed total while the row
+# still matched (finding 91f0289550e3).
+if [[ "$doc_row" != "$CASES/$CASES" ]]; then
+  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $CASES case(s)"
+  failures=$((failures + 1))
+elif [[ "$passed" -ne "$CASES" ]]; then
+  echo "FAIL doc-count: $passed case(s) passed of $CASES declared"
+  failures=$((failures + 1))
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
-echo "review-gate self-check: 9/9"
+echo "review-gate self-check: $passed/$CASES"

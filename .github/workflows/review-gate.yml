@@ -2,7 +2,7 @@ name: Review Gate
 
 # Model-free coverage gate. It reads the newest review comment and decides
 # whether that review covers one commit: the PR head. It never calls a model and
-# never spends credits.
+# never spends credits. It writes nothing to the PR but the verdict.
 #
 # #115: a pushed head used to have no `Review Gate` check at all, because the
 # review bot did not run on push. `PR Agent` now reviews a pushed head too, and
@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  # Read the review comments; the gate writes nothing to the PR itself.
   pull-requests: read
   # Reading the triggering run's name and pull_requests.
   actions: read

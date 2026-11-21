@@ -176,8 +176,39 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `REVIEW_GATE_VERDICT`) is a failure. It makes no model call, so it spends no
   credits, and it runs only the default branch's copy of the script. Only a
   comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
-  block identifies one: every other marker is forgeable or shared with
-  `/describe`.
+  block clears the gate: the guide marker is shared with `/describe` and the
+  rest of the text is forgeable, so a marker can select a review to name the
+  failure but can never pass one. A review with no typed block is not a passing review: a truncated
+  or timed-out run that still printed a clean recommendation is indistinguishable
+  from a clean one, so only a block that records `complete:true` for the judged
+  head clears the gate, and a review carrying none is reported as `unrecorded`
+  and fails. That review is still selected by the guide marker
+  `<!-- pr-agent:review:full`, or `<!-- pr-agent:review:incremental` for an
+  incremental review, and its head still comes from the commit the comment
+  quotes, in one order and no other: the guide header's link first (the first
+  `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
+  header quotes), then the persistent review line that names the commit a run
+  judged, read in that same comment and in no other, so an older review's line
+  cannot name the head of the one being judged, then a bare `commit/<sha>` in the
+  body. The body link is the last
+  resort, because a review that discusses an earlier fix quotes one, so it must
+  never outrank a head a run recorded. Both kinds are read to name the failure,
+  never to clear it. The block
+  keeps resolved findings, so a PR that still carries one cannot pass on a
+  missing block: the gate fails on it. Two bounds are
+  accepted and not fixed. First, the review is one
+  comment updated in place, so a run that rewrote it without the block leaves
+  nothing to detect: a PR that ever carried a block is caught only while an older
+  one survives beside the new comment. An append-only ledger comment recorded
+  that absence too, but it was posted after the gate had already decided, so the
+  first review of a PR had no row when it was read, and it was posted before the
+  empty-review check, so every failed gate run put another comment on the PR; it
+  was deleted rather than fixed. Second, selection matches the typed block and
+  the guide marker only at a line start and outside anything a review quotes a
+  block in: a fence (including one opened after leading text), a `<pre>`/`<code>`
+  example, or an indented code block. A comment that writes about either marker,
+  or quotes a block in an example, is therefore never judged as a review and never
+  counts as one a PR has carried.
 - **Where the check lands:** a `workflow_run`-triggered workflow runs on the
   default branch, and its own check is attached to the default branch's HEAD —
   not to the commit the review run checked out. That was measured, not assumed
@@ -192,12 +223,15 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   an older review would be a lie; the check it left on the older commit is read
   by no rollup, because checks are per-commit.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict, and it is requireable because every head with a review run of its
-  own gets a `Review Gate` conclusion on itself.
-  Whether it is a required status check in the `main` ruleset is a one-time
-  repository setting and not something this repo can assert (`PR-AGENT.md` N5).
-  Until that setting exists the gate reports and the verdict stays advisory. A
-  human override is an admin merge, and it is a decision, not a formality.
+  the verdict, and it is a required status check on `main`. That is measured,
+  not assumed: the protection requires `["CI (Linux)", "Arch simulation",
+  "Review Gate"]`, strict, admins enforced, no force push, no branch deletion
+  (`gh api repos/PremModhaOfficial/aepm/branches/main/protection`; the row is
+  `PR-AGENT.md` N5, measured 2026-11-21). Requiring it is possible because every
+  head with a review run of its own gets a `Review Gate` conclusion on itself,
+  and a force-pushed head's older conclusion stays on the commit it judged,
+  which no rollup reads, because checks are per-commit. A human override is an
+  admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
