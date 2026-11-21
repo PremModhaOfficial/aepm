@@ -159,28 +159,33 @@ fi
 # The block is not always emitted (a clean review carries none: #112 and #134
 # had zero findings and no block, while #99, #133 and #136 had findings and one),
 # and the guide does not always name its commit (#134), so the head also comes
-# from the newest bot comment that does: the persistent review line.
+# from the persistent review line, read in the selected review and nowhere else
+# (finding bed8f31fda88): an older review's line named a head this one never
+# judged, so the gate called that stale where the failure was that no run of this
+# review recorded anything at all.
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
-# Every marker below is read on the body with fenced code blocks removed: a
-# review that quotes the block, or the guide marker, in an example is writing
-# about one, not carrying one (finding f7d291ec6f97). `defenced` drops everything
-# between a ``` or ~~~ pair; `is_review` is the review identity, and it is what a
-# comment must be before it can name a head (finding 33acdf68e0d2).
+# Every marker below is read on the body with code blocks removed: a review that
+# quotes the block, or the guide marker, in an example is writing about one, not
+# carrying one (finding f7d291ec6f97). `defenced` drops a ``` or ~~~ fence and an
+# indented code block, the two forms GitHub renders as text rather than markup
+# (finding e6024f4c203c: an indented quote carrying `complete: true` cleared the
+# gate). The state-block awk below drops the same lines, and one fixture pins
+# both, so the two cannot drift. `is_review` is the review identity, and it is
+# what a comment must be before it can name a head (finding 33acdf68e0d2).
 JQ_SELECT='
 def defenced: reduce (split("\n")[]) as $l ({f: false, keep: []};
     if ($l | test("^[[:space:]]*(```|~~~)")) then .f |= not
-    elif .f then . else .keep += [$l] end) | .keep | join("\n");
+    elif (.f or ($l | test("^( {4}|\t)"))) then .
+    else .keep += [$l] end) | .keep | join("\n");
 def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:(full|incremental)");
 [.comments[]
   | select((.author.login // "") as $a | ("$LOGINS" | split(",") | any(. == $a)))] as $c
-| {review: ([$c[] | select(.body | defenced | is_review)] | last // {}),
-   head_from: ([$c[] | select((.body | defenced) as $b
-                 | ($b | is_review) and ($b | test("Review updated until commit")))
-                | .body | defenced
-                | (capture("Review updated until commit [^\n]*?commit/(?<s>[0-9a-f]{7,40})")? // empty).s]
-               | last // ""),
+| ([$c[] | select(.body | defenced | is_review)] | last // {}) as $r
+| {review: $r,
+   head_from: ((($r.body // "") | defenced
+                | (capture("Review updated until commit [^\n]*?commit/(?<s>[0-9a-f]{7,40})")? | .s)) // ""),
    blocks: ([$c[] | select(.body | defenced | test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1"))] | length)}'
 if ! found="$(gh pr view "$pr" --json comments \
   --jq "${JQ_SELECT//\$LOGINS/$REVIEW_BOT_LOGIN}" 2>"$GERR")"; then
@@ -203,11 +208,14 @@ review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
 # The start rule must fire once and only on the block itself: the marker is
 # quoted inside finding bodies and in prose when the reviewer writes about the
 # gate, and a start rule that fires there swallows the JSON line, so a review at
-# the right head reads as recording no head. A fenced block is a quote of one,
-# like the prose: a review that shows the block in an example carries none.
+# the right head reads as recording no head. A fenced or indented code block is a
+# quote of one, like the prose: a review that shows the block in an example
+# carries none, and a quote must never reach the JSON (findings f7d291ec6f97,
+# e6024f4c203c).
 state_json="$(printf '%s\n' "$review_body" | awk '
   /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
   fence { next }
+  !f && /^(    |\t)/ { next }
   !f && /^[[:space:]]*<!-- pr-agent-review-state:v1/ { f = 1; next }
   f && /^-->/ { exit }
   f')"
@@ -279,9 +287,10 @@ if [[ -z "$state_json" && -n "$review_body" ]]; then
 fi
 
 if [[ -n "$review_head" ]]; then
-  # A review may quote an abbreviated sha, in either direction, so a prefix
-  # match counts. The length floor is what stops a truncated or mistyped value
-  # from matching a head that merely starts the same way.
+  # A review may quote an abbreviated sha, so a prefix of seven or more hex
+  # characters matches in either direction rather than equality (D34). The floor
+  # is what stops a truncated or mistyped value from matching a head that merely
+  # starts the same way.
   if [[ ${#review_head} -ge 7 && ( "$review_head" == "$head_full"* || "$head_full" == "$review_head"* ) ]]; then
     stale="false"
   else

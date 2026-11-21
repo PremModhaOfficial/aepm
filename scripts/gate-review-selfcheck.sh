@@ -215,8 +215,14 @@ grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
 # the suite prints rather than drifting a revision behind it.
 doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
   | grep -oE '[0-9]+/[0-9]+' | head -1)"
-if [[ "$doc_row" != "$passed/$CASES" ]]; then
-  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite prints '$passed/$CASES'"
+# The total is the source's own case count, not the counter at this point: a case
+# appended after this check would otherwise raise the printed total while the row
+# still matched (finding 91f0289550e3).
+if [[ "$doc_row" != "$CASES/$CASES" ]]; then
+  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $CASES case(s)"
+  failures=$((failures + 1))
+elif [[ "$passed" -ne "$CASES" ]]; then
+  echo "FAIL doc-count: $passed case(s) passed of $CASES declared"
   failures=$((failures + 1))
 fi
 

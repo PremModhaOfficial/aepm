@@ -490,8 +490,16 @@ check doc-bounds-are-recorded doc_bounds_are_recorded
 # own line, so adding a case fails here until the table says what the suite prints.
 # This check counts itself, hence the +1 on both sides.
 doc_count_matches() {
-  local want row
-  want="$((PASSED + 1))/$((CASES + 1))"
+  local want row declared
+  # Counted from this file, not from the counters: a case appended after this
+  # check would raise the printed total without raising the number compared here,
+  # so the suite could print 55/55 while the table still said 54/54 (finding
+  # 91f0289550e3). `run` and `check` each add one case, and the source is what
+  # decides how many there are.
+  declared=$(( $(grep -c '^run ' "$0") + $(grep -c '^check ' "$0") ))
+  [[ "$((PASSED + 1))" -eq "$declared" ]] \
+    || { echo "  the run counted $((PASSED + 1)) case(s), the source declares $declared"; return 1; }
+  want="$declared/$declared"
   row="$(grep -oE '^\| `scripts/check-review-gate\.sh` \| [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
     | grep -oE '[0-9]+/[0-9]+' | head -1)"
   [[ -n "$row" ]] || { echo "  (no table row for scripts/check-review-gate.sh)"; return 1; }
