@@ -445,6 +445,24 @@ authority_matches_next() {
 }
 check authority-matches-next authority_matches_next
 
+# Two claims the script refutes, both raised on the previous head: `AGENTS.md`
+# said the typed block is the only marker that identifies a review, while the
+# next sentence says the guide marker selects one too (finding a1a8f8570dc0), and
+# D33c called `.github/PR-AGENT.md` "not review input" in the same row that adds
+# it to `repo_context_files` (finding b835ca937d10). The policy file is read, so
+# the row is held to what it actually configures.
+doc_claims_match_code() {
+  local flat_d
+  flat_d() { tr '\n' ' ' <"$1" | tr -s ' '; }
+  flat_d "$ROOT/AGENTS.md" | grep -qF 'its typed block clears the gate' || return 1
+  ! flat_d "$ROOT/AGENTS.md" | grep -qF 'only its typed block identifies one' || return 1
+  if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
+    ! grep -qF 'This file is not review input' "$ROOT/.github/PR-AGENT.md" || return 1
+    grep -qF 'This file is review input, bounded' "$ROOT/.github/PR-AGENT.md" || return 1
+  fi
+}
+check doc-claims-match-code doc_claims_match_code
+
 # The evidence table states this suite's count, and a count the run refutes is a
 # claim, not evidence: the row said 48/48 while a green run printed 50/50, so the
 # table had drifted two cases behind the suite. The row is read for this script's

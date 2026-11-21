@@ -176,8 +176,9 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `REVIEW_GATE_VERDICT`) is a failure. It makes no model call, so it spends no
   credits, and it runs only the default branch's copy of the script. Only a
   comment authored by the bot counts (`REVIEW_BOT_LOGIN`), and only its typed
-  block identifies one: every other marker is forgeable or shared with
-  `/describe`. A review with no typed block is not a passing review: a truncated
+  block clears the gate: the guide marker is shared with `/describe` and the
+  rest of the text is forgeable, so a marker can select a review to name the
+  failure but can never pass one. A review with no typed block is not a passing review: a truncated
   or timed-out run that still printed a clean recommendation is indistinguishable
   from a clean one, so only a block that records `complete:true` for the judged
   head clears the gate, and a review carrying none is reported as `unrecorded`
