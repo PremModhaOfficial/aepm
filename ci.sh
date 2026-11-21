@@ -58,6 +58,14 @@ echo "=== pr-agent state block (appended to the review the container posts) ==="
 # real gate: the step is proven by the gate reading it, not by a shape.
 bash scripts/check-pr-agent-state-block.sh
 
+echo "=== ci architecture doc matches the repository ==="
+# The document drifted from the repo once and a reviewer had to find it: a typed
+# "five workflows" with a sixth open, two of three required check names, a step
+# decomposition that summed to 6% less than its own total, a stale gate count, a
+# scenario filename that existed as nothing. Each assertion below holds one of
+# those drifts shut, offline, on any PR.
+bash scripts/check-ci-architecture.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 
