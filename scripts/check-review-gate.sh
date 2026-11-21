@@ -111,6 +111,10 @@ export FAKE_CHECKS='[]'
 
 GATE_ARGS=(--gate)
 
+# What this file declares, counted from its own source: `run` and `check` each add
+# a case, and the table row must equal this total whether or not the check that
+# compares it runs last (finding 2e69f9e3c720). `CASES` keeps the printed total.
+DECLARED=$(( $(grep -c '^run ' "$0") + $(grep -c '^check ' "$0") ))
 CASES="$(grep -c '^run ' "$0")"
 PASSED=0
 
@@ -215,6 +219,22 @@ run fenced-block-is-not-a-prior-block 1 'no completed run is recorded'
 fenced_in_review="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n```html\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n```\n' "$HEAD" "$HEAD")"
 export FAKE_COMMENTS="[$(comment "$fenced_in_review")]"
 run fenced-block-in-review-is-not-a-block 1 'no completed run is recorded'
+
+# Finding e6d2f0bb258c named the info-string form: a fence line is the marker plus
+# whatever follows it, ` ```json ` as much as ` ``` `. The ```html case above
+# already skipped it, because the test is the marker and never the whole line;
+# this one says so and pins the tilde form, where a fence that needed its info
+# string to be recognised would show.
+info_fence="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n~~~text\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n~~~\n' "$HEAD" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$info_fence")]"
+run info-string-fence-is-not-a-block 1 'no completed run is recorded'
+
+# The other form a review quotes a block in, and the one nothing knew about: an
+# HTML example. The fence rules do not apply inside `<pre>`, so a quoted
+# `complete: true` with the judged head cleared the gate (finding e6d2f0bb258c).
+pre_example="$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n\n<pre>\n<!-- pr-agent-review-state:v1\n{"findings":[],"last_run":{"complete":true,"excluded_files":[],"head_sha":"%s"}}\n-->\n</pre>\n' "$HEAD" "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$pre_example")]"
+run pre-example-is-not-a-block 1 'no completed run is recorded'
 
 # Finding e6024f4c203c: a block quoted in an example is not this review's block.
 # The example here is indented, its closing `-->` is not, which is the shape that
@@ -434,18 +454,33 @@ run missing-block-named-before-stale 1 'no typed state block although an earlier
 # fails here instead of waiting for the next review to notice.
 authority_matches_next() {
   local f
-  # Line breaks are wrapping, not meaning: a list split across two lines is still
-  # one claim.
+  # What is asserted here is a fact and not a sentence: which checks one paragraph
+  # of a document names, where the required set is configured, and which claim is
+  # forbidden outright. A rewording inside a paragraph passes; a paragraph that
+  # stops naming a check fails (finding 2e69f9e3c720: a rewording used to fail a
+  # behavioural suite).
   flat() { tr '\n' ' ' <"$1" | tr -s ' '; }
+  # Paragraphs as single lines, so a claim can be located without pinning its
+  # wording. Each pattern narrows what is left: all of them have to be in one
+  # paragraph, not merely somewhere in the file.
+  para_all() {
+    local file="$1" left pat
+    shift
+    left="$(awk 'BEGIN{RS=""; ORS="\n"} {gsub(/[[:space:]]+/," "); print}' "$file")"
+    for pat in "$@"; do
+      left="$(grep -F -- "$pat" <<<"$left")" || return 1
+      [[ -n "$left" ]] || return 1
+    done
+  }
   ! grep -qF 'not something this repo can assert' "$ROOT/AGENTS.md" || return 1
   ! grep -qF 'the verdict stays advisory' "$ROOT/AGENTS.md" || return 1
   # Every document that names the required set names all three of them. The README
   # named two and left `Review Gate` out (finding 15e004115e8c), which reads as
-  # "advisory" to anyone who follows it, so the drift is checked here rather than
-  # left for the next review to find.
+  # "advisory" to anyone who follows it. The wrong pair is what is forbidden; that
+  # all three are named is the loop below, in each document.
   ! flat "$ROOT/README.md" | grep -qF 'requires `CI (Linux)` and `Arch simulation`' || return 1
-  flat "$ROOT/README.md" | grep -qF 'requires `CI (Linux)`, `Arch simulation` and `Review Gate`' || return 1
-  for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md" "$ROOT/README.md"; do
+  para_all "$ROOT/README.md" 'CI (Linux)' 'Arch simulation' 'Review Gate' || return 1
+  for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md"; do
     flat "$f" | grep -qF 'CI (Linux)' || return 1
     flat "$f" | grep -qF 'Arch simulation' || return 1
     flat "$f" | grep -qF 'Review Gate' || return 1
@@ -453,13 +488,12 @@ authority_matches_next() {
   for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md"; do
     grep -qF 'branches/main/protection' "$f" || return 1
   done
-  # And AGENTS.md states the head order the code implements (finding
-  # 6d74deeef539): header, then the persistent review line, then a body link. The
-  # "only" this replaced said the header was the sole source, which the fallbacks
-  # in review-state.sh contradict.
+  # AGENTS.md must not claim the header is the only head source (finding
+  # 6d74deeef539): the code has a persistent review line and a body link after it.
+  # One paragraph has to name both mechanisms, so a rewording passes and a dropped
+  # fallback fails.
   ! grep -qF "guide header's link only" "$ROOT/AGENTS.md" || return 1
-  flat "$ROOT/AGENTS.md" | grep -qF "then the persistent review line" || return 1
-  flat "$ROOT/AGENTS.md" | grep -qF 'then a bare `commit/<sha>` in the body' || return 1
+  para_all "$ROOT/AGENTS.md" 'persistent review line' 'commit/<sha>' || return 1
 }
 check authority-matches-next authority_matches_next
 
@@ -472,9 +506,20 @@ check authority-matches-next authority_matches_next
 doc_claims_match_code() {
   local flat_d
   flat_d() { tr '\n' ' ' <"$1" | tr -s ' '; }
+  # This one stays a sentence, and that is deliberate. A prose-level "does the file
+  # mention both words" check is too weak here: AGENTS.md names `typed block` and
+  # `clears the gate` in three paragraphs, so deleting the mechanism from this
+  # sentence still passes a proximity check, and a softened wording ("the review
+  # comment clears the gate") is a false claim about what the gate accepts. The
+  # sentence is the contract; rewording it means trading down the review contract
+  # and the check moves with it in the same commit (finding 2e69f9e3c720 records
+  # this as the one claim whose wording is the fact).
   flat_d "$ROOT/AGENTS.md" | grep -qF 'its typed block clears the gate' || return 1
   ! flat_d "$ROOT/AGENTS.md" | grep -qF 'only its typed block identifies one' || return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
+    # Here the wording is the fact: D33c says this file is review input *and* that
+    # reading it is bounded by the four files listed; a differently worded title
+    # would be a different decision, so the title is asserted as written.
     ! grep -qF 'This file is not review input' "$ROOT/.github/PR-AGENT.md" || return 1
     grep -qF 'This file is review input, bounded' "$ROOT/.github/PR-AGENT.md" || return 1
   fi
@@ -488,16 +533,16 @@ check doc-claims-match-code doc_claims_match_code
 export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: Needs review\n\nReview updated until commit https://github.com/o/r/commit/%s\n' "$OLD")"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')")]"
 run fallback-head-from-an-older-review 1 'does not name the commit'
 
-# A rule that exists only in a code comment is re-filed as a finding on the next
-# review, so the rows that state these rules are checked here: D34 states the
-# prefix rule the comparison uses (finding 13d53e61b390), and D35/D36 name the
-# quoted-block and selected-review rules the fixtures above pin.
+# A bound that lives only in a code comment is re-filed as a finding on the next
+# review, so what is asserted is that the finding behind each bound sits on a
+# `| D.. |` row of PR-AGENT.md: the row is the record a reviewer reads. The
+# wording of the row is not asserted, so a reworded row still passes and a
+# deleted row still fails (findings 13d53e61b390, 2e69f9e3c720).
 doc_bounds_are_recorded() {
-  local flat_p
-  flat_p() { tr '\n' ' ' <"$1" | tr -s ' '; }
-  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF 'seven or more hex characters' || return 1
-  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D35 | A quoted block is not a block |' || return 1
-  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF "| D36 | The head is the selected review's own |" || return 1
+  local id
+  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e; do
+    grep -qE "^\| D[0-9a-z]+ \|.*$id" "$ROOT/.github/PR-AGENT.md" || return 1
+  done
 }
 check doc-bounds-are-recorded doc_bounds_are_recorded
 
@@ -507,21 +552,24 @@ check doc-bounds-are-recorded doc_bounds_are_recorded
 # own line, so adding a case fails here until the table says what the suite prints.
 # This check counts itself, hence the +1 on both sides.
 doc_count_matches() {
-  local want row declared
-  # Counted from this file, not from the counters: a case appended after this
-  # check would raise the printed total without raising the number compared here,
-  # so the suite could print 55/55 while the table still said 54/54 (finding
-  # 91f0289550e3). `run` and `check` each add one case, and the source is what
-  # decides how many there are.
-  declared=$(( $(grep -c '^run ' "$0") + $(grep -c '^check ' "$0") ))
-  [[ "$((PASSED + 1))" -eq "$declared" ]] \
-    || { echo "  the run counted $((PASSED + 1)) case(s), the source declares $declared"; return 1; }
-  want="$declared/$declared"
+  local want row
+  # The row is compared against what the source declares, not against the counters:
+  # a case appended after this check used to raise the printed total without
+  # raising the number compared here, so the suite could print 55/55 while the
+  # table still said 54/54 (finding 91f0289550e3), and a check that has to run last
+  # breaks every later addition (finding 2e69f9e3c720). That the run really counted
+  # them is asserted after the last case.
+  want="$DECLARED/$DECLARED"
   row="$(grep -oE '^\| `scripts/check-review-gate\.sh` \| [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
     | grep -oE '[0-9]+/[0-9]+' | head -1)"
   [[ -n "$row" ]] || { echo "  (no table row for scripts/check-review-gate.sh)"; return 1; }
-  [[ "$row" == "$want" ]] || { echo "  table says $row, this run is $want"; return 1; }
+  [[ "$row" == "$want" ]] || { echo "  table says $row, the source declares $want"; return 1; }
 }
 check doc-count-matches-table doc_count_matches
 
+# Every declared case has to have run. A `run` line that was comment out, or a
+# `check` that returned before its case, otherwise lowers the printed total with
+# nothing comparing it to the source.
+[[ "$PASSED" -eq "$DECLARED" ]] \
+  || { printf 'FAIL case-count: the run counted %s case(s), the source declares %s\n' "$PASSED" "$DECLARED"; exit 1; }
 printf 'review gate: %s/%s\n' "$PASSED" "$CASES"

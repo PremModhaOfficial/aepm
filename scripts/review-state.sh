@@ -168,23 +168,28 @@ REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
 # Every marker below is read on the body with code blocks removed: a review that
 # quotes the block, or the guide marker, in an example is writing about one, not
-# carrying one (finding f7d291ec6f97). `defenced` drops a ``` or ~~~ fence and an
-# indented code block, the two forms GitHub renders as text rather than markup
-# (finding e6024f4c203c: an indented quote carrying `complete: true` cleared the
-# gate). The state-block awk below starts a block only at column 0, the position a
-# run writes one in, so the same quotes cannot reach the JSON either; one fixture
-# pins both, so the two cannot drift. `is_review` is the review identity, and it is
-# what a comment must be before it can name a head (finding 33acdf68e0d2).
+# carrying one (finding f7d291ec6f97). `defenced` drops a ``` or ~~~ fence — with
+# or without an info string, which is why the test is the marker and not the whole
+# line — an indented code block, and a `<pre>`/`<code>` example, the three forms a
+# review quotes a block in (findings e6024f4c203c, e6d2f0bb258c: a quoted
+# `complete: true` cleared the gate). It is defined once, here: the state block is
+# extracted from `body_q`, which is this same filter applied, so the two cannot
+# drift. `is_review` is the review identity, and it is what a comment must be
+# before it can name a head (finding 33acdf68e0d2).
 JQ_SELECT='
-def defenced: reduce (split("\n")[]) as $l ({f: false, keep: []};
-    if ($l | test("^[[:space:]]*(```|~~~)")) then .f |= not
-    elif (.f or ($l | test("^( {4}|\t)"))) then .
+def defenced: reduce (split("\n")[]) as $l ({f: false, h: false, keep: []};
+    if ($l | test("^[[:space:]]*(```|~~~).*$")) then .f |= not
+    elif ($l | test("^[[:space:]]*<(pre|code)( |>|$)")) then
+      (if ($l | test("</(pre|code)>")) then . else .h = true end)
+    elif ($l | test("^[[:space:]]*</(pre|code)>")) then .h = false
+    elif (.f or .h or ($l | test("^( {4}|\t)"))) then .
     else .keep += [$l] end) | .keep | join("\n");
 def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:(full|incremental)");
 [.comments[]
   | select((.author.login // "") as $a | ("$LOGINS" | split(",") | any(. == $a)))] as $c
 | ([$c[] | select(.body | defenced | is_review)] | last // {}) as $r
 | {review: $r,
+   body_q: (($r.body // "") | defenced),
    head_from: ((($r.body // "") | defenced
                 | (capture("Review updated until commit [^\n]*?commit/(?<s>[0-9a-f]{7,40})")? | .s)) // ""),
    blocks: ([$c[] | select(.body | defenced | test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1"))] | length)}'
@@ -197,27 +202,28 @@ review="$(jq -c '.review' <<<"$found")"
 fallback_head="$(jq -r '.head_from // ""' <<<"$found")"
 # Whether this PR has ever carried a findings block: a block keeps its resolved
 # findings, so a PR with any finding history always has one. Absence is only
-# explainable as "no findings yet" when nothing ever recorded one: this counts
-# the block-bearing review comments that exist now, and nothing else.
+# explainable as "no findings yet" when nothing ever recorded one: `prior_blocks`
+# counts the block-bearing comments that exist now, and that is the limit: the
+# review is one comment a run rewrites in place, so a run that
+# wrote it without the block erased the only evidence one had existed, and this
+# reads 0 where 1 is meant. The gate still fails — no block is `unrecorded` and a
+# surviving block elsewhere is `missing` — so what the count decides is which
+# repair a reader is told about, not whether the PR passes (finding aab48f179d5e,
+# D37).
 prior_blocks="$(jq -r '.blocks // 0' <<<"$found")"
 [[ -n "$review" ]] || review='{}'
 
 review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
 review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
+review_body_q="$(jq -r '.body_q // ""' <<<"$found" 2>/dev/null || echo "")"
 
 # Typed state block pr-agent embeds in the review comment (multi-line HTML comment).
-# The start rule must fire once and only on the block itself: the marker is
-# quoted inside finding bodies and in prose when the reviewer writes about the
-# gate, and a start rule that fires there swallows the JSON line, so a review at
-# the right head reads as recording no head. A code block is a quote of one, like
-# the prose: a review that shows the block in an example carries none. So the
-# marker must be at column 0, which is where a run writes it (findings
-# f7d291ec6f97, e6024f4c203c: an indented quote carrying `complete: true` and the
-# judged head cleared the gate, with `[[:space:]]*` before the marker).
-state_json="$(printf '%s\n' "$review_body" | awk '
-  /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
-  fence { next }
-  !f && /^<!-- pr-agent-review-state:v1/ { f = 1; next }
+# The body is already defenced above, so the only rules left are the ones a run's
+# own block follows: the marker at column 0, which is where a run writes it, and a
+# `-->` at column 0 to close. Everything a review quotes in an example is gone
+# before this runs (findings f7d291ec6f97, e6024f4c203c, e6d2f0bb258c).
+state_json="$(printf '%s\n' "$review_body_q" | awk '
+  /^<!-- pr-agent-review-state:v1/ { f = 1; next }
   f && /^-->/ { exit }
   f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
@@ -253,15 +259,12 @@ fi
 # only while no block survives on this PR: once one has, its absence is a fault
 # to fail on, not a clean review.
 #
-# `prior_blocks` counts the comments that exist now, which is the bound: the
-# review is one comment a run rewrites in place, so a run that wrote it without
-# the block erased the only evidence that a block had existed. That absence no
-# longer reads as a clean review, since a review with no block fails as
-# `unrecorded`, so what the count still buys is the difference between a run that
-# dropped a block and a review that never carried one: the same failure, and a
-# different repair on each. The reviewer never reads this file (`.pr_agent.toml`
-# `repo_context_files` is AGENTS.md, NEXT.md, context.md and PR-AGENT.md), so a
-# bound stated only here is re-filed as a finding unless AGENTS.md states it too.
+# The count decides which failure a reader is told about, not whether the PR
+# passes: with nothing recorded here the absence reads as `unrecorded`, with a
+# block elsewhere it reads as `missing`. The limit on that reading is stated where
+# the count is taken, and in D37 of `.github/PR-AGENT.md`, because the reviewer
+# never reads this file (`.pr_agent.toml` `repo_context_files` is AGENTS.md,
+# NEXT.md, context.md and PR-AGENT.md).
 if [[ -z "$state_json" && -n "$review_body" ]]; then
   # The guide header is the evidence: it names the head the run checked out. With
   # no block this head is reported and never clears the gate; it decides which
