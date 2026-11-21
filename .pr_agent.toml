@@ -7,7 +7,11 @@
 # Command Code Provider API, OpenAI-compatible:
 # https://api.commandcode.ai/provider/v1
 model = "openai/deepseek/deepseek-v4.1-flash"
-fallback_models = ["openai/deepseek/deepseek-v4.1-flash"]
+# A fallback that names the same model doubles the worst case without changing
+# who answers: a measured run spent 900.32s and 900.10s on that one model and
+# ended `Failed to generate prediction with any model of [x, x]`. Empty means one
+# attempt, so a hung gateway fails in ~15 minutes instead of ~30.
+fallback_models = []
 
 # Live model list reports context_length = 1000000. pr-agent refuses an unknown
 # model id unless the window is declared.
@@ -17,8 +21,7 @@ custom_model_max_tokens = 1000000
 # for input, a cap on the diff that the model does not impose: the live list
 # reports context_length = 1000000, so the budget is that window.
 max_model_tokens = 1000000
-# Reasoning is on at high, not max, and `medium` is not a value this model
-# accepts: the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
+# Reasoning is on at max, not high: `medium` is not a value this model accepts — the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
 # D5) and pr-agent forwards the string verbatim, so an unlisted value is swallowed
 # by the gateway with no error — measured `200` for "medium", which means it is
 # not evidence of anything. Max effort does not lose to the clock on a large diff,
