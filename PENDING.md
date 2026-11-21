@@ -35,7 +35,7 @@ release notes.
 
 | what | state now | what settles it |
 |---|---|---|
-| the receipt's attached `p` | `init` writes one sudoers rule, for `pacman -Syuw --noconfirm`: `sed -n 191,196p src/commands/init.rs`. A `sudo pacdiff` from the receipt would be a second escalation with no rule behind it, so on a real host it prompts for root from inside the TUI, and a passwordless rule for an interactive tool that writes `/etc` widens privilege past the one path `fetch` uses | nothing in this tree. The receipt prints `sudo pacdiff` for the user to run after closing, which needs no privilege from `aepm` |
+| the receipt's attached `p` | at `99d5e03`: `init` writes one sudoers rule, for `pacman -Syuw --noconfirm` (`sed -n 191,196p src/commands/init.rs`). A `sudo pacdiff` from the receipt would be a second escalation with no rule behind it, so on a real host it prompts for root from inside the TUI, and a passwordless rule for an interactive tool that writes `/etc` widens privilege past the one path `fetch` uses | nothing in this tree. The receipt prints `sudo pacdiff` for the user to run after closing, which needs no privilege from `aepm` |
 
 ## Open work, with the issue that owns it
 
