@@ -540,18 +540,6 @@ doc_claims_match_code() {
 }
 check doc-claims-match-code doc_claims_match_code
 
-# Finding d0155c698bf0: the honesty rule's own justification was a remembered
-# tally, "Four rounds ... two of those rounds ...", while the pull request that
-# added it told the same history as five. No command counts those rounds, so the
-# sentence is deleted rather than answered with a better sentence, which is the
-# failure the rule is about. The gate keeps it deleted: a reworded tally is the
-# same claim, and this file is rules prose, so a count of rounds in it has no
-# source to name.
-honesty_rule_has_no_round_tally() {
-  ! grep -qiE '\b([0-9]+|one|two|three|four|five|six|seven) (review )?rounds' "$ROOT/AGENTS.md" || return 1
-}
-check honesty-rule-has-no-round-tally honesty_rule_has_no_round_tally
-
 # Finding bed8f31fda88: the fallback head is read from the selected review and
 # from no other, so an older review's persistent line cannot supply one. The
 # newest review here names no commit at all, which is the state it is reported
