@@ -16,17 +16,35 @@ fail=0
 pass() { ok=$((ok + 1)); printf 'ok   %s\n' "$1"; }
 die() { fail=$((fail + 1)); printf 'FAIL %s\n' "$1" >&2; }
 
-# 1. Every workflow file is named in the table, using its own `name:` field.
-#    A workflow added by a PR turns this red until the table gains its row.
+# 1. Every workflow file is named in the workflow TABLE, using its own `name:`
+#    field, and the table has one row per file. Two things this must not accept:
+#    a name mentioned anywhere else in the document (the flake table names
+#    `OCR Review (advisory)`, so a glob-free grep would pass for a workflow with
+#    no row), and a file this glob does not see (GitHub accepts .yaml as well
+#    as .yml, and an unseen file is a silent pass).
+wtable=$(awk '/^\| Workflow \| Triggers \|/{f=1} f&&/^$/{exit} f' "$DOC")
+[ -n "$wtable" ] || die "could not find the workflow table in $DOC"
 while IFS= read -r f; do
   name=$(sed -n 's/^name: *//p' "$f" | head -1)
   [ -n "$name" ] || { die "$f has no top-level name:"; continue; }
-  if grep -qF "\`$name\`" "$DOC"; then
-    pass "workflow $f ($name) is in the table"
+  if printf '%s' "$wtable" | grep -qF "\`$name\`"; then
+    pass "workflow $f ($name) has a row in the table"
   else
-    die "$f is named '$name' but $DOC never mentions it"
+    die "$f is named '$name' but has no row in the workflow table"
   fi
-done < <(ls .github/workflows/*.yml)
+done < <(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null)
+
+# 1b. The table has exactly one row per workflow file. This is what the document
+#     means by "the count is asserted, not typed".
+# Same pipefail trap: an unmatched *.yaml glob makes ls exit 2, and with pipefail
+# the assignment fails and the script dies before printing anything.
+files=$( { ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null || true; } | wc -l )
+rows=$(printf '%s\n' "$wtable" | grep -cE '^\| `[^`]+` \|' || true)
+if [ "$files" = "$rows" ]; then
+  pass "workflow table has $rows rows for $files workflow files"
+else
+  die "workflow table has $rows rows but the repository has $files workflow files"
+fi
 
 # 2. All three required checks are named in the sentence that enumerates them.
 #    `Review Gate` is a Checks-API write on the head, not a job name, so losing it
@@ -46,8 +64,11 @@ done
 # 3. The CI (Linux) step table sums to its stated total. It did not: five rows
 #    came to 54.0s against a stated 57.5s, losing 6% of the job to nothing.
 stated=$(sed -n 's/^| \*\*total\*\* | \*\*\([0-9.]*\)s\*\* |$/\1/p' "$DOC" | head -1)
-parts=$(sed -n '/^| Step | avg |$/,/^| \*\*total\*\* |/p' "$DOC" \
-  | grep -oE '\| [0-9]+\.[0-9]s \|$' | grep -oE '[0-9]+\.[0-9]' | awk '{s+=$1} END{printf "%.1f", s}')
+# `|| true` because pipefail turns a format change into an immediate exit, which
+# would kill the script before the diagnostic below could say what broke.
+parts=$( { sed -n '/^| Step | avg |$/,/^| \*\*total\*\* |/p' "$DOC" \
+  | grep -oE '\| [0-9]+\.[0-9]s \|$' | grep -oE '[0-9]+\.[0-9]' \
+  | awk '{s+=$1} END{if (NR) printf "%.1f", s}'; } || true)
 if [ -n "$stated" ] && [ -n "$parts" ]; then
   if awk -v a="$parts" -v b="$stated" 'BEGIN{d=a-b; if(d<0)d=-d; exit !(d<=0.6)}'; then
     pass "CI step table sums to its stated total (${parts}s vs ${stated}s)"
