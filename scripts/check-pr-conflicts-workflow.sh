@@ -168,8 +168,9 @@ fi
 checks=$((checks + 1))
 declared=$(( $(grep -c '^run_case ' "$0") + 2 ))
 # Every mention must agree: `head -1` let a stale row coexist with a correct one
-# and pass on whichever came first.
-doc_rows="$(grep -oE 'scripts/check-pr-conflicts-workflow\.sh [0-9]+/[0-9]+' "$DOC" \
+# and pass on whichever came first. Anchored to the D38 row shape, because a
+# count quoted in the row's own [VERIFIED] prose is not the row's count.
+doc_rows="$(grep -oE '\| *`scripts/check-pr-conflicts-workflow\.sh` *\| *[0-9]+/[0-9]+' "$DOC" \
   | grep -oE '[0-9]+/[0-9]+' | sort -u)"
 doc_row="$doc_rows"
 [[ "$(printf '%s\n' "$doc_rows" | grep -c .)" -le 1 ]] || doc_row="$doc_rows (disagree)"
