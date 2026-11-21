@@ -119,7 +119,7 @@ for n in $(grep -oE 'in [0-9]+ invocations' "$DOC" | grep -oE '[0-9]+' | sort -u
     die "a sentence quotes $n invocations; ci.sh has $actual"
   fi
 done
-scripts_actual=$(grep -oE '^(bash scripts/|\./sim/|bash sim/)[a-z-]+\.sh' ci.sh | sed 's|.*/||' | sort -u | wc -l)
+scripts_actual=$(grep -oE '^(bash scripts/|\./sim/|bash sim/)[a-z-]+\.sh' ci.sh | sed 's|.*/||' | sort -u | wc -l || true)
 for n in $(grep -oE '[0-9]+ gate scripts' "$DOC" | grep -oE '^[0-9]+' | sort -u); do
   if [ "$n" = "$scripts_actual" ]; then
     pass "quoted gate-script count $n matches ci.sh"
@@ -128,14 +128,18 @@ for n in $(grep -oE '[0-9]+ gate scripts' "$DOC" | grep -oE '^[0-9]+' | sort -u)
   fi
 done
 
-# 8. The Sim max quoted in the workflow table equals the one the prose explains.
-#    The table said 636s while the paragraph below said 646s, both "measured".
-sim_max=$(grep -oE 'max [0-9]+s \(n=49\)' "$DOC" | grep -oE '[0-9]+' | head -1)
-range_end=$(grep -oE 'one range ends at [0-9]+s' "$DOC" | grep -oE '[0-9]+' | head -1)
-if [ -n "$sim_max" ] && [ "$sim_max" = "$range_end" ]; then
-  pass "the explained Sim tail ($range_end s) matches the table ($sim_max s)"
+# 8. The Sim max in the workflow table equals the one the prose explains.
+#    Two places state the same measured quantity, and they disagreed (636 vs 646).
+#    Both reads carry `|| true`: without it, grep's failure under `pipefail` kills
+#    the script before the `die` below can say anything, which is a gate that
+#    fails silently. That is the same defect as assertion 3's, found by a reviewer
+#    after I had fixed it in only one place.
+sim_max=$(printf '%s\n' "$wtable" | grep -E '^\| `Sim` \|' | grep -oE 'max [0-9]+s' | grep -oE '[0-9]+s' | head -1 || true)
+prose_max=$(grep -oE 'own max is [0-9]+s' "$DOC" | grep -oE '[0-9]+s' | head -1 || true)
+if [ -n "$sim_max" ] && [ "$sim_max" = "$prose_max" ]; then
+  pass "the explained Sim max ($prose_max) matches the table ($sim_max)"
 else
-  die "the Sim table says ${sim_max:-nothing}s and the prose explains ${range_end:-nothing}s"
+  die "the Sim table says ${sim_max:-nothing} and the prose explains ${prose_max:-nothing}"
 fi
 
 # 9. A row parked behind another row must name a row that comes *before* it.

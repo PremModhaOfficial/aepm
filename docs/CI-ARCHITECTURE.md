@@ -30,17 +30,17 @@ a reader.
 
 | Workflow | Triggers | Jobs | Gating? | Wall clock, successes only (2026-11-21) |
 |---|---|---|---|---|
-| `CI` | `pull_request`, `push main`, `dispatch` | `MSRV (1.85)`, `CI (Linux)`, `Stable (tip)`, `Coverage (floor enforced)`, `Prototype (web demo matches the goldens)` | `CI (Linux)` only | median 65s, p90 74s, max 256s (n=24) |
-| `Sim` | `pull_request`, `push main`, `dispatch` | `Arch simulation` | yes | median 10s, p90 244s, max 636s (n=49) — see the bimodality below |
+| `CI` | `pull_request`, `push main`, `dispatch` | `MSRV (1.85)`, `CI (Linux)`, `Stable (tip)`, `Coverage (floor enforced)`, `Prototype (web demo matches the goldens)` | `CI (Linux)` only | median 65s, p90 71s, max 75s (n=24) |
+| `Sim` | `pull_request`, `push main`, `dispatch` | `Arch simulation` | yes | median 10s, p90 279s, max 453s (n=50) — see the bimodality below |
 | `Review Gate` | `workflow_run` of `PR Agent` | `Review Gate` | yes | median 10s, p90 13s, max 19s (n=21) |
-| `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 456s, p90 896s, max 1401s (n=20) |
+| `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 452s, p90 849s, max 2376s (n=20) |
 | `Scheduled audit` | weekly cron, `dispatch` | `Drift checks (pinned + stable)`, `One issue, not one per run` | no | n/a |
 
 The wall clock column is printed by `gh run list --workflow <name> --limit N
 --json createdAt,updatedAt`, subtracting `createdAt` from `updatedAt`, successes
 only. Prefer this to any figure typed into this table: on 2026-11-19 the same
 command gave `PR Agent` a median of 124s and `CI` 60s; two days later `PR Agent`
-is 456s and `CI` is 65s. The review chain is the term that moves, and it is the
+is 452s and `CI` is 65s. The review chain is the term that moves, and it is the
 term every ranking below used to ignore.
 
 The two `Scheduled audit` names are display names; the job ids are `audit` and
@@ -64,26 +64,28 @@ is serial with itself and concurrent with the rest. A PR therefore waits for
 max(CI, Sim, PR Agent + Review Gate)
 ```
 
-Measured 2026-11-21, successes only: `CI` 65s, `Sim` 244s at p90, `PR Agent`
-456s, `Review Gate` 10s. That is `max(65, 244, 456 + 10)` = **466s**.
+Computed 2026-11-21 from the medians of the newest 24/50/20 successes: `CI` 65s,
+`Sim` 10s, `PR Agent` 452s, `Review Gate` 10s — `max(65, 10, 452 + 10)` = **462s**.
+Every term is a median; a `max` over mixed percentiles is not a percentile, and
+the previous wording said "measured", which no command prints.
 
 That is the term this document was missing, and it applies to **every** head.
 
 An earlier revision of this paragraph claimed a second, cheaper regime: that a
 re-push to an already-reviewed head skips the model and waits only 244s. That is
-wrong, and the mechanism says why. `pr-agent.yml:83` passes the event's
+wrong, and the mechanism says why. `pr-agent.yml:81` passes the event's
 `head.sha` to `review-state.sh --reviewed --sha "$SHA"`, and `--reviewed` reports
 `covered=true` only when `review_head == head_full` (`scripts/review-state.sh:203-222`).
 A re-push *is* a new head sha, so no existing review can match it, the head is
-stale by definition, and the model runs — 456s, the same as a first review.
+stale by definition, and the model runs — 452s, the same as a first review.
 
 The `--reviewed` skip does exist, but it saves a **re-run of an unchanged head**
-(`gh run rerun`, or a `/review` comment on a sha already reviewed). That is a
+(`gh run rerun`, or a `reopened`/`ready_for_review` event on a sha already reviewed). A `/review` comment cannot reach it: `pr-agent.yml:92` short-circuits true for `issue_comment`, because that event has no `reviewed` step. That is a
 cheaper retry, not a cheaper PR: it changes no PR's wall clock, because the head
 it skips has already been paid for once.
 
 What that means for the rest of this document: any head whose current sha carries
-no complete review costs ~466s, and that is the number to optimise.
+no complete review costs ~462s, and that is the number to optimise.
 
 The previous version of this section concluded `max(CI, Sim)` and "Sim is the
 larger term by 3×", measured from these runs:
@@ -95,13 +97,13 @@ larger term by 3×", measured from these runs:
 | 44470154997 (`main` push) | 51s | 333s |
 
 Those three runs are still accurate. They could not see the review chain, whose
-`PR Agent` median was 124s when they were taken and is 456s two days later. The
+`PR Agent` median was 124s when they were taken and is 452s two days later. The
 conclusion that follows is the opposite of the old one:
 **CI and Sim tuning are worth zero seconds on a typical first review**, because
 neither can be the last thing it waits on while one review takes 7.6 minutes.
 
 "Typical" is doing real work there. It is a median claim, not an absolute one,
-and the tail is where Sim governs: `Sim`'s own max is 636s (n=49), and the
+and the tail is where Sim governs: `Sim`'s own max is 453s (n=50), and the
 outlier in section 1 is a 1162s `main` push. A proposed Sim optimisation must name
 the regime it targets — the median PR, where it is worth 0s, or the tail, where
 it is worth hundreds.
@@ -127,7 +129,7 @@ below came to be ranked first in the previous version of this table.
 | Job total, docs-only PR (0 scenarios) | ~10s |
 | **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
 
-The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 636s and this row exists. It is the tail that the layer-cache change is sized against.
+The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why the table's Sim range and this row disagree, and this row exists. It is the tail that the layer-cache change is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
@@ -243,9 +245,9 @@ aloud rather than left in the gap table as a note about artifacts.
 | Workflow | Failing runs | Where |
 |---|---|---|
 | `Review Gate` | 35 | the review machinery, not the build (23 from `workflow_run`, 12 from an old `pull_request` trigger) |
-| `CI` | 7 | `Run CI script` and `Package (cargo publish --dry-run)` |
+| `CI` | 8 | `Run CI script` and `Package (cargo publish --dry-run)` |
 | `OCR Review (advisory)` | 4 | unmerged (PR #149); the model call, not the build |
-| `PR Agent` | 3 | no review happened, which reds the required `Review Gate` |
+| `PR Agent` | 4 | no review happened, which reds the required `Review Gate` |
 | `Sim` | 2 | `Build sim image and run scenarios` |
 
 The table now lists every workflow that appears in that query. It used to omit
@@ -338,7 +340,7 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 | # | Gap | Measured | Why it matters |
 |---|---|---|---|
 | G1 | The sim image is built from scratch on every run | 118s of a 194s PR job; 0/20 runs reused a layer | 61% of the Sim job, and the 539s tail is the same uncached build on a slow mirror. A `type=gha` layer cache was attempted as PR #145, closed unmerged on 2026-11-19 — its own successful runs were 287s, 351s and 636s, each running all 56 scenarios — so they are **not** comparable to the 194s eight-scenario baseline this table uses, and an earlier revision here also listed a 370s run that is in fact CI run 44482346736 (57s, five jobs, not Sim). PR #145's own record is 128s to 70s on the build and 349s to 284s on the job, so the layer cache did what it claimed; what remains unmeasured is a main-seeded steady state. Any proposal here has to beat that measurement, not the theory |
-| G2 | Every ranking in this document was ordered by a term that is not the critical path | `PR Agent` median 456s + `Review Gate` 10s against `CI` 65s and `Sim` p90 244s | Any head without a complete review of its own sha waits 466s, so Sim and CI tuning move nothing until that shrinks. The `--reviewed` skip saves a re-run of an unchanged head, not a push |
+| G2 | Every ranking in this document was ordered by a term that is not the critical path | `PR Agent` median 452s + `Review Gate` 10s against `CI` 65s and `Sim` median 10s | Any head without a complete review of its own sha waits 462s, so Sim and CI tuning move nothing until that shrinks. The `--reviewed` skip saves a re-run of an unchanged head, not a push |
 | G3 | Four jobs inside `CI` each compile the same tree and run the same suite (`MSRV`, `CI (Linux)`, `Stable`, `Coverage`) | four compiles, four test runs per PR | Free in wall clock, since they are parallel, but it multiplies the flake surface 4× and one defect reddens three or four checks. Section 2 already sources the fix (`needs: basics`); it needs a decision, not a measurement |
 | G4 | A red `Sim` says one line | three shapes, not one: `sim: build: FAILED…` (`sim/run.sh:81`, `:94`), `sim: TIMEOUT: …` (`:214`), `sim: FAIL: … exited <status>` (`:220`) | Diagnosis requires downloading the artifact; the failing assertion is inside it, not on the run page. A failure summary that assumes one shape will miss two of the three |
 | G5 | The artifact does not record which scenarios were selected | **closed**: `sim.yml:55` writes `sim-logs/selected-scenarios.txt` | Kept as a row because the failure it describes is the one G9 below still has, in a different form: without the record, "this run proved nothing" and "this run had nothing to prove" look identical |
@@ -358,11 +360,12 @@ not name. Naming the real key is cheaper than pretending the old one applied.
 One measurement governs every row below and is deliberately **not** a row, because
 it has no file, no rollback and no "after":
 
-> A PR's **first** review waits 466s (`max(65, 244, 456 + 10)`). A **re-push** to a
-> head that already carries a review waits 244s, because `pr-agent.yml:72-92`
-> skips the model on an already-reviewed head and those runs take 46-108s.
+> Every head without a complete review of its own sha waits 462s
+> (`max(65, 10, 452 + 10)`), and the review chain is all of it. There is no
+> second, cheaper regime: `review-state.sh --reviewed` compares the review's head
+> to the event's head, so a new push is stale by construction and the model runs.
 
-Decomposing that 456s is the highest-value work available here. Naming a fix for
+Decomposing that 452s is the highest-value work available here. Naming a fix for
 it before decomposing it is what produced the previous ranking, so this paragraph
 is where it belongs, not row 1.
 
