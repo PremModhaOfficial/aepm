@@ -227,6 +227,10 @@ jobs:
           done
           echo "::error::no chrome or chromium on this runner — refusing to skip the demo check"
           exit 1
+      # The retry logic is tested before it is trusted: a hanging browser must be
+      # retried once and reported as infrastructure, never as a golden mismatch.
+      - name: Test the browser retry itself
+        run: node --test prototype/web/retry.test.mjs
       - name: Rebuild the demo and compare the committed HTML
         run: |
           node prototype/web/build.mjs

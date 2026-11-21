@@ -11,6 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { withRetry } from './retry.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
@@ -41,11 +42,13 @@ function parseName(file) {
 }
 
 function dom(query, { window = '1400,1200', budget = 800 } = {}) {
-  return execFileSync(chrome, [
+  // A hanging browser is the runner's fault, not the page's: retry once rather
+  // than report a golden mismatch. See retry.mjs for the measured flake.
+  return withRetry(() => execFileSync(chrome, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
     `--virtual-time-budget=${budget}`, `--user-data-dir=${profile}`,
     `--window-size=${window}`, '--dump-dom', `file://${page}?${query}`
-  ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+  ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 }));
 }
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
@@ -197,6 +200,15 @@ if (pass + failures.length !== scheduled) {
 }
 const total = scheduled;
 if (failures.length) {
+  // Two distinct exit codes so a red run says which problem it is: 1 means the
+  // page is wrong, 2 means the browser never produced a DOM. Reporting the
+  // second as the first is how run 44901392026 read as a real failure.
+  const infra = failures.filter((f) => /infrastructure fault/.test(f));
+  if (infra.length === failures.length) {
+    console.error(`INFRASTRUCTURE ${pass}/${total}: the browser never produced a DOM`);
+    for (const f of failures) console.error(' - ' + f);
+    process.exit(2);
+  }
   console.error(`FAIL ${pass}/${total}`);
   for (const f of failures) console.error(' - ' + f);
   process.exit(1);
