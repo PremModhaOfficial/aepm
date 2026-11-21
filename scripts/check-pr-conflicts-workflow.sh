@@ -169,11 +169,20 @@ conflict_holds="$(bash "$ROOT/scripts/check-pr-conflicts.sh" --self-test 2>&1 \
 if [[ -z "$conflict_holds" ]]; then
   fail doc-count-conflicts "check-pr-conflicts.sh --self-test printed no hold count"
 else
-  conflict_row="$(grep -oE 'scripts/check-pr-conflicts\.sh --self-test`? *[0-9]+/[0-9]+' "$DOC" \
-    | grep -oE '[0-9]+/[0-9]+' | sort -u)"
+  conflict_all="$(grep -oE 'scripts/check-pr-conflicts\.sh --self-test`?[^0-9]{0,6}[0-9]+/[0-9]+' "$DOC" \
+    | grep -oE '[0-9]+/[0-9]+')"
+  conflict_row="$(printf '%s\n' "$conflict_all" | sort -u)"
+  # Counted before dedupe: two mentions of the same count collapsed to one line,
+  # which read as a missing mention.
+  n_conflict_mentions=$(printf '%s\n' "$conflict_all" | grep -c . || true)
   n_conflict_rows=$(printf '%s\n' "$conflict_row" | grep -c . || true)
-  if [ "$n_conflict_rows" -gt 1 ]; then
-    fail doc-count-conflicts "PR-AGENT.md quotes $n_conflict_rows different counts for the conflicts suite: $conflict_row"
+  # Two places quote this suite: D38's verified sentence and the coverage row,
+  # whose count sits past a backtick and a pipe. Matching only the first shape
+  # left the table row uncompared while the guard said it was compared.
+  if [ "$n_conflict_mentions" -lt 2 ]; then
+    fail doc-count-conflicts "PR-AGENT.md quotes this suite $n_conflict_mentions time(s); expected the D38 sentence and the coverage row: '${conflict_row:-nothing}'"
+  elif [ "$n_conflict_rows" -gt 1 ]; then
+    fail doc-count-conflicts "PR-AGENT.md quotes $n_conflict_rows different counts for the conflicts suite: $(printf "%s" "$conflict_row" | tr "\\n" " ")"
   elif [[ "$conflict_row" != "$conflict_holds/$conflict_holds" ]]; then
     fail doc-count-conflicts "PR-AGENT.md says '${conflict_row:-nothing}' for the conflicts suite, which prints '$conflict_holds/$conflict_holds'"
   fi
