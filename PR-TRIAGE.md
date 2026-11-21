@@ -1,7 +1,9 @@
 # PR triage — 2026-11-21
 
 State read from the REST API at `main` @ `551afaa`. Every count below names the
-command that produced it; re-run before quoting.
+command that produced it; re-run before quoting. The pile this describes has
+since resolved: `#154` and `#128` merged, `#147` and `#149` closed on
+2026-11-21. What follows is the record of that read, not a live plan.
 
 ## What the pile actually is
 
@@ -81,8 +83,8 @@ gh api '.../actions/runs?branch=docs/ci-failure-inventory&per_page=5'
 GitHub cannot build the `refs/pull/N/merge` commit for a conflicting head, so
 `pull_request` workflows never start. The PR gets zero checks, the three required
 contexts can never appear, and the PR is blocked forever with no visible reason.
-This is the one failure mode no dashboard can show, and it is why three of the
-four open PRs look "missing checks" rather than "failing".
+This is the one failure mode no dashboard can show, and it is why `#147` shows
+no checks at all rather than a red one.
 
 ## Per-PR decision
 
@@ -100,8 +102,9 @@ Both edit `ci.sh` and `docs/CI-ARCHITECTURE.md`. `#154` is the later, rebased,
 gated version of the same file: it carries the measured baseline, the ranked
 changes with Files/Measure/Rollback, and a self-test. `#147` is 7 behind,
 conflicting, has zero check runs on its head (F4), and adds
-`scripts/gate-doc-claims.sh`, which is a second, weaker claim-checker beside
-`check-ci-architecture.sh` — two owners for one fact.
+`scripts/gate-doc-claims.sh`, which in that branch is a second, weaker
+claim-checker over the same document and the research ledger — two owners for
+one fact. The path is now this document's own gate; nothing else checks it.
 
 Its one unique artifact is the research ledger (`docs/research/ledger.md`,
 `external-state-2026-11-19.md`). That is history, not machinery: it belongs in
@@ -143,16 +146,21 @@ touch.
    is the other thread's; it merges when its review clears.
 3. Nothing else. `#147` and `#149` are closed, not merged.
 
-`strict: true` means each merge invalidates the next PR, so the order above is
-also the only order that does not force a rebase-and-re-review cycle: `#154`
-first costs nothing, because closing `#147`/`#149` removes both candidates that
-would otherwise have to be rebased onto it.
+`strict: true` means each merge invalidates the next PR, so no order avoids the
+rebase-and-re-review cycle; the order only decides who pays it. `#154` first
+leaves `#128` behind `main`, so `#128` needs an update and its pinned review
+goes stale — one rebase, one re-review. Closing `#147`/`#149` removes the two
+candidates that would otherwise pay it as well, which is why that part is free
+and the `#128` part is not.
 
 ## The systemic finding, stated once
 
-Three of four open PRs are not blocked by anything they wrote. They are blocked
-by F4 (a conflicting head runs nothing) and by `strict: true` turning every merge
-into a rebase for every other PR. That is a branch-protection property, not a
-code defect, and it is the reason the pile grew in the first place. Section 3 of
+One of the four open PRs is blocked by F4: `#147`, the only head in the table
+whose merge ref cannot be built. The other three are not blocked by anything
+they wrote either, but not by F4: `#128` and `#154` are `mergeable: true` and 0
+behind, waiting on their own review runs, and `#149` is 3 behind, so `strict:
+true` asks for an update before it can merge. That, plus `strict: true` turning
+every merge into a rebase for every other PR, is a branch-protection property,
+not a code defect, and it is the reason the pile grew in the first place. Section 3 of
 `docs/CI-ARCHITECTURE.md` records the options and their costs; changing it is a
 one-time admin decision, not a PR.
