@@ -416,14 +416,32 @@ run missing-block-named-before-stale 1 'no typed state block although an earlier
 # fails here instead of waiting for the next review to notice.
 authority_matches_next() {
   local f
+  # Line breaks are wrapping, not meaning: a list split across two lines is still
+  # one claim.
+  flat() { tr '\n' ' ' <"$1" | tr -s ' '; }
   ! grep -qF 'not something this repo can assert' "$ROOT/AGENTS.md" || return 1
   ! grep -qF 'the verdict stays advisory' "$ROOT/AGENTS.md" || return 1
+  # Every document that names the required set names all three of them. The README
+  # named two and left `Review Gate` out (finding 15e004115e8c), which reads as
+  # "advisory" to anyone who follows it, so the drift is checked here rather than
+  # left for the next review to find.
+  ! flat "$ROOT/README.md" | grep -qF 'requires `CI (Linux)` and `Arch simulation`' || return 1
+  flat "$ROOT/README.md" | grep -qF 'requires `CI (Linux)`, `Arch simulation` and `Review Gate`' || return 1
+  for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md" "$ROOT/README.md"; do
+    flat "$f" | grep -qF 'CI (Linux)' || return 1
+    flat "$f" | grep -qF 'Arch simulation' || return 1
+    flat "$f" | grep -qF 'Review Gate' || return 1
+  done
   for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md"; do
     grep -qF 'branches/main/protection' "$f" || return 1
-    grep -qF 'CI (Linux)' "$f" || return 1
-    grep -qF 'Arch simulation' "$f" || return 1
-    grep -qF 'Review Gate' "$f" || return 1
   done
+  # And AGENTS.md states the head order the code implements (finding
+  # 6d74deeef539): header, then the persistent review line, then a body link. The
+  # "only" this replaced said the header was the sole source, which the fallbacks
+  # in review-state.sh contradict.
+  ! grep -qF "guide header's link only" "$ROOT/AGENTS.md" || return 1
+  flat "$ROOT/AGENTS.md" | grep -qF "then the persistent review line" || return 1
+  flat "$ROOT/AGENTS.md" | grep -qF 'then a bare `commit/<sha>` in the body' || return 1
 }
 check authority-matches-next authority_matches_next
 

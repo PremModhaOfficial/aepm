@@ -303,8 +303,11 @@ head.
   gate writes `Review Gate` onto the head through the Checks API instead. A
   `/review` refresh writes it there too, which is what lets a re-review clear a
   red gate. That is what makes it requireable, though whether it is required is
-  a repository setting and not this file's: `main` requires `CI (Linux)` and
-  `Arch simulation` today. Only the bot's own comment counts, so pasting a
+  a repository setting and not this file's: `main` requires `CI (Linux)`, `Arch
+  simulation` and `Review Gate` today, measured with `gh api
+  repos/PremModhaOfficial/aepm/branches/main/protection` (strict, admins
+  enforced, no force push, no branch deletion), so an unreviewed head does not
+  merge. Only the bot's own comment counts, so pasting a
   marker by hand does not pass it. A review that carries no typed block is not a
   passing review: a truncated or timed-out run prints the same clean
   recommendation, so an `unrecorded` review fails and asks for `/review`. A PR

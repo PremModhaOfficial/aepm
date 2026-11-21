@@ -183,10 +183,14 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   head clears the gate, and a review carrying none is reported as `unrecorded`
   and fails. That review is still selected by the guide marker
   `<!-- pr-agent:review:full`, or `<!-- pr-agent:review:incremental` for an
-  incremental review, and its head still comes from the commit the
-  comment quotes, which is the guide header's link only: the first
+  incremental review, and its head still comes from the commit the comment
+  quotes, in one order and no other: the guide header's link first (the first
   `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
-  header quotes. Both are read to name the failure, never to clear it. The block
+  header quotes), then the persistent review line that names the commit a run
+  judged, then a bare `commit/<sha>` in the body. The body link is the last
+  resort, because a review that discusses an earlier fix quotes one, so it must
+  never outrank a head a run recorded. Both kinds are read to name the failure,
+  never to clear it. The block
   keeps resolved findings, so a PR that still carries one cannot pass on a
   missing block: the gate fails on it. Two bounds are
   accepted and not fixed. First, the review is one
