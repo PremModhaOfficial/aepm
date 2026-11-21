@@ -237,10 +237,20 @@ run_case other-author "$(guide_body "$HEAD" 'No concerns found')" mallory "" non
 WANT_HEAD="$HEAD"
 run_case head-from-payload "$(guide_body '-' 'No concerns found')" "$BOT" "$HEAD" patch 'now records a complete review'
 
-# An `issue_comment` run carries no pull_request payload, so a body with no commit
-# footer leaves the head to the API. FAKE_PULL_HEAD serves it.
+# #153: an `issue_comment` run carries no pull_request payload, and a body with no
+# commit footer leaves the head unknown. The step used to read the PR's current
+# head from the API, which is the head at append time rather than the one the
+# review read: a push in between was recorded as reviewed and `--gate` then
+# passed on a review of an older commit. An unverified head writes nothing, so
+# this case asserts that a served head (`FAKE_PULL_HEAD`) is not taken.
 WANT_HEAD="$HEAD"
-run_case head-from-api "$(guide_body '-' 'No concerns found')" "$BOT" "" patch 'now records a complete review'
+run_case head-from-api "$(guide_body '-' 'No concerns found')" "$BOT" "" none 'names no commit'
+
+# #153: the newest bot review already carries a block, an older one does not.
+# Selection is the newest bot review and stops there, so the older review is not
+# rewritten with a block naming its own, different head.
+WANT_HEAD="$HEAD"
+run_case newest-blocked-writes-nothing "$blocked" "$BOT" "" none 'already carries a state block' "$(guide_body "$OLD" 'No concerns found')"
 
 # The oldest matching review wins nothing: a newer clean review is the one the
 # gate must read.
@@ -259,22 +269,29 @@ run_case pagination "$(guide_body "$HEAD" 'No concerns found')" "$BOT" "" patch 
 # #153: the job guard skips a draft and a fork, and the step must say so itself.
 # On a draft the `reviewed` step is skipped, its output is empty, and the step's
 # own condition was true, so the writer ran for a review the model never made.
-# The step's `if:` is read out of the YAML and compared with the spaces removed,
-# so the check is about the clauses rather than about formatting.
+# The draft-guard case reads the step's `if:` out of the YAML and compares it with
+# the spaces removed, so the check is about the clauses rather than formatting.
 checks=$((checks + 1))
-step_if=""
-if ! step_if="$(python3 - "$WORKFLOW" <<'PY'
-import sys
-import yaml
-
-doc = yaml.safe_load(open(sys.argv[1]))
-step = next(s for s in doc["jobs"]["review"]["steps"]
-            if s.get("name") == "Append the typed review state block")
-print("".join(str(step.get("if", "")).split()))
-PY
-)"; then
+# Read as text, not with a parser (#153): a folded scalar's continuation lines are
+# deeper than its `if:` key, which is all the structure this needs.
+step_if="$(awk '
+  /^ *- name: Append the typed review state block *$/ { found = 1; next }
+  found && /^ *- name:/ { exit }
+  found && !have && /^ *if:/ {
+    match($0, /^ */); base = RLENGTH
+    rest = substr($0, base + 4)
+    sub(/^ */, "", rest)
+    have = 1
+    if (rest !~ /^[>|]/) print rest
+    next
+  }
+  have {
+    if ($0 == "" || (match($0, /^ */) && RLENGTH <= base)) exit
+    print
+  }' "$WORKFLOW")"
+step_if="$(tr -d '[:space:]' <<<"$step_if")"
+if [[ -z "$step_if" ]]; then
   fail draft-guard "cannot read the append step's if: from $WORKFLOW"
-  step_if=""
 fi
 if [[ -n "$step_if" ]]; then
   for clause in 'github.event.pull_request.draft==false' \
@@ -283,6 +300,29 @@ if [[ -n "$step_if" ]]; then
     [[ "$step_if" == *"$clause"* ]] \
       || fail draft-guard "the append step's if: does not carry '$clause'" "$step_if"
   done
+fi
+
+# #153: the `if:` above was read with `python3` and `import yaml`, a dependency
+# neither `ci.sh` nor this script declares, so the draft-guard case went red on an
+# environment reason rather than a code defect. The step's `if:` is now read as
+# text with awk. This case proves the suite needs no python3 at all: it runs itself
+# again with a python3 that fails first on PATH, and that shim's message is what
+# this asserts on, so an unrelated failure in the nested run is not misreported
+# here.
+if [[ -z "${PR_AGENT_STATE_BLOCK_NO_PYTHON:-}" ]]; then
+  checks=$((checks + 1))
+  mkdir -p "$root/nopy"
+  printf '#!/bin/sh\necho "python3: command not found" >&2\nexit 127\n' >"$root/nopy/python3"
+  chmod +x "$root/nopy/python3"
+  set +e
+  env PATH="$root/nopy:$PATH" PR_AGENT_STATE_BLOCK_NO_PYTHON=1 \
+    bash "${BASH_SOURCE[0]}" >"$root/nopy.log" 2>&1
+  set -e
+  if [[ ! -s "$root/nopy.log" ]]; then
+    fail no-python3 "the suite printed nothing without python3"
+  elif grep -q 'python3: command not found' "$root/nopy.log"; then
+    fail no-python3 "the suite runs python3" "$(grep -m1 -B3 'python3: command not found' "$root/nopy.log")"
+  fi
 fi
 
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }

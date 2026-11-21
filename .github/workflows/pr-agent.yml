@@ -152,10 +152,13 @@ jobs:
         run: |
           # --- pr-agent-state:begin ---
           set -euo pipefail
-          # The newest bot comment that is a review and has no block yet. The merge
-          # recommendation is deliberately not part of this selection: a review that
-          # printed none must write nothing, not fall back to an older comment whose
-          # recommendation describes another commit.
+          # The newest bot comment that is a review, blocked or not. Selection stops
+          # there (#153): an earlier version asked for "newest that has no block", so
+          # when the newest review already carried one a re-run walked back and
+          # rewrote an older review with a block naming an older head. The merge
+          # recommendation is deliberately not part of this selection either: a
+          # review that printed none must write nothing, not fall back to an older
+          # comment whose recommendation describes another commit.
           # `--paginate`, because a PR with more than one page of comments hid its
           # newest review past page 1 and the block then landed on an older comment
           # or nowhere at all (#153). `--jq '.[]'` streams one comment per line from
@@ -165,15 +168,18 @@ jobs:
           comment="$(gh api --paginate "$comments_url?per_page=100" --jq '.[]' \
             | jq -cs '[.[]
               | select(.user.login == env.BOT_LOGIN)
-              | select(.body | contains("pr-agent:review"))
-              | select(.body | contains("pr-agent-review-state:v1") | not)]
+              | select(.body | contains("pr-agent:review"))]
               | last // {}')"
           comment_id="$(jq -r '.id // empty' <<<"$comment")"
           if [[ -z "$comment_id" ]]; then
-            echo "::notice::PR #$PR has no pr-agent review comment without a state block; nothing to append"
+            echo "::notice::PR #$PR has no pr-agent review comment; nothing to append"
             exit 0
           fi
           body="$(jq -r '.body // ""' <<<"$comment")"
+          if [[ "$body" == *"pr-agent-review-state:v1"* ]]; then
+            echo "::notice::PR #$PR comment $comment_id already carries a state block; nothing to append"
+            exit 0
+          fi
 
           # The gate's own token: lowercase, spaces to underscores, the same
           # pipeline `review-state.sh` runs. Only its presence is needed here.
@@ -183,19 +189,19 @@ jobs:
             exit 0
           fi
 
-          # The commit the review read, from the body's own footer; the PR head is
-          # only a fallback. An `issue_comment` run carries no pull_request payload,
-          # so the head is then read from the API rather than asserted.
+          # The commit the review read, from the body's own footer; the event
+          # payload is the only other source, and it is the head this run was
+          # created for. There is no API fallback (#153): `repos/$GH_REPO/pulls/$PR`
+          # answers the head at append time, so a push landing between the review
+          # and the append would be recorded as reviewed and `--gate` would pass on
+          # a review of an older commit. An unverifiable head writes nothing.
           reviewed="$(sed -n 's/.*Review updated until commit[[:space:]]*\([^ )]*\).*/\1/p' <<<"$body" | head -1)"
           reviewed="${reviewed##*/}"
           if [[ ! "$reviewed" =~ ^[0-9a-f]{40}$ ]]; then
             reviewed="${PR_HEAD:-}"
           fi
           if [[ ! "$reviewed" =~ ^[0-9a-f]{40}$ ]]; then
-            reviewed="$(gh api "repos/$GH_REPO/pulls/$PR" --jq '.head.sha // ""')"
-          fi
-          if [[ ! "$reviewed" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::notice::cannot read the commit PR #$PR was reviewed at; no state block written"
+            echo "::notice::the review of PR #$PR names no commit and this event carries no head; no state block written"
             exit 0
           fi
 
