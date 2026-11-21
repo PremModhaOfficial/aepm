@@ -76,16 +76,27 @@ fi
 # 2b. The same claim is restated in "The systemic finding, stated once", which
 #     is outside the F4 block, so the count word is compared over the whole
 #     document: guarding only the block left the restatement unchecked, and both
-#     had drifted.
-while IFS= read -r claim; do
-  [ -n "$claim" ] || continue
-  n=$(word "$(printf '%s' "$claim" | grep -oE '^[A-Za-z0-9]+' | tr '[:upper:]' '[:lower:]')")
-  if [ "$n" = "$conflict_n" ]; then
-    pass "f4-conflict-count: '$claim' matches $conflict_n conflicting head(s)"
-  else
-    die "f4-conflict-count: '$claim', but the table has $conflict_n conflicting head(s)"
-  fi
-done < <(printf '%s\n' "$flat" | grep -oiE '[A-Za-z0-9]+ of the ([a-z]+|[0-9]+) open PRs')
+#     had drifted. Two ways to be wrong: the count word against the conflicting
+#     heads, and the total it names against the table's open rows. No match at
+#     all is a failure, not a skip — silence is how a rewritten sentence turns
+#     this assertion off.
+claims=$(printf '%s\n' "$flat" | grep -oiE '[A-Za-z0-9]+ of the [A-Za-z0-9]+ open PRs' || true)
+if [ -z "$claims" ]; then
+  die "f4-conflict-count: no 'N of the M open PRs' claim in $DOC to compare against the table"
+else
+  while IFS= read -r claim; do
+    [ -n "$claim" ] || continue
+    n=$(word "$(printf '%s' "$claim" | grep -oE '^[A-Za-z0-9]+' | tr '[:upper:]' '[:lower:]')")
+    total=$(word "$(printf '%s' "$claim" | grep -oE 'of the [A-Za-z0-9]+' | grep -oE '[A-Za-z0-9]+$' | tr '[:upper:]' '[:lower:]')")
+    if [ "$total" != "$open_n" ]; then
+      die "f4-conflict-count: '$claim' counts $total open PR(s), the table has $open_n"
+    elif [ "$n" = "$conflict_n" ]; then
+      pass "f4-conflict-count: '$claim' matches $conflict_n conflicting head(s) and $open_n open row(s)"
+    else
+      die "f4-conflict-count: '$claim', but the table has $conflict_n conflicting head(s)"
+    fi
+  done <<< "$claims"
+fi
 
 # 2c. The systemic paragraph names the same heads the F4 block does, in its own
 #     "blocked by F4" clause. A name set edited in one place and not the other
