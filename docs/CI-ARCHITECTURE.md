@@ -35,6 +35,7 @@ a reader.
 | `Review Gate` | `workflow_run` of `PR Agent` | `Review Gate` | yes | median 10s, p90 13s, max 19s (n=21) |
 | `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 452s, p90 849s, max 2376s (n=20) |
 | `Scheduled audit` | weekly cron, `dispatch` | `Drift checks (pinned + stable)`, `One issue, not one per run` | no | n/a |
+| `OCR Shadow` | manual `dispatch` only, input `pr` | `OCR shadow review` | no — advisory, never required | n/a (dispatched by hand; nothing measured) |
 
 The wall clock column is printed by `gh run list --workflow <name> --limit N
 --json createdAt,updatedAt`, subtracting `createdAt` from `updatedAt`, successes

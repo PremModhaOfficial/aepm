@@ -1,0 +1,188 @@
+name: OCR Shadow
+
+# A shadow reviewer: Alibaba open-code-review, run by hand for ONE pull request
+# at a time, beside pr-agent. It is measurement, not gating. The only way it
+# starts is an operator dispatch, so it never sits on a pull request of its own
+# accord, and it posts no comment: the artefacts are the output.
+#
+# Why a second reviewer exists: pr-agent emits no typed block on a zero-finding
+# review, so a clean pull request can never satisfy Review Gate (#141/#142), and
+# its recall is unmeasured. open-code-review always emits a `comments` array,
+# empty or not.
+#
+# The previous attempt hid its own failure: a 3-second, 576-token,
+# zero-tool-call run reported "0 findings" over a review that never happened.
+# So every dispatch prints the exit code, the artefact's `status`, its comment
+# count, its `total_tokens` and the last 20 lines of stderr, and fails red when
+# there was no review. Red here gates nothing; it only refuses to look green.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+        type: string
+
+# One dispatch per pull request; a second replaces nothing and runs after.
+concurrency:
+  group: ocr-shadow-${{ inputs.pr }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  OCR_VERSION: v1.13.13
+  # Integrity pin: the binary is fetched over the network on every run.
+  OCR_SHA256: e3eb634c8205a120c16e9943de00aef895e2cd86d6b13c38e25427c924275ec8
+  # The same subscription and model the existing CI reviewer uses; the endpoint
+  # is OpenAI-compatible (see .pr_agent.toml and pr-agent.yml).
+  OCR_LLM_URL: https://api.commandcode.ai/provider/v1
+  OCR_LLM_MODEL: deepseek/deepseek-v4.1-flash
+  OCR_ENABLE_TELEMETRY: "0"
+
+jobs:
+  review:
+    name: OCR shadow review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the pull request head and base
+        id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The dispatch value reaches the shell as environment, never
+          # interpolated into the script body: a value containing $(...) or a
+          # backtick would otherwise be evaluated on a runner holding the key.
+          DISPATCH_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          num="$DISPATCH_PR"
+          # A fork head runs untrusted code on this runner; the model key must
+          # not be in the environment when it does.
+          if [ "$(gh pr view "$num" --json isCrossRepository --jq .isCrossRepository)" = "true" ]; then
+            echo "::error::PR #$num comes from a fork; refusing to run with the model key"
+            exit 1
+          fi
+          gh pr view "$num" --json number,baseRefName,headRefOid \
+            --jq '"pr=\(.number) base=\(.baseRefName) head=\(.headRefOid)"'
+          gh pr checkout "$num"
+          base="$(gh pr view "$num" --json baseRefName --jq .baseRefName)"
+          git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+          printf 'num=%s\nbase=origin/%s\n' "$num" "$base" >> "$GITHUB_OUTPUT"
+
+      - name: Show what will be reviewed
+        # Free, and the first thing to read when a run finishes in seconds with
+        # no tool calls: an empty range is why the model had nothing to look at.
+        env:
+          BASE: ${{ steps.r.outputs.base }}
+        run: |
+          set -euo pipefail
+          git diff --stat "${BASE}...HEAD"
+
+      - name: Install open-code-review
+        run: |
+          set -euo pipefail
+          url="https://github.com/alibaba/open-code-review/releases/download/${OCR_VERSION}/opencodereview-linux-amd64"
+          curl -fsSL --retry 3 -o /usr/local/bin/ocr "$url"
+          echo "${OCR_SHA256}  /usr/local/bin/ocr" | sha256sum -c -
+          chmod +x /usr/local/bin/ocr
+          ocr --version
+
+      - name: Configure the LLM endpoint
+        # The protocol must be named. With only OCR_LLM_* env vars set, the CLI
+        # speaks the Anthropic protocol and POSTs <base>/v1/messages, which this
+        # endpoint answers with 404. Protocol "openai" POSTs /chat/completions,
+        # which it answers 401 for a bad key — i.e. the correct route.
+        env:
+          OCR_LLM_TOKEN: ${{ secrets.COMMAND_CODE_API_KEY }}
+        run: |
+          set -euo pipefail
+          timeout 60 ocr config set provider cc-gateway
+          timeout 60 ocr config set custom_providers.cc-gateway.url "${OCR_LLM_URL}"
+          timeout 60 ocr config set custom_providers.cc-gateway.protocol openai
+          timeout 60 ocr config set custom_providers.cc-gateway.api_key "${OCR_LLM_TOKEN}" >/dev/null
+          timeout 60 ocr config set model "${OCR_LLM_MODEL}"
+
+      - name: Check LLM connectivity
+        # Spend a tiny call to prove the endpoint before spending a review: a
+        # bad credential otherwise surfaces as a completed review that found
+        # nothing.
+        run: |
+          set +e
+          out=$(timeout 90 ocr llm test 2>&1); rc=$?
+          set -e
+          printf '%s\n' "$out" | tail -n 20
+          if [ "$rc" != 0 ]; then
+            echo "::error::ocr llm test failed (exit $rc): the review would have run blind"
+            exit 1
+          fi
+
+      - name: Review
+        id: ocr
+        env:
+          BASE: ${{ steps.r.outputs.base }}
+        run: |
+          set +e
+          # No token ceiling (--max-tokens-budget 0): a ceiling is exactly what
+          # truncated the previous attempt. --timeout is OCR's own task budget in
+          # minutes, kept under the job's timeout-minutes so the guard reports
+          # rather than the job being killed.
+          timeout 780 ocr review --from "$BASE" --to HEAD \
+            --format json --output ocr.json --audience agent \
+            --effort high --concurrency 4 --max-tokens-budget 0 \
+            --timeout 12 2>ocr-stderr.log
+          rc=$?
+          set -e
+
+          status=missing; comments=missing; tokens=missing
+          if [ -s ocr.json ]; then
+            status=$(jq -r '.status // "missing"' ocr.json 2>/dev/null) || status=unparsed
+            comments=$(jq -r '(.comments // []) | length' ocr.json 2>/dev/null) || comments=unparsed
+            tokens=$(jq -r '.total_tokens // .usage.total_tokens // "missing"' ocr.json 2>/dev/null) || tokens=unparsed
+            echo "top-level keys: $(jq -r 'keys | join(",")' ocr.json 2>/dev/null || echo unparsed)"
+          else
+            echo "no ocr.json was written"
+          fi
+
+          echo "OCR exit code: $rc"
+          echo "status: $status"
+          echo "comments: $comments"
+          echo "total_tokens: $tokens"
+          echo "--- last 20 lines of OCR stderr ---"
+          tail -n 20 ocr-stderr.log 2>/dev/null || echo "(no stderr captured)"
+
+          {
+            echo "### OCR Shadow (advisory)"
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| OCR exit code | \`$rc\` |"
+            echo "| status | \`$status\` |"
+            echo "| comments | \`$comments\` |"
+            echo "| total_tokens | \`$tokens\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Red when no review happened. This job is not a required check and
+          # cannot gate a merge; the colour exists so a silent failure is not
+          # read as a clean review.
+          if [ "$rc" != 0 ] || [ "$status" != "complete" ]; then
+            echo "::error::no review happened (exit $rc, status $status, comments $comments)"
+            exit 1
+          fi
+
+      - name: Upload the review artefacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ocr-shadow-pr-${{ inputs.pr }}
+          path: |
+            ocr.json
+            ocr-stderr.log
+          if-no-files-found: warn
