@@ -215,14 +215,27 @@ docs_ok=0
 for doc in AGENTS.md .github/PR-AGENT.md; do
   doc_cases=$((doc_cases + 1))
   missing=""
+  found=0
   while IFS= read -r cmd; do
-    case "$cmd" in *--jq*) ;; *) continue ;; esac
-    for key in '.required_status_checks.strict' '.enforce_admins.enabled' '.allow_force_pushes.enabled' '.allow_deletions.enabled'; do
-      case "$cmd" in *"$key"*) ;; *) missing="$key" ;; esac
-    done
-  done < <(grep -F 'branches/main/protection' "$repo_root/$doc" || true)
+    if [[ "$cmd" == *--jq* ]]; then
+      # A narrowed proof must name every setting stated beside it.
+      line_missing=""
+      for key in '.required_status_checks.strict' '.enforce_admins.enabled' '.allow_force_pushes.enabled' '.allow_deletions.enabled'; do
+        case "$cmd" in *"$key"*) ;; *) line_missing="$key" ;; esac
+      done
+      if [[ -z "$line_missing" ]]; then found=1; else missing="$line_missing"; fi
+    else
+      # A bare call prints the whole protection object, so it proves all four.
+      found=1
+    fi
+  done < <(grep -F 'branches/main/protection' "$repo_root/$doc" 2>/dev/null || true)
+  # A proof that was deleted, or a doc that cannot be read, is a failure: a
+  # claim with no evidence must not pass this check.
   if [[ -n "$missing" ]]; then
     echo "FAIL docs: $doc proves the required checks without $missing, so the setting stated beside it is unsourced"
+    failures=$((failures + 1))
+  elif [[ "$found" -eq 0 ]]; then
+    echo "FAIL docs: $doc states the protection with no proof line, so the claim is unsourced"
     failures=$((failures + 1))
   else
     docs_ok=$((docs_ok + 1))
