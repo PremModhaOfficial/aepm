@@ -25,12 +25,16 @@ reasoning_effort = "max"
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s, far shorter than a measured max-reasoning review (498-509s).
 # Worst case is bounded: a timeout goes to the fallback entry (same model) once,
-# so 2 x ai_timeout must stay well under the workflow's 30-minute job timeout.
-# At 900 it did not: 2 x 900s = 1800s = the whole budget, so the job was killed
-# before it could post a verdict (measured: job 1835s, two litellm timeout=900.0
-# attempts, "Tool reported success but recorded a failure; failing the action").
-# 600 leaves 600s for the action to finish and write its comment.
-ai_timeout = 600
+# so 2 x ai_timeout must stay under the workflow's job timeout with room left to
+# post. At 2 x 900s = 1800s against a 30-minute (1800s) job budget the headroom
+# was zero, so a hung provider was killed by the job before it could write its
+# comment (measured: job 1835s, two litellm timeout=900.0 attempts, "Tool
+# reported success but recorded a failure; failing the action").
+# The first attempt at this fix cut ai_timeout to 600, which traded that death
+# for a new one: reviews whose call takes 600-900s used to succeed and would
+# have started failing. The budget is the thing that is wrong, not the timeout:
+# the job is 40 minutes, leaving 600s after the worst case.
+ai_timeout = 900
 retry_same_model_on_timeout = false
 
 # Read the rules from the default branch, never from the PR branch, so a PR
