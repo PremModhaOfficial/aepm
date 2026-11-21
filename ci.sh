@@ -25,6 +25,12 @@ echo "=== sim scenario map (every src path names its scenarios) ==="
 # sim/scenario-map.tsv names the scenarios for every path under src/, and
 # .github/workflows/sim.yml runs exactly the mapped set for a pull request.
 bash scripts/gate-scenarios.sh --check-map
+# The map decides what a PR runs; the base it diffs against decides whether that
+# is the PR's own change. CI checks out the merge commit, so a three-dot diff
+# from the frozen base.sha also picks up every commit main gained meanwhile
+# (measured on #143: 27 of 56 scenarios for three markdown files). The head is
+# pinned in sim.yml and this proves the pin is what keeps the selection honest.
+bash scripts/check-gate-scenarios.sh
 
 echo "=== state machines (docs match code) ==="
 # An implicit machine drifts in silence: a variant is added, a precedence branch
@@ -44,6 +50,13 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # The workflow's own reporting block, extracted from review-gate.yml and run
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
+
+echo "=== pr-agent state block (appended to the review the container posts) ==="
+# #140: the pinned image posts a clean review with no typed block, so the gate
+# read present=false on a review that ran. The block is extracted from
+# pr-agent.yml and run against a fake gh, and its output is fed back through the
+# real gate: the step is proven by the gate reading it, not by a shape.
+bash scripts/check-pr-agent-state-block.sh
 
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings

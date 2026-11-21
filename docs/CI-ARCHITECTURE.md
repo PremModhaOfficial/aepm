@@ -55,7 +55,7 @@ priority order of everything below.
 | Job total, docs-only PR (0 scenarios) | ~10s |
 | **Outlier, run 44464311286** (`main` push, 56 scenarios) | build **539s**, scenarios **597s**, job **1157s**, wall clock **1162s** — 3.5× the same shape on another runner |
 
-The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail ranked change #1 is sized against.
+The 1162s outlier is outside the 20-run sample in the workflow table: it was the 20th run when that sample was taken and two new runs pushed it out of the re-measurement twenty minutes later, which is why one range ends at 646s and this row exists. It is the tail ranked change #2 is sized against.
 
 7 of the last 20 Sim runs selected **zero** scenarios and finished in ~10s; they
 are docs-only PRs. The other 13 each paid a full image build.
@@ -222,8 +222,10 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 | G2 | CI speed is inside Sim's shadow | CI 60s vs Sim 183s median | Any CI job tuning moves 0 seconds of PR latency |
 | G3 | Four jobs inside `CI` each compile the same tree and run the same suite (`MSRV`, `CI (Linux)`, `Stable`, `Coverage`) | four compiles, four test runs per PR | Free (G3 costs no money and no wall clock) but multiplies the flake surface 4×, and one defect reddens three or four checks |
 | G4 | A red `Sim` says one line | `sim: FAIL: sim/scenarios/NN-*.sh exited 1 (log: …)` | Diagnosis requires downloading the artifact; the failing assertion is inside it, not on the run page |
-| G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence |
+| G5 | The artifact does not record which scenarios were selected | list goes to `mktemp`, outside `SIM_LOG_DIR` | "what did this run actually prove" cannot be answered from the evidence — **closed by change #1**, which writes `sim-logs/selected-scenarios.txt` |
 | G6 | The load-bearing check names are not written down | `CI (Linux)`, `Arch simulation` | Splitting or renaming either silently un-gates `main` |
+| G7 | Selection diffs the frozen `base.sha` against the merge commit the runner checked out | PR #143: three markdown files selected 27 of 56 scenarios, job 218s instead of 6s | A PR pays for the runtime changes it does not contain, and the harness proves less than it claims |
+| G8 | A head that conflicts with its base starts no workflow at all | PR #144: created conflicting → `gh api .../actions/runs?head_sha=…` returned `total_count: 0`; after the head was rebased onto `main` the same PR started `CI`, `Sim` and `Review` | "No checks reported" on a conflicted PR is not a broken workflow, and nothing distinguishes it from a workflow bug on the PR page |
 
 ## 4. Ranked changes
 
@@ -231,14 +233,15 @@ Ordered by measured wall clock first, then robustness. "Expected" is a
 prediction from the decomposition above, not a measurement; the slice that
 lands it carries the real before/after.
 
-| # | Change | Before | Expected after | Win | Risk |
+| # | Change | Before | After | Win | Risk / status |
 |---|---|---|---|---|---|
-| 1 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | 118s build every run | ~45s on a PR (two `pacman -Syu` layers hit, the 34s compile and the 3.5 GB export remain) | ~70s of every PR, and it bounds the 539s tail | Docker calls `gha` experimental; ~1 GB more of the 10 GB cache; a cache miss falls back to today's build, so it can never make the gate fail |
-| 2 | Failure summary: failed scenario names and their last failing lines into `$GITHUB_STEP_SUMMARY`; drop the selected list into `sim-logs/` | one line, artifact download to diagnose | the reason on the run page | 0s wall clock; removes the artifact round trip from every diagnosis | none — the log stays the evidence |
-| 3 | Pre-compile the dependency graph in the Dockerfile (manifests + dummy `main`, `cargo build`, then `COPY src`) so the registry and dependencies are a cached layer | 33.6s compile, all of it invalidated by a `src/` edit | ~20s for a src-only change | ~15s on top of #1 | a dummy-`main` layer is a known trick, but it must be proven not to ship a stale binary (sim/README already documents that failure mode for the local classic builder) |
-| 4 | Shard the **full suite** run (`main` push) 2 ways with two job names, not the required one | 203s of scenarios | ~105s | ~100s on `main` only, no PR benefit | needs a second image build per shard unless #1 lands first; touches the required check name unless done as a matrix under one aggregator |
-| 5 | `cargo nextest` | — | — | **reject**: the entire Rust suite is 21.9s inside `ci.sh`; a tool install costs more than the split saves | — |
-| 6 | Path filters on `CI`/`Sim` | — | — | **reject**: a filtered workflow leaves a required check Pending forever (sourced above) | — |
+| 1 | Head-pinned scenario selection: `gate-scenarios.sh --list <base> <head>`, `sim.yml` passes the PR head, the selected list is written into `sim-logs/` | PR #143: 27 of 56 scenarios, job 218s, for three markdown files | 0 scenarios, job 6s (same branch, rebased, after the fix) | up to 212s on any PR that follows a `main` merge; the artifact now records what ran | **landed**, `scripts/check-gate-scenarios.sh` pins both halves |
+| 2 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | 118s build every run, 0 of 20 runs reused a layer | ~45s on a PR (two `pacman -Syu` layers hit, the 34s compile and the 3.5 GB export remain) | ~70s of every PR, and it bounds the 1162s tail | Docker calls `gha` experimental; ~1 GB more of the 10 GB cache; a cache miss falls back to today's build, so it can never make the gate fail |
+| 3 | Failure summary: failed scenario names and their last failing lines into `$GITHUB_STEP_SUMMARY` | one line, artifact download to diagnose | the reason on the run page | 0s wall clock; removes the artifact round trip from every diagnosis | none — the log stays the evidence |
+| 4 | Pre-compile the dependency graph in the Dockerfile (manifests + dummy `main`, `cargo build`, then `COPY src`) so the registry and dependencies are a cached layer | 33.6s compile, all of it invalidated by a `src/` edit | ~20s for a src-only change | ~15s on top of #2 | a dummy-`main` layer is a known trick, but it must be proven not to ship a stale binary (sim/README already documents that failure mode for the local classic builder) |
+| 5 | Shard the **full suite** run (`main` push) 2 ways with two job names, not the required one | 203s of scenarios | ~105s | ~100s on `main` only, no PR benefit | needs a second image build per shard unless #2 lands first; touches the required check name unless done as a matrix under one aggregator |
+| 6 | `cargo nextest` | — | — | **reject**: the entire Rust suite is 21.9s inside `ci.sh`; a tool install costs more than the split saves | — |
+| 7 | Path filters on `CI`/`Sim` | — | — | **reject**: a filtered workflow leaves a required check Pending forever (sourced above) | — |
 
 ## 5. Rejected for cost
 

@@ -157,7 +157,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread.
+  thread. The typed block is appended by the workflow after the container posts,
+  because the pinned image omits it on a clean review (#140); a body that already
+  carries one is never rewritten, and a body with no merge recommendation gets
+  none rather than an invented verdict.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
@@ -235,7 +238,8 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 | `.github/PR-AGENT.md` | Review decisions and measurements |
 | `scripts/review-state.sh` | Agent-facing review state, and `--gate` |
 | `sim/scenario-map.tsv` | `src/` path → the sim scenarios that exercise it |
-| `scripts/gate-scenarios.sh` | The map check and the changed-scenario list |
+| `scripts/gate-scenarios.sh` | The map check and the changed-scenario list (head-pinned) |
+| `scripts/check-gate-scenarios.sh` | Pins that selection follows the PR's own head, not the base branch's drift |
 | `scripts/gate-coverage.sh` / `coverage-floor.txt` | Line-coverage gate and the measured floor |
 | `scripts/gate-scheduled-audit.sh` | The weekly deny, audit and `--locked` checks |
 

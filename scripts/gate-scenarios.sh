@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Which sim scenarios must run for a change.
 #
-#   scripts/gate-scenarios.sh --check-map      every src/ path has a row
-#   scripts/gate-scenarios.sh --list <base>    scenarios for <base>...HEAD
+#   scripts/gate-scenarios.sh --check-map            every src/ path has a row
+#   scripts/gate-scenarios.sh --list <base> [<head>] scenarios for <base>...<head>
+#
+# <head> defaults to HEAD, which is right on a developer's branch. CI passes the
+# pull request's own head commit, because the runner checks out the synthetic
+# merge commit instead: its first parent is whatever `main` was when the merge
+# ref was last rebuilt, so diffing the frozen `base.sha` against it also picks up
+# every commit `main` gained in the meantime (measured on PR #143: three markdown
+# files selected 27 of 56 scenarios, and the job took 218s instead of 6s).
 #
 # The map is sim/scenario-map.tsv. Both modes exit 1 when a path under src/ has
 # no row there: a src file nothing exercises is the drift this gate exists for,
@@ -89,15 +96,23 @@ check_map() {
 }
 
 list() {
-    local base=${1:-}
-    [[ -n $base ]] || die "usage: $0 --list <base-ref>"
+    local base=${1:-} head=${2:-HEAD}
+    [[ -n $base ]] || die "usage: $0 --list <base-ref> [<head-ref>]"
     git rev-parse --verify --quiet "$base^{commit}" >/dev/null \
         || die "unknown base ref: $base"
+    git rev-parse --verify --quiet "$head^{commit}" >/dev/null \
+        || die "unknown head ref: $head"
 
     local -a changed=() unmapped=() scenarios=()
-    local file list scenario
+    local file list scenario diff_out
     local -A picked=()
-    mapfile -t changed < <(git diff --name-only "$base"...HEAD)
+    # Process substitution hides the exit status: a three-dot diff with no merge
+    # base (or a ref the clone did not fetch) yields an empty list, which selects
+    # zero scenarios, exits 0, and reports the build green having run nothing.
+    if ! diff_out="$(git diff --name-only "$base"..."$head")"; then
+        die "cannot diff $base...$head (no merge base, or an unfetched ref)"
+    fi
+    [[ -z $diff_out ]] || mapfile -t changed <<<"$diff_out"
 
     for file in "${changed[@]}"; do
         # Scenarios this branch edits always run, whatever the map says.
@@ -105,10 +120,18 @@ list() {
             picked["$file"]=1
             continue
         fi
-        [[ $file == src/* ]] || continue
-        # A deleted file has no scenario left to run; --check-map catches the
-        # row it leaves behind.
-        [[ -e $file ]] || continue
+        # `sim/` is in the map too: the image, the stubs and the shared
+        # assertions are what a scenario runs inside, so a change to them is a
+        # change to every claim the suite makes. Dropping non-src paths here made
+        # that row inert — a sim/Dockerfile change selected nothing at all. The
+        # owned files carry `none` rows, so they still select nothing.
+        [[ $file == src/* || $file == sim/* ]] || continue
+        # A deleted src/ file has no scenario left to run, and --check-map
+        # catches the row it leaves behind. Only src/ gets this skip: the sim/
+        # row is a directory prefix that outlives the file, so a deleted
+        # harness path (the image, run.sh, a stub) still owes the whole suite.
+        # Skipping it there selected nothing and merged unproven.
+        [[ $file == sim/* || -e $file ]] || continue
         list=$(lookup "$file")
         if [[ -z $list ]]; then
             unmapped+=("$file")
@@ -136,6 +159,6 @@ list() {
 
 case ${1:-} in
 --check-map) check_map ;;
---list) shift; list "${1:-}" ;;
-*) die "usage: $0 --check-map | --list <base-ref>" ;;
+--list) shift; list "${1:-}" "${2:-}" ;;
+*) die "usage: $0 --check-map | --list <base-ref> [<head-ref>]" ;;
 esac
