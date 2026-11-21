@@ -32,6 +32,20 @@ fn tui_help_lists_the_safe_flags() {
 }
 
 #[test]
+fn init_dry_run_says_aurto_is_not_run() {
+    // `init` writes the sudoers rule and the user units. aurto's repo and its
+    // `Include` line are `aurto init`'s, so the glossary must not claim them.
+    let output = binary().arg("init").output().expect("run init");
+
+    assert!(output.status.success(), "init dry run failed");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("aurto is not run by this tool"),
+        "init must say aurto is not run by this tool:\n{text}"
+    );
+}
+
+#[test]
 fn check_and_doctor_offer_json() {
     for command in ["check", "doctor"] {
         let output = binary()
