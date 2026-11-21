@@ -32,6 +32,15 @@ set -euo pipefail
 # attempts two seconds apart covers the normal case; the exit stays loud.
 RETRIES=${PR_CONFLICTS_RETRIES:-3}
 RETRY_SLEEP=${PR_CONFLICTS_RETRY_SLEEP:-2}
+# An unvalidated bound is not a bound: `[ "$attempt" -ge x ]` errors on a
+# non-numeric value, and 0 retries would drop a null row as if it were clean.
+for pair in "PR_CONFLICTS_RETRIES:1:$RETRIES" "PR_CONFLICTS_RETRY_SLEEP:0:$RETRY_SLEEP"; do
+  name=${pair%%:*}; rest=${pair#*:}; min=${rest%%:*}; val=${rest#*:}
+  case "$val" in
+    ''|*[!0-9]*) echo "$name must be a non-negative integer, got '$val'" >&2; exit 2 ;;
+  esac
+  [ "$val" -ge "$min" ] || { echo "$name must be >= $min, got '$val'" >&2; exit 2; }
+done
 
 # `gh api --paginate` prints one array per page, so the pages are slurped and
 # concatenated here rather than in the caller: a caller that forgot to flatten
@@ -112,6 +121,24 @@ GH
   t "no open PRs passes" '[]' 0
   t "an empty read is not a pass" '' 2
   t "unreadable input is exit 2, not a pass" 'not json' 2
+  t "an empty head ref is '?', so a conflict on it is not read as clean" \
+    '[{"number":160,"mergeable":false,"head":{"ref":""}}]' 1
+  # A bound taken from the environment is validated, not trusted: `-ge` on a
+  # non-numeric value errors out, and 0 retries would drop a null row as clean.
+  for bad in "PR_CONFLICTS_RETRIES=abc" "PR_CONFLICTS_RETRIES=0" \
+             "PR_CONFLICTS_RETRY_SLEEP=x"; do
+    got=0
+    # A clean PR list, so exit 2 can only come from the bound, not from an
+    # unreadable input that also exits 2.
+    printf '%s' '[{"number":1,"mergeable":true,"head":{"ref":"a"}}]' \
+      | env "$bad" PATH="$root/bin:$PATH" GITHUB_REPOSITORY=o/r \
+        bash "${BASH_SOURCE[0]}" >"$root/out" 2>&1 || got=$?
+    if [ "$got" = 2 ]; then ok=$((ok + 1)); printf 'ok   %s rejected\n' "$bad"
+    else
+      fail=$((fail + 1))
+      printf 'FAIL %s: exit %s, want 2\n%s\n' "$bad" "$got" "$(cat "$root/out")" >&2
+    fi
+  done
   printf '\ncheck-pr-conflicts self-test: %d hold, %d failed\n' "$ok" "$fail"
   [ "$fail" -eq 0 ]
 }
@@ -145,7 +172,7 @@ while IFS=$'\t' read -r num ref mergeable; do
       ;;
   esac
 done <<<"$(printf '%s' "$prs" \
-  | jq -r '.[] | [(.number | tostring), (.head.ref // "?"), (.mergeable | tostring)] | @tsv')"
+  | jq -r '.[] | [(.number | tostring), (.head.ref | if . == null or . == "" then "?" else . end), (.mergeable | tostring)] | @tsv')"
 
 if [ "${#conflicts[@]}" -gt 0 ]; then
   printf 'conflicted open PRs (no workflow can start, so required checks never appear):\n' >&2
