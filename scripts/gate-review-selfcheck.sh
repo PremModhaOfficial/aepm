@@ -369,6 +369,19 @@ if grep -qE '^echo "review-gate self-check: [0-9]' "${BASH_SOURCE[0]}"; then
   failures=$((failures + 1))
 fi
 
+# The evidence table states this suite's count, and a count the run refutes is a
+# claim, not evidence: the row said 12/12 for a suite that printed 9/9. Read the
+# row for this script and compare it with the total counted above, so adding a
+# case fails here until the table says what the suite prints (finding
+# 91f0289550e3).
+cases=$((cases + 1))
+doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+if [[ "$doc_row" != "$cases/$cases" ]]; then
+  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite has $cases case(s)"
+  failures=$((failures + 1))
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures of $cases case(s) failed"; exit 1; }
 echo "review-gate self-check: $cases/$cases"
 echo "review-gate docs name their proof: $docs_ok/$doc_cases"

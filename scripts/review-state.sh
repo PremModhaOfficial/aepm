@@ -21,8 +21,8 @@ usage:
 flags:
   --findings  list findings as a TOON table
   --full      include the complete review comment (collapsed to one line)
-  --gate      exit 1 when the review is missing, older than the head, or does
-              not clear the merge
+  --gate      exit 1 when the review is missing, older than the head, does not
+              record a completed run, or does not clear the merge
   --reviewed  exit 0 when a complete review covers the head, whatever its
               verdict: the "is another review worth a model call" question
   --sha <hex> judge this 40-hex commit instead of the PR's current head
@@ -151,29 +151,87 @@ fi
 
 # The marker text is forgeable: any commenter can paste a typed block carrying
 # the current head SHA, and `last` would then pick the forgery over the bot's
-# review. Author first, marker second. The marker is the typed block alone:
-# `Risk level`, `Merge recommendation` and the guide header are all emitted by
-# other bot commands too, and the newest of those shadowed the review.
+# review. Author first, marker second. Two review-only markers select the
+# comment: the typed block, and the guide header's `<!-- pr-agent:review:full`.
+# The guide marker carries the review kind, and an incremental review writes
+# `:incremental` instead (finding 6488fe1fce59): matching only `:full` read a
+# clean incremental review as no review at all, so both kinds are a review.
+# The block is not always emitted (a clean review carries none: #112 and #134
+# had zero findings and no block, while #99, #133 and #136 had findings and one),
+# and the guide does not always name its commit (#134), so the head also comes
+# from the persistent review line, read in the selected review and nowhere else
+# (finding bed8f31fda88): an older review's line named a head this one never
+# judged, so the gate called that stale where the failure was that no run of this
+# review recorded anything at all.
 REVIEW_BOT_LOGIN="${REVIEW_BOT_LOGIN:-github-actions[bot],github-actions}"
 [[ "$REVIEW_BOT_LOGIN" =~ ^[A-Za-z0-9-]+(\[bot\])?(,[A-Za-z0-9-]+(\[bot\])?)*$ ]] \
   || err "REVIEW_BOT_LOGIN is not a login list: $REVIEW_BOT_LOGIN" "pass comma-separated GitHub logins, e.g. github-actions[bot]" 2
-if ! review="$(gh pr view "$pr" --json comments \
-  --jq "[.comments[]
-    | select((.author.login // \"\") as \$a | (\"$REVIEW_BOT_LOGIN\" | split(\",\") | any(. == \$a)))
-    | select(.body | contains(\"pr-agent-review-state:v1\"))]
-    | last // {}" \
-  2>"$GERR")"; then
+# Every marker below is read on the body with code blocks removed: a review that
+# quotes the block, or the guide marker, in an example is writing about one, not
+# carrying one (finding f7d291ec6f97). `defenced` drops a ``` or ~~~ fence — with
+# or without an info string, which is why the test is the marker and not the whole
+# line — a fence opener with text before it (`text ``` html`), an indented code
+# block, and a `<pre>`/`<code>` example: the three shapes a review quotes a block
+# in (findings e6024f4c203c, e6d2f0bb258c, where a quoted `complete: true` cleared
+# the gate). It is defined once, here: the state block is extracted from `body_q`,
+# which is this same filter applied, so the two cannot drift. Two of the rules can
+# only err towards dropping a real block — a review whose prose ends in a
+# triple-backtick code span opens a fence that a later bare fence closes — and a
+# dropped block is `unrecorded`, which fails; no rule that cannot parse Markdown
+# avoids one of the two errors, and this is the one that cannot pass on a quote.
+# `is_review` is the review identity, and it is what a comment must be before it
+# can name a head (finding 33acdf68e0d2).
+JQ_SELECT='
+def defenced: reduce (split("\n")[]) as $l ({f: false, h: false, keep: []};
+    if ($l | test("^[[:space:]]*(```|~~~).*$")) then .f |= not
+    elif ($l | test("^[^`~]*(```|~~~)[A-Za-z0-9_+.#-]*$")) then .f |= not
+    elif ($l | test("^[[:space:]]*<(pre|code)( |>|$)")) then
+      (if ($l | test("</(pre|code)>")) then . else .h = true end)
+    elif ($l | test("^[[:space:]]*</(pre|code)>")) then .h = false
+    elif (.f or .h or ($l | test("^( {4}|\t)"))) then .
+    else .keep += [$l] end) | .keep | join("\n");
+def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:(full|incremental)");
+[.comments[]
+  | select((.author.login // "") as $a | ("$LOGINS" | split(",") | any(. == $a)))] as $c
+| ([$c[] | select(.body | defenced | is_review)] | last // {}) as $r
+| {review: $r,
+   body_q: (($r.body // "") | defenced),
+   head_from: ((($r.body // "") | defenced
+                | (capture("Review updated until commit [^\n]*?commit/(?<s>[0-9a-f]{7,40})")? | .s)) // ""),
+   blocks: ([$c[] | select(.body | defenced | test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1"))] | length)}'
+if ! found="$(gh pr view "$pr" --json comments \
+  --jq "${JQ_SELECT//\$LOGINS/$REVIEW_BOT_LOGIN}" 2>"$GERR")"; then
   err "gh pr view comments failed: $(head -1 "$GERR")" "run \`gh auth status\`"
 fi
+[[ -n "$found" ]] || found='{"review":{},"head_from":""}'
+review="$(jq -c '.review' <<<"$found")"
+fallback_head="$(jq -r '.head_from // ""' <<<"$found")"
+# Whether this PR has ever carried a findings block: a block keeps its resolved
+# findings, so a PR with any finding history always has one. Absence is only
+# explainable as "no findings yet" when nothing ever recorded one: `prior_blocks`
+# counts the block-bearing comments that exist now, and that is the limit: the
+# review is one comment a run rewrites in place, so a run that
+# wrote it without the block erased the only evidence one had existed, and this
+# reads 0 where 1 is meant. The gate still fails — no block is `unrecorded` and a
+# surviving block elsewhere is `missing` — so what the count decides is which
+# repair a reader is told about, not whether the PR passes (finding aab48f179d5e,
+# D37).
+prior_blocks="$(jq -r '.blocks // 0' <<<"$found")"
 [[ -n "$review" ]] || review='{}'
 
 review_body="$(jq -r '.body // ""' <<<"$review" 2>/dev/null || echo "")"
 review_url="$(jq -r '.url // ""' <<<"$review" 2>/dev/null || echo "")"
+review_body_q="$(jq -r '.body_q // ""' <<<"$found" 2>/dev/null || echo "")"
 
 # Typed state block pr-agent embeds in the review comment (multi-line HTML comment).
-# The start rule must fire once: the marker is also quoted inside finding bodies,
-# and a start rule that re-triggers on those lines swallows the JSON line.
-state_json="$(printf '%s\n' "$review_body" | awk '!f && /pr-agent-review-state:v1/{f=1;next} f&&/^-->/{exit} f')"
+# The body is already defenced above, so the only rules left are the ones a run's
+# own block follows: the marker at column 0, which is where a run writes it, and a
+# `-->` at column 0 to close. Everything a review quotes in an example is gone
+# before this runs (findings f7d291ec6f97, e6024f4c203c, e6d2f0bb258c).
+state_json="$(printf '%s\n' "$review_body_q" | awk '
+  /^<!-- pr-agent-review-state:v1/ { f = 1; next }
+  f && /^-->/ { exit }
+  f')"
 if [[ -n "$state_json" ]] && jq -e . >/dev/null 2>&1 <<<"$state_json"; then
   complete="$(jq -r '.last_run.complete // false' <<<"$state_json")"
   excluded="$(jq -r '(.last_run.excluded_files // []) | length' <<<"$state_json")"
@@ -200,8 +258,54 @@ else
   fi
 fi
 
+# The block travels with findings, resolved ones included, so a review of a PR
+# that ever had a finding always carries one (#99: 32, #133: 4 with 0 active,
+# #136: 1, #143: 2 with 0 active). Only a PR the bot has never found anything in
+# has no block at all (#112, #134, #144). So absence means "nothing to record"
+# only while no block survives on this PR: once one has, its absence is a fault
+# to fail on, not a clean review.
+#
+# The count decides which failure a reader is told about, not whether the PR
+# passes: with nothing recorded here the absence reads as `unrecorded`, with a
+# block elsewhere it reads as `missing`. The limit on that reading is stated where
+# the count is taken, and in D37 of `.github/PR-AGENT.md`, because the reviewer
+# never reads this file (`.pr_agent.toml` `repo_context_files` is AGENTS.md,
+# NEXT.md, context.md and PR-AGENT.md).
+if [[ -z "$state_json" && -n "$review_body" ]]; then
+  # The guide header is the evidence: it names the head the run checked out. With
+  # no block this head is reported and never clears the gate; it decides which
+  # failure a reader is told about, a stale review or an unrecorded one.
+  # The span between the phrase and the link is the URL and nothing else: no
+  # whitespace and no `)`, so the only `commit/` it can reach is the header's own.
+  # An earlier version allowed anything but `)`, so a header with no closing paren
+  # let that span run to the end of the line and take the last link on it, which is
+  # an older fix the header quotes, not the head. The closing paren stays optional,
+  # so a truncated header still matches; a short sha is not accepted, because the
+  # template writes all 40 hex.
+  review_head="$(sed -n 's/.*Review updated until commit[[:space:]]\{1,\}https:\/\/[^ )]*commit\/\([0-9a-f]\{40\}\).*/\1/p' <<<"$review_body" | head -1)"
+  # Then the persistent review line, which is the head a run recorded. A bare
+  # `commit/<sha>` in the body is only the last resort: a review that discusses an
+  # earlier fix quotes one, so it must never outrank a recorded head (finding
+  # 3de53d74d7e9).
+  [[ -n "$review_head" ]] || review_head="$fallback_head"
+  [[ -n "$review_head" ]] || review_head="$(grep -oE 'commit/[0-9a-f]{7,40}' <<<"$review_body" | tail -1 | cut -d/ -f2)"
+  if [[ "$prior_blocks" -eq 0 ]]; then
+    [[ -n "$review_head" ]] && complete="unrecorded"
+  else
+    complete="missing"
+  fi
+fi
+
 if [[ -n "$review_head" ]]; then
-  [[ "$review_head" == "$head_full" ]] && stale="false" || stale="true"
+  # A review may quote an abbreviated sha, so a prefix of seven or more hex
+  # characters matches in either direction rather than equality (D34). The floor
+  # is what stops a truncated or mistyped value from matching a head that merely
+  # starts the same way.
+  if [[ ${#review_head} -ge 7 && ( "$review_head" == "$head_full"* || "$head_full" == "$review_head"* ) ]]; then
+    stale="false"
+  else
+    stale="true"
+  fi
 else
   stale="unknown"
 fi
@@ -218,8 +322,11 @@ verdict="$(sed -n 's/.*<strong>Merge recommendation<\/strong>:[[:space:]]*\([^<]
 # asked for changes still counts as reviewed.
 if [[ "$reviewed_mode" -eq 1 ]]; then
   covered="false"
-  if [[ "$present" == "true" && "$stale" == "false" && "$complete" == "true" ]]; then
-    covered="true"
+  if [[ "$present" == "true" && "$stale" == "false" ]]; then
+    # A review with no typed block does not record that its run finished, so it
+    # is not a passed review either: another run is exactly what it needs, and
+    # skipping that run would leave the gate failed with nothing to repair it.
+    [[ "$complete" == "true" ]] && covered="true"
   fi
   printf 'reviewed: %s\npr: %s\nhead: %s\n' "$covered" "$number" "$head"
   [[ "$covered" == "true" ]] && exit 0
@@ -231,26 +338,44 @@ if [[ "$gate" -eq 1 ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nreason: no review comment from the bot for this PR\nhelp: comment `/review` on the PR to create one\n' "$number" "$head"
     exit 1
   fi
+  # A block that vanished after this PR carried one is a fault of the run, not a
+  # clean review, so it is named before the stale check: the fault is the run,
+  # and a stale head is only its symptom.
+  if [[ "$complete" == "missing" ]]; then
+    printf 'gate: fail\npr: %s\nhead: %s\nreason: this review has no typed state block although an earlier one on this PR did\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    exit 1
+  fi
   if [[ "$stale" != "false" ]]; then
     if [[ "$stale" == "true" ]]; then
       printf 'gate: fail\npr: %s\nhead: %s\nreview_head: %s\nreason: the review does not cover the head being judged\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head" "${review_head:0:7}"
-    else
+    elif [[ -n "$state_json" ]]; then
       printf 'gate: fail\npr: %s\nhead: %s\nreason: the review does not record a head commit\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
+    else
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review has no typed state block and does not name the commit it reviewed\nhelp: comment `/review` on the PR to refresh it\n' "$number" "$head"
     fi
-    exit 1
-  fi
-  # A truncated or timed-out run can still print a clean recommendation, so a
-  # partial review never counts.
-  if [[ "$complete" != "true" ]]; then
-    printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
     exit 1
   fi
   # The verdict is the merge decision, not a footnote. A review that says
   # `changes required` or `needs review` did not clear the merge, and merging
-  # it anyway is the failure this gate exists to catch.
+  # it anyway is the failure this gate exists to catch. It is reported before the
+  # block, because it is the reason a reader can act on.
   GATE_VERDICT="${REVIEW_GATE_VERDICT:-no_concerns_found}"
   if [[ "$verdict" != "$GATE_VERDICT" ]]; then
     printf 'gate: fail\npr: %s\nhead: %s\nverdict: %s\nreason: the review did not clear the merge\nhelp: fix the findings, then comment `/review`\n' "$number" "$head" "$verdict"
+    exit 1
+  fi
+  # A clean recommendation is not evidence that the run read the diff: a
+  # truncated or timed-out run prints one too. Only the typed block records that
+  # a run finished, so only a block that says `complete:true` clears the gate for
+  # this head (finding b312598ba745). A review with no block at all cannot be
+  # told apart from such a run, so `unrecorded` fails: it is a review nobody
+  # recorded, not a clean review nobody had to.
+  if [[ "$complete" != "true" ]]; then
+    if [[ "$complete" == "unrecorded" ]]; then
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: no typed state block, so no completed run is recorded\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    else
+      printf 'gate: fail\npr: %s\nhead: %s\nreason: the review did not complete\nhelp: comment `/review` on the PR to run it again\n' "$number" "$head"
+    fi
     exit 1
   fi
   printf 'gate: pass\npr: %s\nhead: %s\nreview: current\nverdict: %s\n' "$number" "$head" "$verdict"
@@ -277,6 +402,7 @@ printf '  stale: %s\n' "$stale"
 printf '  risk: %s\n' "$risk"
 printf '  verdict: %s\n' "$verdict"
 printf '  coverage: %s\n' "$coverage"
+printf '  complete: %s\n' "$complete"
 printf '  findings: %s\n' "$findings_total"
 printf '  active: %s\n' "$findings_active"
 if [[ -n "$review_url" ]]; then
