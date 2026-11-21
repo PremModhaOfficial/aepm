@@ -48,10 +48,28 @@ jobs:
         (github.event.pull_request.draft == false &&
          github.event.pull_request.head.repo.full_name == github.repository))
     concurrency:
+      # A new push means the reviewed head is gone, so cancel its review rather
+      # than queue behind it. `false` queued: the push to 88f61cf at 18:14:33Z
+      # became run 44790899058 `pending`, waiting on 44787885830 which was still
+      # `in_progress` from 17:55:27Z. Cancelling costs the wasted tokens of one
+      # superseded review; queueing costs a full round of wall clock.
       group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: false
+      # Only a push supersedes a review: it replaces the head the review was
+      # reading. The trigger is the action, not the event, because
+      # `pull_request` also fires on `reopened` and `ready_for_review`, and
+      # neither moves the head: cancelling there lost a review of the current
+      # head and left the gate failing closed until someone ran `/review` again
+      # (findings 8a0615637616, 5411d6da8710). `synchronize` is the one action
+      # that replaces the head. Comment and other runs still queue behind a
+      # review, and behind each other in one group, so two runs never write the
+      # same review comment at once.
+      cancel-in-progress: ${{ github.event.action == 'synchronize' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # p100 over 100 runs was 695s, but three reviews sharing one gateway on
+    # 2026-11-20 ran past 20 minutes (44787885830 was 21 minutes in and still
+    # going), so 20 would cancel work that finishes. 30 still fails a silent run
+    # in half the old ceiling's time.
+    timeout-minutes: 30
     steps:
       # A PR must not hand the reviewer's side its own copy of the check, so it
       # comes from the default branch, as in review-gate.yml.
@@ -100,25 +118,17 @@ jobs:
           # Official Provider API: https://commandcode.ai/docs/provider
           OPENAI_API_KEY: ${{ secrets.COMMAND_CODE_API_KEY }}
           OPENAI__API_BASE: https://api.commandcode.ai/provider/v1
-          # Nested keys use the SECTION__KEY spelling that dynaconf loads.
-          # Repeated from .pr_agent.toml so the first run works before that file
-          # is on main. Keep both in sync.
-          CONFIG__MODEL: openai/deepseek/deepseek-v4.1-flash
-          CONFIG__CUSTOM_MODEL_MAX_TOKENS: "1000000"
-          CONFIG__MAX_MODEL_TOKENS: "256000"
-          CONFIG__MAX_OUTPUT_TOKENS: "128000"
-          CONFIG__REASONING_EFFORT: max
-          CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS: '["openai/deepseek/deepseek-v4.1-flash"]'
-          CONFIG__AI_TIMEOUT: "900"
-          CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT: "false"
-          CONFIG__OUTPUT_RUN_DETAILS: "true"
+          # Model, token budgets and timeouts live in `.pr_agent.toml` alone,
+          # read from the checkout above, which is the default branch: a PR
+          # cannot change the config it is reviewed with, and a missing value
+          # fails the run loudly instead of silently changing the model.
           GITHUB_ACTION_CONFIG__AUTO_DESCRIBE: "true"
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG__AUTO_IMPROVE: "false"
-          # A pushed head is reviewed. Without these two the action logs
-          # "Skipping action: synchronize" and returns: the trigger fires, the run
-          # is green, and nothing is reviewed. Repeated from .pr_agent.toml so the
-          # first run works before that file is on main. Keep both in sync.
+          # A pushed head is reviewed. These stay in the workflow as well as in
+          # `.pr_agent.toml`, unlike the model config: a miss here skips the
+          # review while the run still goes green, so it is the one setting that
+          # must not depend on config loading order.
           GITHUB_ACTION_CONFIG__HANDLE_PUSH_TRIGGER: "true"
           GITHUB_ACTION_CONFIG__PUSH_COMMANDS: '["/review"]'
       # #140: a clean review is posted without the typed state block, so

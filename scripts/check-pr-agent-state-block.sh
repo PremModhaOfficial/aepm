@@ -325,5 +325,52 @@ if [[ -z "${PR_AGENT_STATE_BLOCK_NO_PYTHON:-}" ]]; then
   fi
 fi
 
+# Finding 8a0615637616: `cancel-in-progress: true` covered the whole
+# `pr-agent-<number>` group, and every command shares that group, so a
+# `/describe` or `/ask` comment arriving during a review cancelled it. Nothing
+# was superseded: the head had not moved, so the review of the current head was
+# lost and the gate failed closed until someone ran `/review` again. A comment
+# run may queue behind a review; only a push may cancel one, because only a push
+# replaces the head. The action is what is checked, not the event: `reopened` and
+# `ready_for_review` are `pull_request` events too and move nothing (finding
+# 5411d6da8710). Read as text, like the guard above (#153).
+checks=$((checks + 1))
+concurrency="$(awk '
+  /^ *concurrency: *$/ { found = 1; next }
+  found && /^ *[a-z][a-z_-]*:/ && !/^ *(group|cancel-in-progress):/ { exit }
+  found && /^ *(group|cancel-in-progress):/ {
+    line = $0
+    sub(/^ */, "", line)
+    print line
+  }' "$WORKFLOW" | tr -d '[:space:]')"
+case "$concurrency" in
+  *"group:pr-agent-\${{github.event.pull_request.number||github.event.issue.number}}"*) ;;
+  *) fail concurrency-scope \
+       "the review job's concurrency group no longer keys on the PR number, so two PRs can cancel each other's runs" \
+       "$concurrency" ;;
+esac
+case "$concurrency" in
+  *"cancel-in-progress:\${{github.event.action=='synchronize'}}"*) ;;
+  *) fail concurrency-scope \
+       "a run that does not replace the head can cancel a review: cancel-in-progress is not scoped to the push action" \
+       "$concurrency" ;;
+esac
+
+# The decision log states this suite's count, and a count the run refutes is a
+# claim, not evidence: D33 said 12/12 while a case was added in silence. The
+# expected number is counted from this file — one literal increment per case, one
+# inside `run_case`, and one per `run_case` call — so it does not depend on where
+# this check sits: a case appended after it raises both sides together (finding
+# 91f0289550e3). Read for this script's own line, and this check counts itself.
+checks=$((checks + 1))
+declared=$(( $(grep -c 'checks=\$((checks + 1))' "$0") - 1 + $(grep -c '^run_case ' "$0") ))
+doc_row="$(grep -oE 'scripts/check-pr-agent-state-block\.sh [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+if [[ "$declared" -ne "$checks" ]]; then
+  fail doc-count "the suite counted $checks case(s) but its source declares $declared"
+elif [[ "$doc_row" != "$declared/$declared" ]]; then
+  fail doc-count "PR-AGENT.md says '${doc_row:-nothing}' for this suite, which prints '$declared/$declared'"
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
 echo "pr-agent state block: $checks/$checks"
