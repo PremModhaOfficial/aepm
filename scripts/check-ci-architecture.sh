@@ -178,5 +178,21 @@ else
   die "citations point past the end of their file:$badcite"
 fi
 
+# 11. Cross-references to a ranked change resolve. Row renumbering has twice
+#     left a "change #4" pointing at the failure summary that had become #2, and
+#     a G7 reference surviving as G9's neighbour. Nothing else in the file can
+#     notice a reference, because a reference has no text to check.
+rows=$(grep -cE '^\| [0-9]+ \|' "$DOC" || true)
+[ "$rows" -gt 0 ] || die "could not count the ranked-change rows in $DOC"
+badref=""
+while IFS= read -r n; do
+  [ "$n" -le "$rows" ] || badref="$badref #$n(only $rows rows)"
+done < <(grep -oE '(change|behind) #[0-9]+' "$DOC" | grep -oE '[0-9]+' | sort -u)
+if [ -z "$badref" ]; then
+  pass "every change #N reference resolves within $rows rows"
+else
+  die "references point past the last ranked change:$badref"
+fi
+
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]
