@@ -153,6 +153,9 @@ fi
 # the current head SHA, and `last` would then pick the forgery over the bot's
 # review. Author first, marker second. Two review-only markers select the
 # comment: the typed block, and the guide header's `<!-- pr-agent:review:full`.
+# The guide marker carries the review kind, and an incremental review writes
+# `:incremental` instead (finding 6488fe1fce59): matching only `:full` read a
+# clean incremental review as no review at all, so both kinds are a review.
 # The block is not always emitted (a clean review carries none: #112 and #134
 # had zero findings and no block, while #99, #133 and #136 had findings and one),
 # and the guide does not always name its commit (#134), so the head also comes
@@ -169,7 +172,7 @@ JQ_SELECT='
 def defenced: reduce (split("\n")[]) as $l ({f: false, keep: []};
     if ($l | test("^[[:space:]]*(```|~~~)")) then .f |= not
     elif .f then . else .keep += [$l] end) | .keep | join("\n");
-def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:full");
+def is_review: test("(^|\n)[[:space:]]*<!-- pr-agent-review-state:v1|(^|\n)[[:space:]]*<!-- pr-agent:review:(full|incremental)");
 [.comments[]
   | select((.author.login // "") as $a | ("$LOGINS" | split(",") | any(. == $a)))] as $c
 | {review: ([$c[] | select(.body | defenced | is_review)] | last // {}),

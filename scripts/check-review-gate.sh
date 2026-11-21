@@ -132,6 +132,20 @@ run() {
   printf 'ok %s\n' "$name"
 }
 
+# A case that asserts on the repository rather than on a gate run: the fixture
+# counts itself in both tallies, so the printed total stays honest.
+check() {
+  local name="$1"
+  shift
+  if ! "$@"; then
+    printf 'FAIL %s\n' "$name"
+    exit 1
+  fi
+  PASSED=$((PASSED + 1))
+  CASES=$((CASES + 1))
+  printf 'ok %s\n' "$name"
+}
+
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")")]"
 run current 0 'gate: pass'
 
@@ -372,6 +386,15 @@ run body-link-does-not-beat-recorded-head 1 'no completed run is recorded'
 export FAKE_COMMENTS="[$(comment "$(typed_body "$HEAD")"), $(comment "$(printf '> the gate reads `<!-- pr-agent-review-state:v1` and commit/%s\n' "$HEAD")")]"
 run prose-mention-is-not-a-review 0 'gate: pass'
 
+# Finding 6488fe1fce59: pr-agent writes `<!-- pr-agent:review:incremental` for an
+# incremental review, and only `:full` matched, so a clean incremental review was
+# not a review at all and the gate failed a reviewed head with "no review comment
+# from the bot". It still fails — nothing records that the run finished — and the
+# named failure is what tells the two readings apart.
+incremental="$(printf '## PR Reviewer Guide \U0001F50D\n\n<!-- pr-agent:review:incremental -->\n\n<strong>Merge recommendation</strong>: No concerns found\n#### (Review updated until commit https://github.com/o/r/commit/%s)\n' "$HEAD")"
+export FAKE_COMMENTS="[$(comment "$incremental")]"
+run incremental-review-is-a-review 1 'no completed run is recorded'
+
 # A truncated header names the head and then quotes an older fix on the same line,
 # and a newer bot comment only writes about the guide marker. The header's link is
 # the first commit after the phrase, and the marker is only a review at a line
@@ -384,5 +407,24 @@ run truncated-header-and-prose-guide-marker 1 'no completed run is recorded'
 # its symptom.
 export FAKE_COMMENTS="[$(comment "$(typed_body "$OLD")"), $(comment "$(clean_body "$OLD")")]"
 run missing-block-named-before-stale 1 'no typed state block although an earlier one'
+
+# Finding d5440e1022c1: NEXT.md ticked `Review Gate` as required on `main` while
+# AGENTS.md called that same setting one this repo cannot assert. The measurement
+# is `gh api .../branches/main/protection`, which no fixture can take without the
+# network; what the repo can hold itself to is that both files state it, name the
+# three contexts, and neither calls it unassertable. A revert of either file
+# fails here instead of waiting for the next review to notice.
+authority_matches_next() {
+  local f
+  ! grep -qF 'not something this repo can assert' "$ROOT/AGENTS.md" || return 1
+  ! grep -qF 'the verdict stays advisory' "$ROOT/AGENTS.md" || return 1
+  for f in "$ROOT/AGENTS.md" "$ROOT/NEXT.md"; do
+    grep -qF 'branches/main/protection' "$f" || return 1
+    grep -qF 'CI (Linux)' "$f" || return 1
+    grep -qF 'Arch simulation' "$f" || return 1
+    grep -qF 'Review Gate' "$f" || return 1
+  done
+}
+check authority-matches-next authority_matches_next
 
 printf 'review gate: %s/%s\n' "$PASSED" "$CASES"

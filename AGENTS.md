@@ -157,7 +157,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread.
+  thread. The typed block is appended by the workflow after the container posts,
+  because the pinned image omits it on a clean review (#140); a body that already
+  carries one is never rewritten, and a body with no merge recommendation gets
+  none rather than an invented verdict.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1
@@ -179,7 +182,8 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   from a clean one, so only a block that records `complete:true` for the judged
   head clears the gate, and a review carrying none is reported as `unrecorded`
   and fails. That review is still selected by the guide marker
-  `<!-- pr-agent:review:full`, and its head still comes from the commit the
+  `<!-- pr-agent:review:full`, or `<!-- pr-agent:review:incremental` for an
+  incremental review, and its head still comes from the commit the
   comment quotes, which is the guide header's link only: the first
   `commit/<40-hex>` after the phrase, bounded to the URL, never a later link the
   header quotes. Both are read to name the failure, never to clear it. The block
@@ -210,12 +214,15 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   an older review would be a lie; the check it left on the older commit is read
   by no rollup, because checks are per-commit.
 - **Authority:** `CI` and `Sim` gate behaviour; `Review Gate` gates coverage and
-  the verdict, and it is requireable because every head with a review run of its
-  own gets a `Review Gate` conclusion on itself.
-  Whether it is a required status check in the `main` ruleset is a one-time
-  repository setting and not something this repo can assert (`PR-AGENT.md` N5).
-  Until that setting exists the gate reports and the verdict stays advisory. A
-  human override is an admin merge, and it is a decision, not a formality.
+  the verdict, and it is a required status check on `main`. That is measured,
+  not assumed: the protection requires `["CI (Linux)", "Arch simulation",
+  "Review Gate"]`, strict, admins enforced, no force push, no branch deletion
+  (`gh api repos/PremModhaOfficial/aepm/branches/main/protection`; the row is
+  `PR-AGENT.md` N5, measured 2026-11-21). Requiring it is possible because every
+  head with a review run of its own gets a `Review Gate` conclusion on itself,
+  and a force-pushed head's older conclusion stays on the commit it judged,
+  which no rollup reads, because checks are per-commit. A human override is an
+  admin merge, and it is a decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
