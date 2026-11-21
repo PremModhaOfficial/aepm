@@ -58,6 +58,16 @@ echo "=== pr-agent state block (appended to the review the container posts) ==="
 # real gate: the step is proven by the gate reading it, not by a shape.
 bash scripts/check-pr-agent-state-block.sh
 
+echo "=== pr conflicts watchdog (a conflicted head runs no workflow at all) ==="
+# A PR whose head cannot merge into its base gets no checks at all, so nothing
+# turns red and it sits forever. The check that reports it must not print
+# success having read part of the list, or having failed to read a PR: the step
+# extracted from pr-conflicts.yml is run against a fake `gh` that walks pages
+# only on `--paginate`, and its cases fail on either silent green (findings
+# 4a5a9f1d9e0b, 6ea304eea0b7).
+bash scripts/check-pr-conflicts.sh --self-test
+bash scripts/check-pr-conflicts-workflow.sh
+
 echo "=== ci architecture doc matches the repository ==="
 # The document drifted from the repo once and a reviewer had to find it: a typed
 # "five workflows" with a sixth open, two of three required check names, a step
