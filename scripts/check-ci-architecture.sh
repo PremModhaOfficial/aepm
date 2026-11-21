@@ -186,7 +186,8 @@ fi
 #     left a "change #4" pointing at the failure summary that had become #2, and
 #     a G7 reference surviving as G9's neighbour. Nothing else in the file can
 #     notice a reference, because a reference has no text to check.
-rows=$(grep -cE '^\| [0-9]+ \|' "$DOC" || true)
+s4=$(awk '/^## 4\./{f=1} f && /^## 5\./{exit} f' "$DOC")
+rows=$(printf '%s\n' "$s4" | grep -cE '^\| [0-9]+ \|' || true)
 [ "$rows" -gt 0 ] || die "could not count the ranked-change rows in $DOC"
 badref=""
 while IFS= read -r n; do
@@ -197,6 +198,17 @@ if [ -z "$badref" ]; then
 else
   die "references point past the last ranked change:$badref"
 fi
+
+# 12. Every row of every table has the same cell count as its header. GFM splits
+#     cells on a raw `|` before it parses inline code, so a pipe inside a code
+#     span silently truncates the row — that is how row 2 shipped broken while
+#     every other assertion stayed green. Counting pipes catches it whether the
+#     pipe is in a code span, a URL or plain text.
+badtable=$(awk '
+  /^\|/ { n=gsub(/\|/,"|"); if (!intbl) { intbl=1; want=n } else if (n!=want) { print NR": "n" cells, header has "want; bad=1 } next }
+  { intbl=0 }
+  END { exit(bad?1:0) }
+' "$DOC" 2>&1) &&   pass "every table row matches its header's cell count" ||   die "table rows with the wrong cell count: ${badtable:-see above}"
 
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]
