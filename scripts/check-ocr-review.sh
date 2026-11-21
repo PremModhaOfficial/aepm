@@ -26,10 +26,14 @@ bad() {
 # 1. A count read from tool output must be a single line. More than one match
 #    makes `n` multi-line, $GITHUB_OUTPUT rejects it with an opaque
 #    "Invalid format", and the step's own error message never appears.
-if grep -q "Will review" "$WF" && grep -qE "Will review.*\| sed -n '1p'" "$WF"; then
+#    The reduction must sit on the `n=` assignment itself: the pattern in a
+#    comment or in the error message would satisfy a file-wide grep while the
+#    multi-line value is still written.
+count_assign="$(grep -E '^[[:space:]]*n=\$\(' "$WF" || true)"
+if [[ $count_assign == *"Will review"* && $count_assign == *"| sed -n '1p')"* ]]; then
     ok "the reviewable-file count is reduced to its first line"
 else
-    bad "the --preview count is not pinned to one line: a multi-line n breaks \$GITHUB_OUTPUT with an opaque error"
+    bad "the --preview count is not pinned to one line on the n= assignment: a multi-line n breaks \$GITHUB_OUTPUT with an opaque error"
 fi
 
 # 2. A draft must not spend a model call, and neither must a closed or merged PR
@@ -65,5 +69,28 @@ grep -q 'git show "${BASE}:.github/ocr/rules.json"' "$WF" \
     && ok "the review policy is read from the base branch" \
     || bad "the policy is no longer read from the base branch: a PR could weaken the rules that judge it"
 
+# 6. The summary must not overstate what ran. Count the numbered assertions in
+#    this file and compare with the number the closing line prints, so a new
+#    assertion that forgets to bump the message, or a bumped message with no
+#    assertion behind it, fails here instead of reading as extra coverage.
+self="${BASH_SOURCE[0]}"
+n_assertions="$(grep -cE '^# [0-9]+\. ' "$self")"
+printed="$(tail -n 1 "$self" | sed -n 's/.*: \([0-9][0-9]*\) assertions hold.*/\1/p')"
+if [[ -n $printed && $printed -eq $n_assertions ]]; then
+    ok "the summary line counts every numbered assertion (${n_assertions})"
+else
+    bad "the summary line says '${printed:-?}' but ${n_assertions} numbered assertions ran"
+fi
+
+# 7. The rollback must name every file that reads this workflow. `ci.sh` runs
+#    this self-test, and this self-test fails when the workflow is absent, so
+#    "delete the workflow" alone breaks ./ci.sh.
+rollback="$(sed -n '/^## Turn it off/,/^## /p' "$ROOT/docs/OCR-REVIEW.md")"
+if [[ $rollback == *scripts/check-ocr-review.sh* && $rollback == *ci.sh* ]]; then
+    ok "the rollback names the self-test and the ci.sh line that read the workflow"
+else
+    bad "the rollback says the workflow has no other readers: deleting it alone breaks ./ci.sh"
+fi
+
 ((status == 0)) || { printf 'ocr-review self-test FAILED\n' >&2; exit 1; }
-printf 'ocr-review self-test: 6 assertions hold\n'
+printf 'ocr-review self-test: 7 assertions hold\n'

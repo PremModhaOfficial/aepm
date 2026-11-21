@@ -67,7 +67,10 @@ read-only token and the key should not be exposed to one.
 
 ## Turn it off
 
-Delete the workflow file. Nothing else references it, no required check names
+Delete the workflow file, and with it the two things that read it: the
+`bash scripts/check-ocr-review.sh` line in `ci.sh` and the script itself. That
+self-test exits non-zero when the workflow is missing, so deleting the workflow
+alone breaks `./ci.sh` instead of removing a feature. No required check names
 change, and no state is written anywhere but the PR comment. To keep it but stop
 spending, set `on.pull_request` to nothing — `workflow_dispatch` remains.
 
