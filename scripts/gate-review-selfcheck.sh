@@ -209,5 +209,16 @@ run_case no-gate-on-base pull_request "$HEAD"  9 "$HEAD" pass 1 none  ""        
 grep -q "workflow_run.conclusion == 'skipped'" "$workflow" \
   || { echo "FAIL workflow: the skipped-/review guard is gone from the job condition"; failures=$((failures + 1)); }
 
+# The evidence table states this suite's count, and a count the run refutes is a
+# claim, not evidence: the row said 12/12 for a suite that prints 9/9. Read for
+# this script's own line, so adding a case fails here until the table says what
+# the suite prints rather than drifting a revision behind it.
+doc_row="$(grep -oE '^\| `scripts/gate-review-selfcheck\.sh` \| [0-9]+/[0-9]+' "$repo_root/.github/PR-AGENT.md" \
+  | grep -oE '[0-9]+/[0-9]+' | head -1)"
+if [[ "$doc_row" != "$passed/$CASES" ]]; then
+  echo "FAIL doc-count: table says '${doc_row:-nothing}', suite prints '$passed/$CASES'"
+  failures=$((failures + 1))
+fi
+
 [[ "$failures" -eq 0 ]] || { echo "$failures case(s) failed"; exit 1; }
 echo "review-gate self-check: $passed/$CASES"

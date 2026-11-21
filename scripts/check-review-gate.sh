@@ -427,4 +427,19 @@ authority_matches_next() {
 }
 check authority-matches-next authority_matches_next
 
+# The evidence table states this suite's count, and a count the run refutes is a
+# claim, not evidence: the row said 48/48 while a green run printed 50/50, so the
+# table had drifted two cases behind the suite. The row is read for this script's
+# own line, so adding a case fails here until the table says what the suite prints.
+# This check counts itself, hence the +1 on both sides.
+doc_count_matches() {
+  local want row
+  want="$((PASSED + 1))/$((CASES + 1))"
+  row="$(grep -oE '^\| `scripts/check-review-gate\.sh` \| [0-9]+/[0-9]+' "$ROOT/.github/PR-AGENT.md" \
+    | grep -oE '[0-9]+/[0-9]+' | head -1)"
+  [[ -n "$row" ]] || { echo "  (no table row for scripts/check-review-gate.sh)"; return 1; }
+  [[ "$row" == "$want" ]] || { echo "  table says $row, this run is $want"; return 1; }
+}
+check doc-count-matches-table doc_count_matches
+
 printf 'review gate: %s/%s\n' "$PASSED" "$CASES"
