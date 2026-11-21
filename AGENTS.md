@@ -157,7 +157,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
 - **Output:** inline `file:line` findings, a typed risk level, and a merge
   verdict: `no_concerns_found`, `needs_review`, or `changes_required`.
 - **State:** one persistent comment, updated in place. Do not reconstruct a
-  thread.
+  thread. The typed block is appended by the workflow after the container posts,
+  because the pinned image omits it on a clean review (#140); a body that already
+  carries one is never rewritten, and a body with no merge recommendation gets
+  none rather than an invented verdict.
 - **State command:** `scripts/review-state.sh [<pr>]` prints PR state, check
   counts, risk, merge verdict, staleness, coverage, and finding counts.
   `--findings` lists `path:line`, `--full` includes the comment, `--gate` exits 1

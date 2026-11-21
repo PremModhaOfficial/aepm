@@ -51,6 +51,13 @@ echo "=== review gate workflow: verdicts land on the PR head, a superseded run g
 # against a fake gh: where the verdict lands, and that an unreadable head fails.
 bash scripts/gate-review-selfcheck.sh
 
+echo "=== pr-agent state block (appended to the review the container posts) ==="
+# #140: the pinned image posts a clean review with no typed block, so the gate
+# read present=false on a review that ran. The block is extracted from
+# pr-agent.yml and run against a fake gh, and its output is fed back through the
+# real gate: the step is proven by the gate reading it, not by a shape.
+bash scripts/check-pr-agent-state-block.sh
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 
