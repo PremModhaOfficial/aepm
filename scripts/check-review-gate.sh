@@ -463,6 +463,27 @@ doc_claims_match_code() {
 }
 check doc-claims-match-code doc_claims_match_code
 
+# Finding bed8f31fda88, recorded as bound D36: the newest review names no head at
+# all, and an older review's persistent line does, so the fallback names the older
+# head and the gate reports the head as uncovered rather than the run as
+# unrecorded. It still fails, which is the invariant; this case is what pins the
+# named repair so the bound is a record and not a surprise.
+export FAKE_COMMENTS="[$(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: No concerns found\n')"), $(comment "$(printf '<!-- pr-agent:review:full -->\n<strong>Merge recommendation</strong>: Needs review\n\nReview updated until commit https://github.com/o/r/commit/%s\n' "$OLD")")]"
+run fallback-head-names-an-older-review 1 'does not cover'
+
+# A bound that exists only in a code comment is re-filed as a finding on the next
+# review, so the rows that hold these two bounds are checked here: D34 states the
+# prefix rule the comparison uses (finding 13d53e61b390), and D35/D36 record the
+# two bounds the fixtures above pin.
+doc_bounds_are_recorded() {
+  local flat_p
+  flat_p() { tr '\n' ' ' <"$1" | tr -s ' '; }
+  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF 'seven or more hex characters' || return 1
+  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D35 | Quote without a fence |' || return 1
+  flat_p "$ROOT/.github/PR-AGENT.md" | grep -qF '| D36 | Fallback head from an older review |' || return 1
+}
+check doc-bounds-are-recorded doc_bounds_are_recorded
+
 # The evidence table states this suite's count, and a count the run refutes is a
 # claim, not evidence: the row said 48/48 while a green run printed 50/50, so the
 # table had drifted two cases behind the suite. The row is read for this script's
