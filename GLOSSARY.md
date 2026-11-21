@@ -13,7 +13,7 @@ Test names, commit messages and issues use these words, not synonyms.
 | `fetch` | Downloads pending packages into the cache. Writes only the pacman sync database and the cache. Never installs. |
 | `install` | Installs what `fetch` downloaded. Never rebuilds a package that was already built. |
 | `clean` | Reports or deletes stale cache entries. Dry run unless told otherwise. |
-| `init` | Writes the aepm half of the one-shot setup: the sudoers rule, and the user service and timer. aurto's repo and its `Include` line are `aurto init`'s. |
+| `init` | Writes the aepm half of the one-shot setup: the sudoers rule, and the user service and timer. `aurto`'s repo and its `Include` line are `aurto init`'s. |
 | `doctor` | Read-only audit of the setup: paths, permissions, timer state, disk. |
 | `sim` | The disposable Arch container that every writing behaviour is proven in. Lives in `sim/`. |
 

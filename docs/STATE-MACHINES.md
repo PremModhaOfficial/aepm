@@ -105,10 +105,12 @@ The tables below name the v1 default binding for each row. `[keys]` in
 `tui.conf` rebinds the action without changing the rank: every row is an action,
 and `src/keymap.rs` is the one place a key is attached to it.
 
-The gate and the receipt cover the frame (`Clear` plus a full-area block) so no
-stale footer advertises a key the modal does not accept. `help` and `ledger` are
-body modes, so a modal shadows them; both flags survive, and closing the modal
-redraws them. Neither can be toggled while a modal has the keys.
+The gate and the receipt cover the frame (`Clear` plus a full-area block, at or
+above the 40x12 floor) so no stale footer advertises a key the modal does not
+accept; the log is the exception, clearing only its popup and layering over the
+body. `help` and `ledger` are body modes, so a modal shadows them rather than
+layering over them; both flags survive, and closing the modal redraws them.
+Neither can be toggled while a modal has the keys.
 
 ### Transitions
 
