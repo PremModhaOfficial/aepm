@@ -525,9 +525,11 @@ attestation and only when no gate failed; it suspends the TUI, runs the exact
 `yay -Syuu` attached with the CLI's options, restores the terminal and opens
 the post-install receipt. While a fetch is running, `i` is ignored: one
 mutation at a time. A gate refusal before `yay` starts produces a "not run"
-receipt, never a fabricated command exit. The receipt is read-only: its attached `p` (sudo
-pacdiff), copy and install-log keys are not wired yet, and it says to run
-`sudo pacdiff` after closing.
+receipt, never a fabricated command exit. The receipt's `p` runs `sudo pacdiff`
+attached, restores the TUI and re-reads the `.pacnew` count; it is offered only
+on a success receipt with at least one `.pacnew` file, and both the receipt line
+and its footer print the key the keymap resolves. The copy and install-log keys
+are not wired yet.
 
 ```
 ┌ Install ─────────────────────────────────────────────────────────────────── 3 packages ┐
@@ -588,18 +590,18 @@ The block is built from `PostInstall` on success **and** failure:
 ┌ post-install ──────────────────────────────────────────────────────────────────────────┐
 │ ✓  yay -Syuu exited 0                                                                  │
 │ ▲  kernel   running 6.11.5-arch1 · on disk 6.11.6.arch1-1 · reboot required            │
-│ ▲  pacdiff  3 .pacnew files                     press p to run sudo pacdiff            │
+│ ▲  pacdiff   3 .pacnew file(s); press p to run sudo pacdiff                            │
 │ –  reboot   recommended: kernel and glibc changed                                      │
 │                                                                                        │
-│ enter close      p run pacdiff (leaves the TUI)      y copy summary                    │
+│ p run sudo pacdiff · enter / esc close                                                 │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌ post-install ─ failure ────────────────────────────────────────────────────────────────┐
 │ ✖  yay -Syuu exited 1                                                                  │
 │ ▲  repair   disk-full mid-install is possible; run pacman -Qkk <pkg> for each package  │
-│ –  pacdiff  not run because the upgrade failed                                         │
+│ –  pacdiff   not checked because the upgrade failed                                    │
 │                                                                                        │
-│ enter close      c copy repair commands      l open the log                            │
+│ enter / esc close                                                                      │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -774,8 +776,8 @@ bound to two actions in the same resolved context.
 
 All keys come from the keymap; every one is rebindable in `tui.conf`. The v1
 action names, in `src/keymap.rs`, are `quit`, `interrupt`, `suspend`, `help`,
-`back`, `ledger`, `down`, `up`, `log`, `install`, `refresh`, `fetch`, `confirm`
-and `attest`. The footer shows only keys valid in the current context, in
+`back`, `ledger`, `down`, `up`, `log`, `install`, `refresh`, `fetch`, `confirm`,
+`attest` and `pacdiff`. The footer shows only keys valid in the current context, in
 priority order, and truncates at the right edge rather than wrapping. It prints the resolved
 binding from the same keymap, so a rebound key is dispatched and advertised.
 
@@ -1265,9 +1267,12 @@ above the footer and are not part of the tree.
 
 T3d landed: the receipt is built from `post_install::collect` and shows the
 real exit, the running kernel against `/usr/lib/modules`, the `.pacnew` count,
-kernel-based reboot advice, and a repair line on failure. It is read-only and
-closes with enter or esc; sim 36 proves the success receipt. The attached `p`
-(sudo pacdiff), copy and install-log keys remain unwired.
+kernel-based reboot advice, and a repair line on failure. It closes with enter
+or esc; sim 36 proves the success receipt. The receipt's attached `p` runs
+`sudo pacdiff` through one terminal bracket shared with the attached install,
+then re-counts the `.pacnew` files through `post_install::recount_pacdiff`, so
+the receipt cannot show a count the run just changed; sim 56 proves it. The copy
+and install-log keys from `TUI.md` remain unwired.
 
 T4 stuck-flag fix landed: the log screen belongs to its session. Ending a
 session (`esc` on a finished one, or a `F` that a gate refuses) closes the log

@@ -156,8 +156,11 @@ terminal, recollects the snapshot, opens the receipt, stores the install notice
 and **resets `news_attested`**.
 
 Receipt rank: `Esc` or `Enter` closes it, `q` quits, `^c` exits 130, every other
-key is ignored. Closing reveals whatever was underneath; `session` and `notice`
-are untouched by the receipt.
+key is ignored. `p` runs `sudo pacdiff` attached, but only when the receipt
+offers it (a success receipt with at least one `.pacnew` file); it is ignored on
+a failure receipt and on a receipt with nothing to review, and the count is
+re-read afterwards so the reopened frame cannot be stale. Closing reveals
+whatever was underneath; `session` and `notice` are untouched by the receipt.
 
 ### The invariants
 
@@ -417,14 +420,14 @@ purpose, so this table cannot quietly describe an older tree.
 
 | Claim | Anchor | The line says |
 |---|---|---|
-| the body precedence, and its order | `src/tui/mod.rs:683` | `let (footer, gates, body) = match (session, notice) {` |
-| the receipt rank, above the gate | `src/tui/mod.rs:276` | `if post_install.is_some() {` |
-| the gate rank, above the main match | `src/tui/mod.rs:288` | `if install_gate.is_some() {` |
+| the body precedence, and its order | `src/tui/mod.rs:719` | `let (footer, gates, body) = match (session, notice) {` |
+| the receipt rank, above the gate | `src/tui/mod.rs:277` | `if post_install.is_some() {` |
+| the gate rank, above the main match | `src/tui/mod.rs:310` | `if install_gate.is_some() {` |
 | the log-flag invariant | `src/tui/mod.rs:165` | `assert!(` |
-| the `Esc` ladder | `src/tui/mod.rs:378` | `Some(Action::Back) => {` |
-| the arming predicate | `src/tui/mod.rs:293` | `let armed = news_attested` |
-| the attestation reset | `src/tui/mod.rs:343` | `news_attested = false;` |
-| the modal action allow-list | `src/tui/mod.rs:544` | `fn accepts(context: Context, action: Action) -> bool {` |
+| the `Esc` ladder | `src/tui/mod.rs:390` | `Some(Action::Back) => {` |
+| the arming predicate | `src/tui/mod.rs:315` | `let armed = news_attested` |
+| the attestation reset | `src/tui/mod.rs:355` | `news_attested = false;` |
+| the modal action allow-list | `src/tui/mod.rs:556` | `fn accepts(context: Context, action: Action) -> bool {` |
 | the session phases | `src/tui/fetch_session.rs:61` | `pub enum Phase {` |
 | the exit fold | `src/tui/fetch_session.rs:355` | `fn fold_exit(&mut self, output: CommandOutput, at: SystemTime, tick: &mut Tick) {` |
 | the fetch gate order | `src/commands/fetch.rs:103` | `pub fn plan_observed(` |

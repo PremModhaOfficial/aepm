@@ -518,10 +518,11 @@ pub fn render_install_gate(
     buffer_text(terminal.backend().buffer(), width)
 }
 
-/// Draw the post-install receipt. Read-only: it reports the real exit, the
-/// kernel on disk, the `.pacnew` count and the reboot advice, and never edits
-/// `/etc`.
-pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ctx: RenderCtx) {
+/// Draw the post-install receipt. The receipt itself edits nothing: it reports
+/// the real exit, the kernel on disk, the `.pacnew` count and the reboot
+/// advice. Its one key runs `sudo pacdiff` attached, and every key it prints is
+/// the one the keymap resolves.
+pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, keymap: &Keymap, ctx: RenderCtx) {
     let area = frame.area();
     if area.width < 40 || area.height < 12 {
         return;
@@ -538,11 +539,16 @@ pub fn draw_post_install(frame: &mut Frame, receipt: &Receipt, ctx: RenderCtx) {
         area.width.saturating_sub(4),
         area.height.saturating_sub(2),
     );
-    let text = post_install_lines(receipt, inner.width as usize, ctx);
+    let text = post_install_lines(receipt, keymap, inner.width as usize, ctx);
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-fn post_install_lines(receipt: &Receipt, width: usize, ctx: RenderCtx) -> Vec<Line<'static>> {
+fn post_install_lines(
+    receipt: &Receipt,
+    keymap: &Keymap,
+    width: usize,
+    ctx: RenderCtx,
+) -> Vec<Line<'static>> {
     let RenderCtx { ascii, color } = ctx;
     let separator = if ascii { "|" } else { "·" };
     let ok = if ascii { "+" } else { "✓" };
@@ -586,15 +592,16 @@ fn post_install_lines(receipt: &Receipt, width: usize, ctx: RenderCtx) -> Vec<Li
 
     let pacdiff = if receipt.failed {
         format!("{none}  pacdiff   not checked because the upgrade failed")
-    } else if receipt.data.pacdiff_count == 0 {
+    } else if !receipt.pacdiff_offered() {
         format!("{none}  pacdiff   no .pacnew files")
     } else {
         format!(
-            "{warn}  pacdiff   {} .pacnew file(s); run sudo pacdiff after closing",
-            receipt.data.pacdiff_count
+            "{warn}  pacdiff   {} .pacnew file(s); press {} to run sudo pacdiff",
+            receipt.data.pacdiff_count,
+            keymap.label(Action::Pacdiff)
         )
     };
-    let pacdiff_style = if !receipt.failed && receipt.data.pacdiff_count > 0 {
+    let pacdiff_style = if receipt.pacdiff_offered() {
         accent_bold(color, PLANNED)
     } else {
         dim(color)
@@ -624,22 +631,34 @@ fn post_install_lines(receipt: &Receipt, width: usize, ctx: RenderCtx) -> Vec<Li
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::styled(
-        cell_text("enter / esc close", width, ascii),
-        dim(color),
-    ));
+    let close = "enter / esc close".to_string();
+    let footer = if receipt.pacdiff_offered() {
+        format!(
+            "{} run sudo pacdiff {separator} {close}",
+            keymap.label(Action::Pacdiff)
+        )
+    } else {
+        close
+    };
+    lines.push(Line::styled(cell_text(&footer, width, ascii), dim(color)));
     lines
 }
 
 /// The receipt in a test backend, for goldens.
-pub fn render_post_install(receipt: &Receipt, width: u16, height: u16, ctx: RenderCtx) -> String {
+pub fn render_post_install(
+    receipt: &Receipt,
+    keymap: &Keymap,
+    width: u16,
+    height: u16,
+    ctx: RenderCtx,
+) -> String {
     if width == 0 || height == 0 {
         return String::new();
     }
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test backend");
     terminal
-        .draw(|frame| draw_post_install(frame, receipt, ctx))
+        .draw(|frame| draw_post_install(frame, receipt, keymap, ctx))
         .expect("draw post-install");
     buffer_text(terminal.backend().buffer(), width)
 }
@@ -2402,6 +2421,7 @@ const HELP_ROWS: &[(&[Action], &str)] = &[
     (&[Action::Down, Action::Up], "move selection"),
     (&[Action::Confirm], "install · dismiss receipt"),
     (&[Action::Attest], "attest news"),
+    (&[Action::Pacdiff], "run sudo pacdiff (leaves the TUI)"),
     (&[Action::Fetch], "fetch downloads"),
     (&[Action::Ledger], "tree/ledger"),
     (&[Action::Install], "install gate"),
@@ -3828,6 +3848,12 @@ mod tests {
         }
     }
 
+    /// The receipt frame with the default keymap, which is what the goldens
+    /// froze. A rebound key gets its own test.
+    fn receipt_frame(receipt: &Receipt, width: u16, height: u16, ctx: RenderCtx) -> String {
+        render_post_install(receipt, &Keymap::default(), width, height, ctx)
+    }
+
     fn install_preflight() -> Preflight {
         Preflight {
             gates: vec![
@@ -5040,7 +5066,7 @@ mod tests {
 
     #[test]
     fn the_success_receipt_reports_the_exit_kernel_pacnew_and_reboot() {
-        let frame = render_post_install(&success_receipt(), 120, 40, ctx(false, false));
+        let frame = receipt_frame(&success_receipt(), 120, 40, ctx(false, false));
 
         for needle in [
             "Post-install · success",
@@ -5048,9 +5074,9 @@ mod tests {
             "running 6.2",
             "on disk 6.1, 6.2",
             "2 .pacnew file(s)",
-            "run sudo pacdiff after closing",
+            "press p to run sudo pacdiff",
             "reboot    not required",
-            "enter / esc close",
+            "p run sudo pacdiff · enter / esc close",
         ] {
             assert!(frame.contains(needle), "missing {needle:?}\n{frame}");
         }
@@ -5062,7 +5088,7 @@ mod tests {
 
     #[test]
     fn the_failure_receipt_names_the_exit_and_the_repair() {
-        let frame = render_post_install(&failure_receipt(), 120, 40, ctx(false, false));
+        let frame = receipt_frame(&failure_receipt(), 120, 40, ctx(false, false));
 
         assert!(frame.contains("Post-install · failure"), "{frame}");
         assert!(frame.contains("✖  yay -Syuu exited 1"), "{frame}");
@@ -5075,7 +5101,31 @@ mod tests {
             frame.contains("reboot    recommended"),
             "the kernel on disk differs\n{frame}"
         );
+        assert!(!frame.contains("press p"), "{frame}");
         assert!(!frame.contains("run sudo pacdiff"), "{frame}");
+        assert!(frame.contains("enter / esc close"), "{frame}");
+    }
+
+    #[test]
+    fn a_clear_success_receipt_does_not_offer_pacdiff() {
+        let mut receipt = success_receipt();
+        receipt.data.pacdiff_count = 0;
+        let frame = receipt_frame(&receipt, 120, 40, ctx(false, false));
+
+        assert!(frame.contains("no .pacnew files"), "{frame}");
+        assert!(!frame.contains("press p"), "{frame}");
+        assert!(!frame.contains("run sudo pacdiff"), "{frame}");
+        assert!(frame.contains("enter / esc close"), "{frame}");
+    }
+
+    #[test]
+    fn a_rebound_pacdiff_key_is_advertised_on_the_receipt() {
+        let keymap = Keymap::parse("[keys]\npacdiff = P\n").expect("keymap");
+        let frame = render_post_install(&success_receipt(), &keymap, 120, 40, ctx(false, false));
+
+        assert!(frame.contains("press P to run sudo pacdiff"), "{frame}");
+        assert!(frame.contains("P run sudo pacdiff"), "{frame}");
+        assert!(!frame.contains("press p"), "{frame}");
     }
 
     #[test]
@@ -5084,7 +5134,7 @@ mod tests {
         receipt.ran = false;
         receipt.failed = true;
         receipt.reason = Some("stale lock db.lck".to_string());
-        let frame = render_post_install(&receipt, 120, 40, ctx(false, false));
+        let frame = receipt_frame(&receipt, 120, 40, ctx(false, false));
 
         assert!(
             frame.contains("yay -Syuu not run: stale lock db.lck"),
@@ -5096,7 +5146,7 @@ mod tests {
 
     #[test]
     fn the_receipt_is_ascii_safe() {
-        let frame = render_post_install(&success_receipt(), 120, 40, ctx(true, false));
+        let frame = receipt_frame(&success_receipt(), 120, 40, ctx(true, false));
 
         assert!(frame.contains("Post-install | success"), "{frame}");
         assert!(frame.contains("+  yay -Syuu exited 0"), "{frame}");
@@ -5475,7 +5525,12 @@ mod tests {
             super::draw_install_gate(frame, &install_preflight(), true, ctx(true, true))
         });
         let receipt = buffer_rendered(120, 40, |frame| {
-            super::draw_post_install(frame, &success_receipt(), ctx(true, true))
+            super::draw_post_install(
+                frame,
+                &success_receipt(),
+                &Keymap::default(),
+                ctx(true, true),
+            )
         });
 
         assert_no_palette(&live, "live frame");
@@ -5776,11 +5831,11 @@ mod tests {
             ));
             frames.push((
                 format!("success receipt {size}"),
-                render_post_install(&success_receipt(), width, height, ctx(true, false)),
+                receipt_frame(&success_receipt(), width, height, ctx(true, false)),
             ));
             frames.push((
                 format!("failure receipt {size}"),
-                render_post_install(&failure_receipt(), width, height, ctx(true, false)),
+                receipt_frame(&failure_receipt(), width, height, ctx(true, false)),
             ));
             // A screen with no prefetch data is a sentence, not a tree.
             frames.push((
@@ -6143,12 +6198,18 @@ mod tests {
         );
 
         let receipt = buffer_rendered(120, 40, |frame| {
-            super::draw_post_install(frame, &success_receipt(), ctx(false, false));
+            super::draw_post_install(
+                frame,
+                &success_receipt(),
+                &Keymap::default(),
+                ctx(false, false),
+            );
         });
         assert_eq!(
             over_help(|frame| super::draw_post_install(
                 frame,
                 &success_receipt(),
+                &Keymap::default(),
                 ctx(false, false)
             )),
             super::buffer_text(&receipt, 120),
@@ -6679,7 +6740,7 @@ mod tests {
 
         std::fs::write(
             dir.join("tui-post-install-120x40.txt"),
-            render_post_install(&success_receipt(), 120, 40, ctx(false, false)),
+            receipt_frame(&success_receipt(), 120, 40, ctx(false, false)),
         )
         .expect("write post-install 120x40");
     }

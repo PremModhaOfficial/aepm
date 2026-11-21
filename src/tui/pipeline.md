@@ -126,8 +126,14 @@ attestation, `esc` close or detach, `q` quit, Ctrl-C and Ctrl-Z
   attached, as the user), collects a `post_install::Receipt`, re-enters the
   alternate screen, clears it and re-collects the snapshot
   [mod.rs:KeyCode::Enter] [install.rs:run_with_status].
-- That install path changes `/usr` through `yay`, and it is the only mutation
-  the TUI can start apart from the fetch
+- `p` on that receipt runs `sudo pacdiff` attached through the same bracket
+  (`mod.rs::attached`, one hand-off for both commands), then re-reads the
+  `.pacnew` count with `post_install::recount_pacdiff`, so the receipt cannot
+  show a count the run just changed [mod.rs:Action::Pacdiff]
+  [post_install.rs:recount_pacdiff].
+- That install path changes `/usr` through `yay`; together with the receipt's
+  `sudo pacdiff` on `/etc`, they are the two mutations the TUI can start apart
+  from the fetch
   [install.rs:run_with_status] [mod.rs:install::run_with_status].
 - Nothing here opens a network connection; every fact comes from the report
   layer or an external program's output [render.rs:render_frame].
@@ -140,5 +146,5 @@ attestation, `esc` close or detach, `q` quit, Ctrl-C and Ctrl-Z
   rendered text rather than by a golden file
   [render.rs:no_color_keeps_the_exact_text_and_drops_every_color].
 - Runtime behaviour under a real pty is proven in the container harness:
-  `./sim/run.sh` (scenarios 31-36), which needs `./sim/run.sh --build-only
-  --no-cache` first.
+  `./sim/run.sh` (scenarios 31-36 and 56), which needs `./sim/run.sh
+  --build-only --no-cache` first.

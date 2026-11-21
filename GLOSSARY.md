@@ -56,7 +56,7 @@ Test names, commit messages and issues use these words, not synonyms.
 | **verdict** | `ok`, `warn`, `blocked`, `error` or `skipped`. |
 | **gate** | A refusal with a reason the user can act on. |
 | **pre-flight** | The gates shown before a fetch starts, from `fetch::plan_observed`. |
-| **receipt** | The read-only after-the-fact summary of an install. Changes nothing. |
+| **receipt** | The after-the-fact summary of an install. It changes nothing itself; its `p` runs `sudo pacdiff` attached. |
 | **repair card** | What the TUI shows after a failed fetch: the failure, and the rows it blocked. |
 | **log ledger** | The `l` screen: the real captured lines, not a reconstruction. |
 

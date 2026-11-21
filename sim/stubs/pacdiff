@@ -9,6 +9,14 @@ set -uo pipefail
 tool=${0##*/}
 printf '%s\n' "$*" >>"/var/log/sim-$tool.log"
 
+# The receipt's `p` runs this stub instead of the real pacdiff. With the switch
+# present the stub emulates the one side effect a real pacdiff has: the files it
+# reviewed are gone afterwards, so a scenario can prove the receipt re-read the
+# count rather than keeping the number from before the run.
+if [[ -f "/etc/sim/$tool.removes-pacnew" ]]; then
+    find /etc -name '*.pacnew' -delete
+fi
+
 [[ -f "/etc/sim/$tool.out" ]] && cat "/etc/sim/$tool.out"
 [[ -f "/etc/sim/$tool.err" ]] && cat "/etc/sim/$tool.err" >&2
 if [[ -f "/etc/sim/$tool.exit" ]]; then

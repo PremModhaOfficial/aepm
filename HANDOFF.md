@@ -91,13 +91,14 @@ covers where things stand and the first move. Do not re-plan.
   result line. The attached command is never faked as live. Sim 36 runs as the
   sim `installer` and proves the upgrade, the scoped escalation, the state
   write and the terminal restore.
-- T3d is landed: a finished install opens the read-only post-install receipt
-  built from `post_install::collect`: the real exit, the running kernel against
+- T3d is landed: a finished install opens the post-install receipt built from
+  `post_install::collect`: the real exit, the running kernel against
   `/usr/lib/modules`, the `.pacnew` count, kernel-based reboot advice and a
   repair line on failure. It closes with enter or esc. Sim 36 proves the
-  success receipt. The attached `p` (sudo pacdiff), copy and install-log keys
-  are not wired; the receipt says to run `sudo pacdiff` after closing. T3 is
-  closed; T4 polish is next.
+  success receipt. Its `p` runs `sudo pacdiff` attached through the one
+  terminal bracket (`mod.rs::attached`) and re-reads the count with
+  `post_install::recount_pacdiff`; sim 56 proves it. The copy and install-log
+  keys are not wired. T3 is closed; T4 polish is next.
 - T2's prefetch slice is landed: `progress::collect` reads `pacman -Qui` and
   the real download cache, fills `report::PrefetchReport`, and the TUI draws
   cached/stale/partial/missing/build-pending/built badges, counts, host and
