@@ -13,8 +13,10 @@ fallback_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # model id unless the window is declared.
 custom_model_max_tokens = 1000000
 # Input and output share this budget: max_model_tokens must exceed
-# max_output_tokens or the prompt has no input capacity left.
-max_model_tokens = 256000
+# max_output_tokens or the prompt has no input capacity left. 256000 left 128000
+# for input, a cap on the diff that the model does not impose: the live list
+# reports context_length = 1000000, so the budget is that window.
+max_model_tokens = 1000000
 # Reasoning is on at high, not max, and `medium` is not a value this model
 # accepts: the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
 # D5) and pr-agent forwards the string verbatim, so an unlisted value is swallowed
@@ -29,7 +31,7 @@ max_model_tokens = 256000
 # measured ~22s; low measured 118-417s; high is unmeasured — if a review still
 # reports 1102 at high, drop to low.
 max_output_tokens = 128000
-reasoning_effort = "high"
+reasoning_effort = "max"
 # LiteLLM does not know this id, so pr-agent only forwards reasoning_effort when
 # the id is listed here (configuration.toml: additional_reasoning_effort_models).
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
