@@ -161,12 +161,26 @@ if [[ "$rc" -eq 0 ]]; then
   fail gh-fails-closed "exit 0 when gh api failed" "$(cat "$root/out")"
 fi
 
+# The suite's own count, taken from its output rather than typed into the doc:
+# row 149 said 11/11 while the script printed 15, and nothing compared them.
+checks=$((checks + 1))
+conflict_holds="$(bash "$ROOT/scripts/check-pr-conflicts.sh" --self-test 2>&1 \
+  | sed -n 's/.*self-test: \([0-9]*\) hold.*/\1/p')"
+if [[ -z "$conflict_holds" ]]; then
+  fail doc-count-conflicts "check-pr-conflicts.sh --self-test printed no hold count"
+else
+  conflict_row="$(grep -oE '\| `scripts/check-pr-conflicts\.sh --self-test` *\| *[0-9]+/[0-9]+' "$DOC" \
+    | grep -oE '[0-9]+/[0-9]+' | sort -u)"
+  [[ "$conflict_row" == "$conflict_holds/$conflict_holds" ]] \
+    || fail doc-count-conflicts "PR-AGENT.md says '${conflict_row:-nothing}' for the conflicts suite, which prints '$conflict_holds/$conflict_holds'"
+fi
+
 # The decision log states this suite's count, and a count the run refutes is a
 # claim, not evidence: the expected number is counted from this file (one per
 # `run_case` call, plus the gh case and this check), so a case appended here
 # raises both sides together and neither depends on where the check sits.
 checks=$((checks + 1))
-declared=$(( $(grep -c '^run_case ' "$0") + 2 ))
+declared=$(( $(grep -c '^run_case ' "$0") + 3 ))
 # Every mention must agree: `head -1` let a stale row coexist with a correct one
 # and pass on whichever came first. Anchored to the D38 row shape, because a
 # count quoted in the row's own [VERIFIED] prose is not the row's count.
