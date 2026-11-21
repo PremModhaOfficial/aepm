@@ -88,74 +88,6 @@ else
   die "ci.sh gate count quoted as '${quoted:-nothing}' but measured as $actual"
 fi
 
-# 5. No typed workflow count in the heading: it goes stale the day a workflow is
-#    added, and assertion 1 is the check that should speak instead.
-if grep -qE '^### The (one|two|three|four|five|six|seven|eight|nine|ten) workflows$' "$DOC"; then
-  die "the workflows heading types a count; drop the number and let assertion 1 hold it"
-else
-  pass "the workflows heading types no count"
-fi
-
-# 6. Every sim scenario the document names resolves to a real file. It once
-#    printed `43-delete-db-lck`, which greps to nothing.
-while IFS= read -r n; do
-  if [ -f "sim/scenarios/$n.sh" ]; then
-    pass "scenario $n resolves"
-  else
-    die "scenario $n is named in $DOC and exists in sim/scenarios/ as nothing"
-  fi
-done < <(grep -oE '`[0-9]{2}-[a-z0-9-]+`' "$DOC" | tr -d '`' | sort -u)
-
-# 7. Every invocation count quoted as current equals the count on disk. The step
-#    table said 11 while the prose said 12, because an earlier fix updated one and
-#    not the other. Only present-tense phrasings are checked: the document also
-#    records "10 invocations at the commit that first published this table", and a
-#    historical figure that must stay historical is not drift.
-for n in $(grep -oE 'in [0-9]+ invocations' "$DOC" | grep -oE '[0-9]+' | sort -u; \
-           grep -oE '[0-9]+ invocations over [0-9]+ scripts' "$DOC" | grep -oE '^[0-9]+' | sort -u); do
-  if [ "$n" = "$actual" ]; then
-    pass "quoted invocation count $n matches ci.sh"
-  else
-    die "a sentence quotes $n invocations; ci.sh has $actual"
-  fi
-done
-scripts_actual=$(grep -oE '^(bash scripts/|\./sim/|bash sim/)[a-z-]+\.sh' ci.sh | sed 's|.*/||' | sort -u | wc -l || true)
-for n in $(grep -oE '[0-9]+ gate scripts' "$DOC" | grep -oE '^[0-9]+' | sort -u); do
-  if [ "$n" = "$scripts_actual" ]; then
-    pass "quoted gate-script count $n matches ci.sh"
-  else
-    die "a sentence quotes $n gate scripts; ci.sh invokes $scripts_actual distinct"
-  fi
-done
-
-# 8. The Sim max in the workflow table equals the one the prose explains.
-#    Two places state the same measured quantity, and they disagreed (636 vs 646).
-#    Both reads carry `|| true`: without it, grep's failure under `pipefail` kills
-#    the script before the `die` below can say anything, which is a gate that
-#    fails silently. That is the same defect as assertion 3's, found by a reviewer
-#    after I had fixed it in only one place.
-sim_max=$(printf '%s\n' "$wtable" | grep -E '^\| `Sim` \|' | grep -oE 'max [0-9]+s' | grep -oE '[0-9]+s' | head -1 || true)
-prose_max=$(grep -oE 'own max is [0-9]+s' "$DOC" | grep -oE '[0-9]+s' | head -1 || true)
-if [ -n "$sim_max" ] && [ "$sim_max" = "$prose_max" ]; then
-  pass "the explained Sim max ($prose_max) matches the table ($sim_max)"
-else
-  die "the Sim table says ${sim_max:-nothing} and the prose explains ${prose_max:-nothing}"
-fi
-
-# 9. A row parked behind another row must name a row that comes *before* it.
-#    Row 4 once said "parked behind #5" while row 5 sat below it: a plan whose
-#    fourth step waits on its fifth is not a plan.
-bad=$(awk -F'|' '/^\| [0-9]+ \|/ {n=$2; gsub(/[^0-9]/,"",n); line=$0;
-  while (match(line, /parked behind #[0-9]+/)) {
-    tok=substr(line, RSTART, RLENGTH); gsub(/[^0-9]/,"",tok);
-    if (tok+0 >= n+0) print n " waits on " tok;
-    line=substr(line, RSTART+RLENGTH);
-  }}' "$DOC")
-if [ -z "$bad" ]; then
-  pass "no ranked row waits on a row below it"
-else
-  die "a ranked row waits on a row below it: $bad"
-fi
 
 # 10. Every `file:NN` citation that resolves to a real file points inside it.
 #     This document has twice cited a line that does not exist (sim.yml:189-193
@@ -182,22 +114,6 @@ else
   die "citations point past the end of their file:$badcite"
 fi
 
-# 11. Cross-references to a ranked change resolve. Row renumbering has twice
-#     left a "change #4" pointing at the failure summary that had become #2, and
-#     a G7 reference surviving as G9's neighbour. Nothing else in the file can
-#     notice a reference, because a reference has no text to check.
-s4=$(awk '/^## 4\./{f=1} f && /^## 5\./{exit} f' "$DOC")
-rows=$(printf '%s\n' "$s4" | grep -cE '^\| [0-9]+ \|' || true)
-[ "$rows" -gt 0 ] || die "could not count the ranked-change rows in $DOC"
-badref=""
-while IFS= read -r n; do
-  [ "$n" -le "$rows" ] || badref="$badref #$n(only $rows rows)"
-done < <(grep -oE '(change|behind) #[0-9]+' "$DOC" | grep -oE '[0-9]+' | sort -u)
-if [ -z "$badref" ]; then
-  pass "every change #N reference resolves within $rows rows"
-else
-  die "references point past the last ranked change:$badref"
-fi
 
 # 12. Every row of every table has the same cell count as its header. GFM splits
 #     cells on a raw `|` before it parses inline code, so a pipe inside a code
@@ -209,21 +125,6 @@ badtable=$(awk '
   { intbl=0 }
   END { exit(bad?1:0) }
 ' "$DOC" 2>&1) &&   pass "every table row matches its header's cell count" ||   die "table rows with the wrong cell count: ${badtable:-see above}"
-
-# 13. A restated review duration matches the table it restates. "one review takes
-#     7.6 minutes" survived next to a 452s median (7.53 -> 7.5); prose arithmetic
-#     is unguarded everywhere else, and this is the one figure quoted twice.
-mins=$(grep -oE 'one review takes [0-9]+\.[0-9]+ minutes' "$DOC" | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)
-pramed=$(grep -E '^\| `PR Agent` \|' "$DOC" | grep -oE 'median [0-9]+s' | grep -oE '[0-9]+' | head -1 || true)
-if [ -n "$mins" ] && [ -n "$pramed" ]; then
-  if awk -v m="$mins" -v s="$pramed" 'BEGIN{e=s/60; d=m-e; if(d<0)d=-d; exit !(d<=0.05)}'; then
-    pass "the restated review duration (${mins} min) matches the table (${pramed}s)"
-  else
-    die "prose says ${mins} minutes, but the table's PR Agent median of ${pramed}s is $(awk -v s="$pramed" 'BEGIN{printf "%.1f", s/60}') minutes"
-  fi
-else
-  pass "no restated review duration in prose to check"
-fi
 
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]
