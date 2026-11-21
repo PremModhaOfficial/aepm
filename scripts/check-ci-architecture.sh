@@ -117,5 +117,20 @@ else
   die "the Sim table says ${sim_max:-nothing}s and the prose explains ${range_end:-nothing}s"
 fi
 
+# 9. A row parked behind another row must name a row that comes *before* it.
+#    Row 4 once said "parked behind #5" while row 5 sat below it: a plan whose
+#    fourth step waits on its fifth is not a plan.
+bad=$(awk -F'|' '/^\| [0-9]+ \|/ {n=$2; gsub(/[^0-9]/,"",n); line=$0;
+  while (match(line, /parked behind #[0-9]+/)) {
+    tok=substr(line, RSTART, RLENGTH); gsub(/[^0-9]/,"",tok);
+    if (tok+0 >= n+0) print n " waits on " tok;
+    line=substr(line, RSTART+RLENGTH);
+  }}' "$DOC")
+if [ -z "$bad" ]; then
+  pass "no ranked row waits on a row below it"
+else
+  die "a ranked row waits on a row below it: $bad"
+fi
+
 printf '\nci-architecture self-test: %d assertions hold, %d failed\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]

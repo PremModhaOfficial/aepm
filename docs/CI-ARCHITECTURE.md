@@ -46,8 +46,11 @@ term every ranking below used to ignore.
 The two `Scheduled audit` names are display names; the job ids are `audit` and
 `report`.
 
-`gh api repos/{owner}/{repo}/branches/main/protection --jq .required_status_checks`
-→ `{"checks":["CI (Linux)","Arch simulation","Review Gate"],"strict":true}`.
+`gh api repos/{owner}/{repo}/branches/main/protection --jq .required_status_checks.contexts`
+→ `["CI (Linux)","Arch simulation","Review Gate"]`, and
+`… --jq .required_status_checks.strict` → `true`. Quote the two fields, not the
+whole object: it has six keys and `checks` is a list of `{app_id,context}`, so
+abbreviating it into one invented shape stops it being a citation.
 `MSRV`, `Stable`, `Coverage` and `Prototype` are advisory: they run on every PR
 and cannot block a merge.
 
@@ -62,8 +65,16 @@ max(CI, Sim, PR Agent + Review Gate)
 ```
 
 Measured 2026-11-21, successes only: `CI` 65s, `Sim` 244s at p90, `PR Agent`
-456s, `Review Gate` 10s. That is `max(65, 244, 456 + 10)` = **466s, and the
-review chain is all of it.**
+456s, `Review Gate` 10s. That is `max(65, 244, 456 + 10)` = **466s**.
+
+That is the **first review of a head**, and it is the term this document was
+missing. It is not the only regime. `pr-agent.yml:72-92` skips the model when the
+head already carries a complete review of that exact commit
+(`review-state.sh --reviewed`), so a re-push to a reviewed head runs `PR Agent` in
+46-108s, not 456s. Those PRs wait `max(65, 244, ~50 + 10)` = **244s, and Sim is
+the last term.** Both statements are true, of different PRs: the old `max(CI, Sim)`
+rule was right for re-pushes and wrong for first reviews, and every PR pays a
+first review once.
 
 The previous version of this section concluded `max(CI, Sim)` and "Sim is the
 larger term by 3×", measured from these runs:
@@ -76,10 +87,10 @@ larger term by 3×", measured from these runs:
 
 Those three runs are still accurate. They could not see the review chain, whose
 `PR Agent` median was 124s when they were taken and is 456s two days later. The
-conclusion that follows is the opposite of the old one: **CI and Sim tuning are
-both worth zero seconds of merge latency until the review chain is under `Sim`'s
-p90**, because neither can be the last thing a PR waits on while one review takes
-7.6 minutes.
+conclusion that follows is the opposite of the old one, once, for first reviews:
+**CI and Sim tuning are worth zero seconds on a head nobody has reviewed yet**,
+because neither can be the last thing it waits on while one review takes 7.6
+minutes. On a re-push the old rule still holds: Sim governs and CI hides under it.
 
 Two different Sim medians exist and they are not interchangeable: 10s over all
 runs of the last 50, because most PRs are docs-only and select zero scenarios, and
@@ -313,40 +324,41 @@ multi-stage build; it is marked experimental by Docker and consumes the same
 | # | Gap | Measured | Why it matters |
 |---|---|---|---|
 | G1 | The sim image is built from scratch on every run | 118s of a 194s PR job; 0/20 runs reused a layer | 61% of the Sim job, and the 539s tail is the same uncached build on a slow mirror. A `type=gha` layer cache was attempted as PR #145, closed unmerged on 2026-11-19 — its own successful runs were 287s, 351s, 370s and 636s against the 194s it targeted. Any proposal here has to beat that measurement, not the theory |
-| G2 | Every ranking in this document was ordered by a term that is not the critical path | `PR Agent` median 456s + `Review Gate` 10s against `CI` 65s and `Sim` p90 244s | The review chain is 466s of a 466s wait. Sim and CI tuning move nothing until it shrinks, so the order of section 4 was wrong, not merely stale |
+| G2 | Every ranking in this document was ordered by a term that is not the critical path — on first reviews | `PR Agent` median 456s + `Review Gate` 10s against `CI` 65s and `Sim` p90 244s; 46-108s when the head is already reviewed | A first review waits 466s, so Sim and CI tuning move nothing until that shrinks. A re-push waits 244s and Sim *is* the last term. The document was wrong for one regime and said nothing about the other |
 | G3 | Four jobs inside `CI` each compile the same tree and run the same suite (`MSRV`, `CI (Linux)`, `Stable`, `Coverage`) | four compiles, four test runs per PR | Free in wall clock, since they are parallel, but it multiplies the flake surface 4× and one defect reddens three or four checks. Section 2 already sources the fix (`needs: basics`); it needs a decision, not a measurement |
 | G4 | A red `Sim` says one line | three shapes, not one: `sim: build: FAILED…` (`sim/run.sh:81`, `:94`), `sim: TIMEOUT: …` (`:214`), `sim: FAIL: … exited <status>` (`:220`) | Diagnosis requires downloading the artifact; the failing assertion is inside it, not on the run page. A failure summary that assumes one shape will miss two of the three |
 | G5 | The artifact does not record which scenarios were selected | **closed**: `sim.yml:55` writes `sim-logs/selected-scenarios.txt` | Kept as a row because the failure it describes is the one G9 below still has, in a different form: without the record, "this run proved nothing" and "this run had nothing to prove" look identical |
-| G6 | The required check names are written down twice, and one copy is already short | `docs/FACTORY.md:107` lists all three from `gh api …/branches/main/protection`; `.github/PR-AGENT.md:64` lists only `["CI (Linux)", "Arch simulation"]`; `README.md:307` and `AGENTS.md` mention the names in prose without a list | The drift this row warns about has already happened: the second enumeration is missing `Review Gate`, the one name produced by a Checks-API write rather than a job, so no grep of a workflow catches its loss. `check-ci-architecture.sh` guards only this document's copy — which is why the row stands rather than being closed by it |
+| G6 | The required check names are written down twice, and one copy is already short | `docs/FACTORY.md:107` is the only complete enumeration (`gh api …/protection`); `README.md:307` and `.github/PR-AGENT.md:64` both print `CI (Linux)` and `Arch simulation` and stop, the latter adding "until #115 merges"; `AGENTS.md` names only `Review Gate` and calls a required-check claim "not something this repo can assert" | The drift this row warns about has already happened: the second enumeration is missing `Review Gate`, the one name produced by a Checks-API write rather than a job, so no grep of a workflow catches its loss. `check-ci-architecture.sh` guards only this document's copy — which is why the row stands rather than being closed by it |
 | G7 | Selection could diff the wrong commits | **closed**: `--list "$BASE" "$HEAD_SHA"`; #143 selected 27 of 56 scenarios, job 218s, for three markdown files | The frozen `base.sha` against the runner's merge commit selects by whatever `main` gained meanwhile. Worth recording because the symptom (a slow PR) pointed at the suite, not the selection |
 | G8 | A head that conflicts with its base starts no workflow at all | PR #144: created conflicting, `gh api …/actions/runs?head_sha=…` returned `total_count: 0`; rebased onto `main`, the same head started `CI`, `Sim` and `Review` | "No checks reported" on a conflicted PR is indistinguishable on the PR page from a workflow bug, and the required checks simply never arrive |
 | G9 | A required check can pass having run nothing | `Sim` selects 0 of 56 scenarios on 7 of 20 runs and finishes in ~10s; `CI (Linux)` runs the same shape on every PR | A false green is invisible by construction — it is the one failure mode no dashboard shows. `--check-map` (G1's neighbour in `sim.yml:46`) is the guard that distinguishes "nothing to prove" from "proved nothing", and the failure summary in change #4 should say which happened |
 
 ## 4. Ranked changes
 
-Ordered by the wall clock a change actually removes from the path measured in
-section 1 — `max(CI, Sim, PR Agent + Review Gate)` — then by robustness. Every
-row names the files it touches, the command that says whether it won, and how to
-undo it. "Expected" is still a prediction; the difference is that each row now
-carries the test that will call the prediction a failure.
+Ordered by what it costs to *not* have it: diagnosis first, because it is paid on
+every red; then seconds; then the rows that are parked. The previous version
+claimed it was ordered by wall clock, and four of its five rows removed zero
+seconds from a PR's path — the order was decided by something the document did
+not name. Naming the real key is cheaper than pretending the old one applied.
+
+One measurement governs every row below and is deliberately **not** a row, because
+it has no file, no rollback and no "after":
+
+> A PR's **first** review waits 466s (`max(65, 244, 456 + 10)`). A **re-push** to a
+> head that already carries a review waits 244s, because `pr-agent.yml:72-92`
+> skips the model on an already-reviewed head and those runs take 46-108s.
+
+Decomposing that 456s is the highest-value work available here. Naming a fix for
+it before decomposing it is what produced the previous ranking, so this paragraph
+is where it belongs, not row 1.
 
 | # | Change | Files | Before → expected after | Measure | Rollback | Risk |
 |---|---|---|---|---|---|---|
-| 1 | Head-pinned scenario selection: `gate-scenarios.sh --list <base> <head>`, the PR head passed explicitly, the chosen list written into `sim-logs/` | `scripts/gate-scenarios.sh`, `.github/workflows/sim.yml` | #143: 27 of 56 scenarios, job 218s, for three markdown files | up to 212s on any PR that follows a `main` merge; the artifact now records what ran | `scripts/check-gate-scenarios.sh` (<- `ci.sh`) | **landed** (#144). Both halves are pinned by the new gate, so a revert fails CI rather than quietly re-selecting foreign scenarios |
-| 2 | Decompose the review chain before optimising anything else: it is 466s of a 466s wait | none yet — this row is a measurement, not a patch. `pr-agent.yml` if it becomes one | `PR Agent` median 456s (p90 896s, max 1401s, n=20) | the review comment's own run-details line already records model, tokens in/out, duration and AI calls (`.pr_agent.toml: output_run_details`); n=20 `gh run list --workflow 'PR Agent'` before and after | nothing to revert | this row prescribes no fix. Naming a fix before decomposing is what produced the old ranking |
-| 3 | Shard the **full-suite** `main` run two ways under one aggregator named `Arch simulation` | `sim.yml` only: `sim/run.sh` already takes scenarios positionally (`:114-116` `scenarios=("$@")`) and `sim.yml:68` already calls it that way. The work is slicing the selected list into N contiguous runs | 203s of scenarios on `main` | `gh run list --workflow Sim` filtered to `main` pushes, n=10, before/after | revert the commit; the aggregator is what keeps `main` gated, so a revert is safe | 100s on `main` pushes only, **zero PR benefit**. Two shapes look right and are wrong. "Two job names" leaves the required name absent, and a required check that never appears keeps every PR Pending — `main` becomes unmergeable, not unguarded (`:260`). A bare aggregator asserting `all(.result == "success")` is red on **every PR**, because shards gated off a pull request report `skipped`, not `success`. The shape that works: shards `if: github.event_name != 'pull_request'`; an aggregator with no `if:` at all, so it runs on PRs too, named exactly `Arch simulation`, that `needs:` them and asserts `all(.result == "success" or .result == "skipped")` — passing on a PR where everything is skipped, failing on `main` where a dead shard is `failure`. `sim.yml:18` carries that name today |
-| 4 | Failure summary: the failing scenario names and their last lines into `$GITHUB_STEP_SUMMARY`, and the selected list into `sim-logs/` | `sim.yml` (`Select scenarios`, `Build sim image and run scenarios`) | one line, artifact download to diagnose | a forced failure: the reason visible on the run page without downloading anything | revert the step | zero seconds, pure robustness. Two details that make it work rather than appear to: `sim-logs/` is created by `sim/run.sh` *after* the select step, so the select step needs its own `mkdir -p` or the upload hits `if-no-files-found: warn` and passes silently; and there are three failure shapes to summarise, not one (`sim/run.sh:81`, `:94`, `:214`, `:220`) |
-| 5 | Pre-compile the dependency graph in the Dockerfile (manifests + a dummy entry point, `cargo build`, then `COPY src`) | `sim/Dockerfile`, `sim/README.md`, a new `sim/scenarios/NN-stale-binary.sh` | 33.6s compile, all invalidated by a `src/` edit | build step duration on a src-only change | revert `sim/Dockerfile` | **parked behind #6**: it is only worth 15s if a layer cache exists to hold the result. Its stated precondition ("prove it does not ship a stale binary") names no proof — `grep -in stale sim/README.md` finds only pacman locks and a stale aurto repo. The proof that would admit it is a build-arg carrying the commit sha, asserted through `aepm --version`, but `src/main.rs:7-15` prints `CARGO_PKG_VERSION` only and there is no `build.rs`, so producing that sha needs a `src/` change — a ticket under `§6.3`, not a CI slice. The row stays parked until that ticket exists |
-| 6 | buildx `type=gha` layer cache for the sim image, written by `push` to `main`, read by PRs | `sim/run.sh:61` (the build call) and the `DOCKER_BUILDKIT=0` retry at `:89`; `sim.yml`; `sim/check-image-tag.sh` and `sim/check-build-retry.sh` both parse that argv and both are `ci.sh` gates | 118s build every run | median Sim job for `src/`-touching PRs, n=10 | revert commit + `gh cache delete <key>` | **parked, and it was already tried**: PR #145 shipped exactly this and closed unmerged on 2026-11-19 after runs of 287s, 351s, 370s and 636s against the 194s baseline. Independent reasons not to re-rank it: caches are evicted when unused and a PR-scoped write cannot seed `main` (section 2), and the row's two size figures disagreed with each other (3.5 GB vs ~1 GB). The untried alternative is `ghcr.io` + `type=registry` from `push:main` |
-
-Two changes remain rejected, on the same evidence as before:
-
-- **`cargo nextest`** — the entire Rust suite is 21.9s inside `ci.sh`; installing a
-tool to split 21.9s does not pay.
-- **Path filters on `CI`/`Sim`** — a filtered workflow leaves a required check
-Pending forever (sourced in section 2). Note `NEXT.md` still carries a ticked
-box claiming docs-only `paths-ignore` shipped; it did not, and it must not.
-
+| 1 | Head-pinned scenario selection: `gate-scenarios.sh --list <base> <head>`, the PR head passed explicitly, the chosen list written into `sim-logs/` | `scripts/gate-scenarios.sh`, `.github/workflows/sim.yml` | #143: 27 of 56 scenarios, job 218s, for three markdown files | up to 212s on any PR that follows a `main` merge; the artifact now records what ran | `scripts/check-gate-scenarios.sh`, which `ci.sh` runs | **landed** (#144). Both halves are pinned by the new gate, so a revert fails CI rather than quietly re-selecting foreign scenarios |
+| 2 | Failure summary: the failing scenario names and their last lines into `$GITHUB_STEP_SUMMARY` | `sim.yml` (`Build sim image and run scenarios`) | one line; an artifact download to diagnose | a forced failure: the reason visible on the run page without downloading anything | revert the step | zero seconds, pure diagnosis. Two details that make it work rather than appear to: `sim-logs/` is created by `sim/run.sh` *after* the select step, so any write before that needs its own `mkdir -p` or the upload hits `if-no-files-found: warn` and passes silently; and there are three failure shapes to summarise, not one (`sim/run.sh:81`, `:94`, `:214`, `:220`) |
+| 3 | Shard the **full-suite** `main` run: two shard jobs plus an aggregator named `Arch simulation` | `sim.yml` only — `sim/run.sh` already takes scenarios positionally (`:114-116` `scenarios=("$@")`) and `sim.yml:68` already passes `"${scenarios[@]}"`. The work is partitioning the list, not plumbing it | 203s of scenarios on `main` | `gh run list --workflow Sim` filtered to `main` pushes, n=10, before/after | revert the commit | 100s on `main` pushes only, **zero PR benefit**. Three shapes look right and are wrong. (a) Two jobs named `Arch simulation (1/2)` and `(2/2)` leave the required name absent, and a required check that never appears keeps every PR Pending — unmergeable, not unguarded (`:260`). (b) An aggregator asserting `all(.result == "success")` is red on every PR, because a job gated off a pull request reports `skipped` in `needs`, whatever GitHub shows as its check conclusion. (c) Gating **both** shards off pull requests makes the required check green on PRs having run no scenario — G9, a false green shipped as an optimisation. The shape that works: shard 1 runs always, and on a PR runs the selected subset; shard 2 is `if: github.event_name != 'pull_request'`; the aggregator carries no `if:` at all, is named exactly `Arch simulation` (`sim.yml:18`), `needs:` both, and passes when every result is `success` or `skipped` |
+| 4 | buildx `type=gha` layer cache for the sim image, written by `push` to `main` and read by PRs | `sim/run.sh:61` (the build call) and the `DOCKER_BUILDKIT=0` retry at `:89`; `sim.yml`; `sim/check-image-tag.sh` and `sim/check-build-retry.sh`, both of which parse that argv and both of which `ci.sh` runs | 118s build every run | median Sim job for `src/`-touching PRs, n=10 | revert commit + `gh cache delete <key>` | **parked, and already tried**: PR #145 shipped exactly this and closed unmerged on 2026-11-19, its own successful runs 287s, 351s, 370s and 636s against the 194s it targeted. Independent reasons not to re-rank it: a PR-scoped write cannot seed `main` (section 2), and the row's own two size figures disagreed (3.5 GB vs "~1 GB"). The untried alternative is `ghcr.io` + `type=registry` from `push:main` |
+| 5 | Pre-compile the dependency graph in the Dockerfile (manifests + a dummy entry point, `cargo build`, then `COPY src`) | `sim/Dockerfile`, `sim/README.md`, a new `sim/scenarios/NN-stale-binary.sh` | 33.6s compile, all of it invalidated by a `src/` edit | build step duration on a src-only change | revert `sim/Dockerfile` | **parked behind #4**: worth 15s only if a layer cache exists to hold the result. Its stated precondition ("prove it does not ship a stale binary") names no proof — `grep -in stale sim/README.md` finds only pacman locks and a stale aurto repo. The proof that would admit it is a build-arg carrying the commit sha asserted through `aepm --version`, but `src/main.rs:7-15` prints `CARGO_PKG_VERSION` and there is no `build.rs`, so producing that sha needs a `src/` change — a ticket under `§6.3`, not a CI slice |
 ## 5. Rejected for cost
 
 - **Larger GitHub-hosted runners.** "Larger runners are billed for public
