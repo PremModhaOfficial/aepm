@@ -240,8 +240,10 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   `PR-AGENT.md` N5, measured 2026-11-21). Requiring it is possible because every
   head with a review run of its own gets a `Review Gate` conclusion on itself,
   and a force-pushed head's older conclusion stays on the commit it judged,
-  which no rollup reads, because checks are per-commit. A human override is an
-  admin merge, and it is a decision, not a formality.
+  which no rollup reads, because checks are per-commit. While `enforce_admins`
+  is on there is no merge bypass: the only override is editing the `main` ruleset
+  or protection (turn `enforce_admins` off or drop `Review Gate`), and that is a
+  decision, not a formality.
 - **Failure:** a review that could not run fails the `Review` check. A red
   `Review` means "no review happened", not "no findings".
 - **Policy:** `.pr_agent.toml`; rules load from `main`, so a PR cannot rewrite
