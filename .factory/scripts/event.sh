@@ -94,11 +94,26 @@ if [ "${1:-}" = "--self-test" ]; then
   okd "an issue body cannot set the mandate or close the front matter"
 
   # A failed ticket create must exit non-zero AND leave no dedupe marker, or
-  # GitHub's retry is a permanent "duplicate" for an event never processed.
+  # GitHub's retry is a permanent "duplicate" for an event never processed. The
+  # failure is forced by taking the writer away: an EMPTY body is no longer one
+  # (see the next drill), and a drill that passed on the old failure it describes
+  # would keep passing after the fix.
+  mv "$tmp/.factory/scripts/ticket.sh" "$tmp/.factory/scripts/ticket.sh.off"
   out="$(ev d-6 issues '{"action":"opened","issue":{"number":12,"title":"No body","html_url":"https://github.com/o/r/issues/12","body":""},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  mv "$tmp/.factory/scripts/ticket.sh.off" "$tmp/.factory/scripts/ticket.sh"
   { [ "$st" -ne 0 ] && [ ! -f "$tmp/.factory/inbox/d-6.seen" ] && [ ! -f "$tmp/.factory/tickets/T-5.md" ]; } \
     || { echo "self-test FAILED: a failed ticket create exited $st, left T-5 or a .seen marker"; exit 1; }
   okd "a failed ticket create exits non-zero and leaves no dedupe marker"
+  # T-15 / finding dc45facc9a4a: an issue with no body made `--request` empty, so
+  # the create failed forever and GitHub retried into the same failure.
+  out="$(ev d-12 issues '{"action":"opened","issue":{"number":31,"title":"Fix the flaky test","html_url":"https://github.com/o/r/issues/31","body":""},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: an issue with an empty body was rejected forever (exit $st: $out)"; exit 1; }
+  t="$(ls "$tmp/.factory/tickets"/T-*.md | tail -1)"
+  grep -q 'Fix the flaky test' "$t" \
+    || { echo "self-test FAILED: an empty body left the ticket with no request at all ($t)"; exit 1; }
+  [ "$(awk 'NR==1{next} /^---$/{exit} {print}' "$t" | sed -n 's/^scope: *//p' | head -1 | tr -d ' ')" = "" ] \
+    || { echo "self-test FAILED: an empty body widened the mandate"; exit 1; }
+  okd "an issue with no body still gets a ticket, and no mandate"
 
   # A pull_request delivery is matched on the ticket's `pr` field. Nothing wrote
   # the "PR #N" text the old grep looked for, so every PR read as an orphan.
@@ -195,6 +210,13 @@ case "$EVENT:$ACTION" in
     # (the planner proposes, the Router runs `ticket.sh set <T> scope '<p1,p2>'`)
     # before a builder is dispatched. Nothing here may widen it.
     REQ="$(printf '%s' "$BODY" | head -40 | fm_guard)"
+    # An issue opened with no body is ordinary, and `ticket.sh new` refuses an
+    # empty request: the delivery then exited 1 with no dedupe marker, so every
+    # GitHub retry failed the same way and the issue never got a ticket. The
+    # title is data like the body and the request when there is no other; the
+    # MANDATE stays empty either way — only the planner fills that in.
+    [ -n "$REQ" ] || REQ="$(jq -r '.issue.title // ""' "$PAYLOAD" 2>/dev/null | head -1 | fm_guard)"
+    [ -n "$REQ" ] || REQ="issue #$NUM was opened with no title and no body";
     TICKET="$(bash "$FACTORY/scripts/ticket.sh" new "issue-$NUM" --request "$REQ" --scope "" --authority inferred --issue "$NUM")" \
       || { say "failed: no ticket created for #$NUM"; log ticket-create-failed "$URL"; exit 1; }
     ;;
