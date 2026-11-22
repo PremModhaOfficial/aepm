@@ -43,12 +43,11 @@ reasoning_effort = "max"
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s at the pinned version (configuration.toml v0.50.0 line 34), far
 # shorter than a measured max-reasoning review (498-509s). It bounds one litellm
-# request and nothing larger: over 23 recorded calls (review comment run details,
-# PRs #130-#159) per-call time was p50 325s, p95 414s, max 848s. 600 clips the
-# single 848s call that succeeded; 900 covers every recorded call with 52s to
-# spare but was still killed on a 30,105-token diff (run 44920542869: 900.36s and
-# 900.12s, both litellm timeouts, no comment posted). 1500 is 1.8x the worst
-# recorded call. No sum of timeouts bounds a run: a timed-out request is not
+# request and nothing larger. 900 was measured insufficient on a 30,105-token diff
+# (run 44920542869: 900.36s and 900.12s, both litellm timeouts, no comment posted),
+# and the slowest recorded call took 848.3s, so 1500 is 1.8x it. The recorded
+# distribution, and why 600 is rejected, are D10 of .github/PR-AGENT.md.
+# No sum of timeouts bounds a run: a timed-out request is not
 # replayed (`retry_same_model_on_timeout = false`) and there is no fallback model,
 # but a request the provider *rejects* (429, answered 5xx, non-timeout transport
 # error) is retried up to `num_retries = 4` more times, each attempt under its own
