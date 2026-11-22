@@ -28,7 +28,10 @@ function isWorktree(cwd: string): boolean {
 const NEVER = [
   { re: /\bgit\s+push\b[^\n]*(--force|-f\b)[^\n]*\b(main|master)\b/, why: "force-push to the default branch" },
   { re: /\bgit\s+push\b[^\n]*\b(main|master)\b/, why: "push to the default branch" },
-  { re: /\bgh\s+pr\s+merge\b[^\n]*--admin/, why: "merge bypassing branch protection (--admin)" },
+  // `gh` takes global flags before the subcommand (`gh --repo o/r pr merge`), so
+  // the word after `gh` is not necessarily `pr`; the words are matched in order
+  // anywhere on the line, and `--admin` still has to be on it.
+  { re: /\bgh\b[^\n]*\bpr\b[^\n]*\bmerge\b[^\n]*--admin/, why: "merge bypassing branch protection (--admin)" },
   // Editing branch protection in every spelling: `/protection` plus ANY write
   // method or field (-X, --method, -f, -F, --input), in either order. Two
   // patterns because a regex reads left to right; both name the same write set,
