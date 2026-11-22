@@ -238,12 +238,22 @@ phase_secrets() {
   # Scan ADDED lines only: a secret already in history is a different ticket.
   # -oE extracts the SECRET, not the line: a live key beside the word "example"
   # is still a live key, and placeholders are filtered per token, not per line.
-  local added pat t hits=""
+  local added pat t hits="" st f
   need_base
   # A binary file never reaches the secret scan: the size phase already failed it.
   # The header filter is git's exact header shape, never a bare `+++` prefix: a
   # token on a line of its own starting `+++` is an added line, not a header.
   added="$(git -C "$ROOT" diff -U0 --no-renames "$BASE" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)')"
+  # `git diff` never shows an untracked file, so this half is the only way the
+  # bytes of a file the scope phase accepted reach the scan: every non-exempt
+  # `??` path is judged by scope and counted by size, so it is scanned here too.
+  # A binary file needs no scan: a tracked one is refused by the numstat mark in
+  # phase_size, and an untracked one is capped there like any other file.
+  while IFS=$'\t' read -r st f; do
+    [ "$st" = "??" ] && [ -n "$f" ] || continue
+    exempt "$f" && continue
+    added="${added:+$added$'\n'}$(cat "$ROOT/$f" 2>/dev/null)"
+  done <<<"$(changed_paths)"
   [ -n "$added" ] || { pass secrets "no added lines to scan"; return 0; }
   for pat in \
     'gh[pousr]_[A-Za-z0-9]{20,}' \
@@ -375,6 +385,18 @@ case "$PHASE" in
       || { echo "self-test FAILED: an untracked file escaped the size cap: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - 700 lines in an untracked file fail the size cap"
     rm -f "$repo/src/untracked.txt"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+    # The other half of the same hole, in the Router's exact shape: the tree is
+    # at the base, so `git diff` has no added line at all, while an untracked
+    # file inside scope holds a token. `size` counts it and passes, and the
+    # scope phase accepted it, so the scan owes its bytes a look.
+    ( cd "$repo" && git reset -q --hard origin/main )
+    printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123" >"$repo/src/untracked-leak.txt"
+    out="$(expect fail "a token in an untracked file inside scope" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[secrets\]' \
+      || { echo "self-test FAILED: a token in an untracked file escaped the secret scan: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a token in an untracked file inside scope is caught"
+    rm -f "$repo/src/untracked-leak.txt"
     ( cd "$repo" && git reset -q --hard "$keep" )
     ( cd "$repo" && git checkout -q . && git reset -q --hard HEAD~1 \
       && printf 'k=ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret )
