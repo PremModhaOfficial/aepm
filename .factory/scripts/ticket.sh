@@ -302,9 +302,9 @@ case "$cmd" in
     done
     # The second writer of the same field, reached by `set <T> stage <v>`.
     st=0; out="$(tk set T-1 stage "verifying merging" 2>&1)" || st=$?
-    [ "$st" = 2 ] || { echo "self-test FAILED: set wrote an unknown stage (exit $st: $out)" >&2; exit 1; }
+    [ "$st" = 2 ] || { echo "self-test FAILED: set wrote a value the stage writer refuses (exit $st: $out)" >&2; exit 1; }
     [ "$(cksum <"$t")" = "$before" ] || { echo "self-test FAILED: a refused set changed the ticket" >&2; exit 1; }
-    okd "set cannot write an unknown stage either"
+    okd "set is refused the same value the stage verb refuses"
     st=0; tk stage T-1 building >/dev/null 2>&1 || st=$?
     [ "$st" = 0 ] && [ "$(tk get T-1 stage)" = building ] \
       || { echo "self-test FAILED: a documented stage was refused (exit $st)" >&2; exit 1; }
