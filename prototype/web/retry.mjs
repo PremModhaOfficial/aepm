@@ -31,7 +31,8 @@ export function isInfraFault(err) {
 // every golden is wrong. The syscall decides, because a `readFileSync` ENOENT is
 // a missing fixture, which is a repo defect and must stay a finding.
 export function isNoBrowser(err) {
-  return isInfraFault(err)
+  return err instanceof InfraFault              // the retry already wrapped it
+    || isInfraFault(err)
     || (err?.code === 'ENOENT' && /^spawn/.test(String(err.syscall || '')));
 }
 

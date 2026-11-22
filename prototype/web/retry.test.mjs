@@ -137,6 +137,20 @@ test('a missing browser beside a real finding still reports the finding', () => 
   assert.equal(verdict.code, 1, 'one finding outranks any number of browser faults');
 });
 
+test('a signal-killed browser is classified infra after the retry wraps it', () => {
+  // The wrap drops code and signal, so the type has to carry the verdict: a
+  // SIGKILL on a memory-limited runner never compared a golden.
+  let wrapped;
+  try {
+    withRetry(() => { const e = new Error('Command failed: chromium'); e.signal = 'SIGKILL'; throw e; });
+    assert.fail('should have thrown');
+  } catch (e) { wrapped = e; }
+  assert.equal(wrapped.name, 'InfraFault');
+  const verdict = web.report([{ msg: `tui-120x40.txt: ${wrapped.message}`, err: wrapped }], { pass: 0, total: 76 });
+  assert.equal(verdict.code, 2, 'a killed browser is not a verdict on a golden');
+  assert.match(verdict.text, /INFRASTRUCTURE 0\/76/);
+});
+
 test('InfraFault carries the last real error for the log', () => {
   try {
     withRetry(() => { const e = new Error('spawnSync ETIMEDOUT'); e.code = 'ETIMEDOUT'; throw e; });
