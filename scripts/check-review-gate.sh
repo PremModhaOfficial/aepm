@@ -512,12 +512,14 @@ authority_matches_next() {
 check authority-matches-next authority_matches_next
 
 # D39's rule lives only in a prompt, so it is read where the reviewer reads it.
-# Both halves of the paragraph, in the same awk: the first sentence says a comment
-# is not the code, and the second says the removed pattern in it is not current.
-# Pinning only the first is how the operative half deletes with the check green —
-# the same failure class #150 is about (finding 691bb9dc9491).
+# Both halves of the paragraph, in the same awk, and only as live text: a
+# `#`-prefixed line is a TOML comment, so a commented-out copy of the rule is not
+# the rule. Both bounds are findings on this file: pinning the first sentence only
+# let the operative half be deleted, and matching a `#` line let it be commented
+# out, each with the check green (finding 691bb9dc9491).
 review_rule_holds() {
-  awk '/^\[pr_reviewer\]/{f=1;next} /^\[/{f=0}
+  awk '/^[[:space:]]*#/ { next }
+       /^\[pr_reviewer\]/{f=1;next} /^\[/{f=0}
        f&&index($0,"A line inside a comment is not the code"){a=1}
        f&&index($0,"never quote a removed pattern as current"){b=1}
        END{exit !(a&&b)}' "$1"
@@ -530,7 +532,7 @@ review_rule_holds() {
 # it to `repo_context_files` (finding b835ca937d10). The policy file is read, so
 # the row is held to what it actually configures.
 doc_claims_match_code() {
-  local flat_d
+  local flat_d mutated
   flat_d() { tr '\n' ' ' <"$1" | tr -s ' '; }
   # This one stays a sentence, and that is deliberate. A prose-level "does the file
   # mention both words" check is too weak here: AGENTS.md names `typed block` and
@@ -545,6 +547,24 @@ doc_claims_match_code() {
   # D39's rule lives only in a prompt, so it is read where the reviewer reads it: the paragraph has to sit in `[pr_reviewer]`, and a move to another block is
   # a removal as far as #150 is concerned.
   review_rule_holds "$ROOT/.pr_agent.toml" || return 1
+  # A guard that passes the edits it exists to catch has proved nothing, so both
+  # are run here rather than trusted: the paragraph cut to its first sentence (the
+  # operative half deleted), and the clause commented out. Each copy has to be
+  # rejected; the assertions above and below say the mutation really happened, so
+  # a `sed` that stopped matching fails loudly instead of passing vacuously.
+  mutated="$TMP/pr_reviewer.toml"
+  awk '/^A line inside a comment is not the code\./ && !cut {
+         print "A line inside a comment is not the code."; cut=1; next }
+       cut && /^"""/ { cut=0 } cut { next } { print }' \
+    "$ROOT/.pr_agent.toml" >"$mutated"
+  grep -qF 'A line inside a comment is not the code.' "$mutated" || return 1
+  ! grep -qF 'never quote a removed pattern as current' "$mutated" || return 1
+  review_rule_holds "$mutated" && return 1
+  awk '/never quote a removed pattern as current/ && !/^[[:space:]]*#/ { print "# " $0; next }
+       { print }' "$ROOT/.pr_agent.toml" >"$mutated"
+  grep -qE '^# .*never quote a removed pattern as current' "$mutated" || return 1
+  ! grep -qE '^[^#]*never quote a removed pattern as current' "$mutated" || return 1
+  review_rule_holds "$mutated" && return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
     # Here the wording is the fact: D33c says this file is review input *and* that
     # reading it is bounded by the four files listed; a differently worded title
@@ -554,21 +574,6 @@ doc_claims_match_code() {
   fi
 }
 check doc-claims-match-code doc_claims_match_code
-
-# The guard above is worth its exit code only if it can fail on the edit it exists
-# to catch: the paragraph cut to its first sentence, which is a green run today.
-# A mutation that still passes is that bug, not a spare case.
-truncated_rule_is_rejected() {
-  local copy="$TMP/pr_reviewer.toml"
-  awk '/^A line inside a comment is not the code\./ && !cut {
-         print "A line inside a comment is not the code."; cut=1; next }
-       cut && /^"""/ { cut=0 } cut { next } { print }' \
-    "$ROOT/.pr_agent.toml" >"$copy"
-  grep -qF 'A line inside a comment is not the code.' "$copy" || return 1
-  ! grep -qF 'never quote a removed pattern as current' "$copy" || return 1
-  ! review_rule_holds "$copy"
-}
-check doc-claims-reject-a-truncated-rule truncated_rule_is_rejected
 
 # Finding bed8f31fda88: the fallback head is read from the selected review and
 # from no other, so an older review's persistent line cannot supply one. The
