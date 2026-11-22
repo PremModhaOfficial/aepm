@@ -32,8 +32,9 @@ max_model_tokens = 1000000
 # the attempt between them returned `503 ... error 1102 ... Worker exceeded
 # resource limits` (`retryable: false`, `owner_action_required: true`). Two of the
 # three were killed by the clock, so 1500s is worth its 900s of headroom before any
-# other cause is named. large_patch_policy is unset, so the whole 27.8k diff is
-# sent every time.
+# other cause is named. `large_patch_policy` is not overridden, so the pinned
+# default `clip` applies, and 27.8k sits below its threshold, so that diff is
+# sent whole.
 # A 64k cap returned empty content (`finish_reason=length`); 128k finished. off
 # measured ~22s; low measured 118-417s; high is unmeasured on a large diff — if a
 # review still reports 1102 at max, measure high, then drop to low.
