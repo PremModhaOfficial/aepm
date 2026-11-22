@@ -191,9 +191,13 @@ jobs:
           # truncated the previous attempt. --timeout is OCR's own task budget in
           # minutes, kept under the job's timeout-minutes so the guard reports
           # rather than the job being killed.
+          # --effort low, not high: high is the only setting measured to fail on
+          # this endpoint (4 of 11 runs died `budget_exceeded` at 349 input tokens
+          # of 120,000). The shadow exists to measure, so it uses the setting that
+          # completes; see docs/research/reviewer-decision.md.
           timeout 780 ocr review --from "$(cat merge-base.txt)" --to HEAD \
             --format json --output ocr.json --audience agent \
-            --effort high --concurrency 4 --max-tokens-budget 0 \
+            --effort low --concurrency 4 --max-tokens-budget 0 \
             --timeout 12 2>ocr-stderr.log
           rc=$?
           set -e
