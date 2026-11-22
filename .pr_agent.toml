@@ -117,6 +117,11 @@ Check these when the diff touches them:
 
 Report only findings that block a merge or violate a rule below. Skip naming,
 formatting, and comment-only suggestions.
+
+A line inside a comment is not the code. A comment that quotes a pattern,
+including one describing a bug that was fixed, is prose: only the statement
+beside it is the implementation. Never report a comment's text as the code at
+its line, and never quote a removed pattern as current.
 """
 
 [pr_description]
