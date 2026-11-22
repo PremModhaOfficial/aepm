@@ -176,11 +176,11 @@ else
   # which read as a missing mention.
   n_conflict_mentions=$(printf '%s\n' "$conflict_all" | grep -c . || true)
   n_conflict_rows=$(printf '%s\n' "$conflict_row" | grep -c . || true)
-  # Two places quote this suite: D38's verified sentence and the coverage row,
+  # Two places quote this suite: D41's verified sentence and the coverage row,
   # whose count sits past a backtick and a pipe. Matching only the first shape
   # left the table row uncompared while the guard said it was compared.
   if [ "$n_conflict_mentions" -lt 2 ]; then
-    fail doc-count-conflicts "PR-AGENT.md quotes this suite $n_conflict_mentions time(s); expected the D38 sentence and the coverage row: '${conflict_row:-nothing}'"
+    fail doc-count-conflicts "PR-AGENT.md quotes this suite $n_conflict_mentions time(s); expected the D41 sentence and the coverage row: '${conflict_row:-nothing}'"
   elif [ "$n_conflict_rows" -gt 1 ]; then
     fail doc-count-conflicts "PR-AGENT.md quotes $n_conflict_rows different counts for the conflicts suite: $(printf "%s" "$conflict_row" | tr "\\n" " ")"
   elif [[ "$conflict_row" != "$conflict_holds/$conflict_holds" ]]; then
@@ -195,9 +195,9 @@ fi
 checks=$((checks + 1))
 declared=$(( $(grep -c '^run_case ' "$0") + 3 ))
 # Every mention must agree: `head -1` let a stale row coexist with a correct one
-# and pass on whichever came first. Anchored to the D38 row shape, because a
+# and pass on whichever came first. Anchored to the D41 row shape, because a
 # count quoted in the row's own [VERIFIED] prose is not the row's count.
-# Read every mention, not just the row shape: D38's [VERIFIED] prose quotes the
+# Read every mention, not just the row shape: D41's [VERIFIED] prose quotes the
 # same count and the row-only pattern left it uncompared, which is the defect
 # the conflicts-suite guard above already had fixed.
 doc_all="$(grep -oE 'scripts/check-pr-conflicts-workflow\.sh`?[^0-9]{0,6}[0-9]+/[0-9]+' "$DOC" \
@@ -206,7 +206,7 @@ doc_rows="$(printf '%s\n' "$doc_all" | sort -u)"
 n_doc_mentions=$(printf '%s\n' "$doc_all" | grep -c . || true)
 doc_row="$doc_rows"
 if [[ "$n_doc_mentions" -lt 2 ]]; then
-  fail doc-count "PR-AGENT.md quotes this suite $n_doc_mentions time(s); expected the D38 sentence and the coverage row: '${doc_rows:-nothing}'"
+  fail doc-count "PR-AGENT.md quotes this suite $n_doc_mentions time(s); expected the D41 sentence and the coverage row: '${doc_rows:-nothing}'"
 fi
 [[ "$(printf '%s\n' "$doc_rows" | grep -c .)" -le 1 ]] || doc_row="$doc_rows (disagree)"
 if [[ "$declared" -ne "$checks" ]]; then
