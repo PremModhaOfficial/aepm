@@ -100,6 +100,16 @@ const CASES = [
   ["Router creates a tag with a message", "bash", { command: "git tag -a v1 -m msg" }, MAIN, true],
   ["Router creates a lightweight tag", "bash", { command: "git tag v1" }, MAIN, true],
   ["Router writes a file with sort's attached -o", "bash", { command: "sort -oout src/main.rs" }, MAIN, true],
+  // T-15 R11: rg --pre and fd -x RUN a program, so a write hid behind a filter.
+  ["Router runs a program through rg --pre", "bash", { command: "rg --pre /tmp/x foo src" }, MAIN, true],
+  ["Router runs a program through rg --pre=", "bash", { command: "rg --pre=/tmp/x foo src" }, MAIN, true],
+  ["Router runs a program through rg --pre-glob", "bash", { command: "rg --pre /tmp/x --pre-glob *.rs foo" }, MAIN, true],
+  ["Router runs a program through fd -x", "bash", { command: "fd -x rm" }, MAIN, true],
+  ["Router runs a program through fd --exec", "bash", { command: "fd --exec rm" }, MAIN, true],
+  ["Router runs a program through fd -X", "bash", { command: "fd -X rm" }, MAIN, true],
+  ["Router runs a program through fd --exec-batch", "bash", { command: "fd --exec-batch rm" }, MAIN, true],
+  ["Router searches with rg", "bash", { command: "rg -n foo src" }, MAIN, false],
+  ["Router lists with fd", "bash", { command: "fd -e rs" }, MAIN, false],
 
   // safety (finding 3): the verb sat behind a flag, so `--user enable` was missed.
   ["Router enables a user timer through systemctl --user", "bash", { command: "systemctl --user enable aepm.timer" }, MAIN, true],

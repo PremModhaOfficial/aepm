@@ -76,6 +76,12 @@ const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
   { re: /^bash\s+(?:\.\/)?sim\/run\.sh\b/, what: "the simulation harness" },
   { re: /^gh\s+(?:issue|pr|run|repo|api)\s+(?:list|view|diff|checks|status)\b/, what: "read-only gh" },
 ];
+// `rg --pre` and `fd -x/-X` RUN a program: not filters (T-15 R11, the round-9
+// class). Each gets its own set, because rg's -x is a regexp, not an exec.
+const EXECUTES_A_PROGRAM: { re: RegExp; what: string }[] = [
+  { re: /^rg\b[\s\S]*\s--pre(?:-glob)?(?:=|\s|$)/, what: "rg --pre/--pre-glob" },
+  { re: /^fd\b[\s\S]*\s(?:-x|--exec|-X|--exec-batch)(?:=|\s|$)/, what: "fd -x/--exec/-X/--exec-batch" },
+];
 // `git diff --output=x`, `grep --output` etc. write a named file: never allowed.
 const WRITES_A_FILE = /(^|\s)--output\b/;
 
@@ -149,6 +155,8 @@ function bashDecision(cmd: string): { allow: boolean; reason: string } {
     return { allow: false, reason: "it carries a shell metacharacter (chain, redirect, subshell or expansion)" };
   }
   if (WRITES_A_FILE.test(bare)) return { allow: false, reason: "it writes a file with --output" };
+  const exec = EXECUTES_A_PROGRAM.find((s) => s.re.test(bare));
+  if (exec) return { allow: false, reason: `it runs a program through ${exec.what}, so it is not a read-only filter` };
   if (/^git\b/.test(bare) && GIT_WRITE_VERB.test(bare.replace(/^git\s+/, ""))) {
     return { allow: false, reason: "it carries a git write verb, and the Router does not commit" };
   }

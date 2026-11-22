@@ -153,6 +153,12 @@ if [ "${1:-}" = "--self-test" ]; then
   [ -z "$(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr)" ] \
     || { echo "self-test FAILED: a PR body linked a ticket it only quoted (T-4 carries pr: $(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr))"; exit 1; }
   okd "a PR body that only mentions a ticket does not link it"
+  # T-15 R11: an unvalidated `$NUM` became front matter; refused, ticket untouched.
+  before="$(cat "$tmp/.factory/tickets/T-4.md")"
+  out="$(ev d-15 pull_request '{"action":"opened","pull_request":{"number":"abc","html_url":"https://github.com/o/r/pull/abc","title":"x","body":"Closes T-4"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 3 ] && [ "$before" = "$(cat "$tmp/.factory/tickets/T-4.md")" ]; } \
+    || { echo "self-test FAILED: a non-numeric PR number reached the front matter (exit $st: $out)"; exit 1; }
+  okd "a PR delivery with a non-numeric number is refused, and the ticket is untouched"
   # A comment delivery carries no issue number when the payload is shaped
   # differently than expected, and the empty pattern `^gh_issue: $` then matched
   # the first ticket whose issue field was still blank: the comment landed on an
@@ -256,6 +262,11 @@ case "$EVENT:$ACTION" in
     printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40 | fm_guard)" >>"$TICKET"
     ;;
   pull_request:opened|pull_request:synchronize|pull_request:reopened)
+    # `$NUM` is payload data and `ticket.sh set` refuses nothing, so
+    # `"number":"abc"` became front matter. Refused before the write.
+    case "$NUM" in
+      ''|*[!0-9]*|0) say "ignored: PR delivery carries no pull request number ('$NUM')"; log pr-bad-number "$URL"; exit 3 ;;
+    esac
     # Matched on the ticket's `pr` field, which `ticket.sh set <T> pr <num>`
     # writes. Nothing ever wrote the "PR #N" text this used to grep for, so
     # every PR delivery read as an orphan.

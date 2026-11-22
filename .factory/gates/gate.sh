@@ -12,6 +12,7 @@
 #
 #   --sha <40-hex>    judge THAT commit (a clean `git worktree` of it), not $ROOT
 #   --ticket-file <p> read the mandate from <p> instead of $FACTORY/tickets/<T>.md
+#   --base <ref>      the base a change is measured against; GATE_BASE is the same fact in an env prefix this repo's guard refuses on shape
 #
 # Checks: changes only inside the ticket scope, diff size, secret scan of added
 # lines, cargo fmt, clippy -D warnings, build, tests. Writes
@@ -35,6 +36,7 @@ shift || true
 TICKET=""
 TICKET_FILE=""
 SHA=""
+BASE_ARG=""
 # Phases that did not run: named in the summary, recorded as `skip`, never `pass`.
 SKIPPED=""
 while [ $# -gt 0 ]; do
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
     --ticket) TICKET="$2"; shift 2 ;;
     --ticket-file) TICKET_FILE="$2"; shift 2 ;;
     --sha) SHA="$2"; shift 2 ;;
+    --base) BASE_ARG="$2"; [ -n "$BASE_ARG" ] || { echo "--base needs a ref" >&2; exit 2; }; shift 2 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -112,8 +115,13 @@ ticket_field() { # a front-matter value from the ticket (the JUDGE's copy)
   awk 'NR==1{next} /^---$/{exit} {print}' "$tf" | sed -n "s/^$1: *//p" | head -1
 }
 
-base_ref() { # the commit a change is measured against; empty means "no base"
-  if [ -n "${GATE_BASE:-}" ]; then git -C "$ROOT" rev-parse --verify -q "$GATE_BASE^{commit}" 2>/dev/null && return; fi
+base_ref() { # the commit a change is measured against
+  # Named (`--base` or GATE_BASE): a base that cannot be resolved is a refusal,
+  # never a silent fallback to merge-base — that is the defect, not the fix.
+  if [ -n "${BASE_ARG:-}${GATE_BASE:-}" ]; then
+    git -C "$ROOT" rev-parse --verify -q "${BASE_ARG:-$GATE_BASE}^{commit}" 2>/dev/null && return
+    return 1
+  fi
   if git -C "$ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
     git -C "$ROOT" merge-base HEAD origin/main && return
   fi
@@ -122,14 +130,24 @@ base_ref() { # the commit a change is measured against; empty means "no base"
 
 # A phase that diffs needs a base: the empty tree as a base judged nothing.
 need_base() {
-  BASE="$(base_ref)"
+  local st
+  BASE="$(base_ref)"; st=$?
+  if [ -n "${BASE_ARG:-}${GATE_BASE:-}" ] && [ "$st" != 0 ]; then
+    fail base "a base named '${BASE_ARG:-${GATE_BASE:-}}' is not a commit in $ROOT"
+  fi
+  if [ -n "$BASE_ARG" ] && [ -n "${GATE_BASE:-}" ] \
+    && [ "$BASE" != "$(git -C "$ROOT" rev-parse --verify -q "$GATE_BASE^{commit}" 2>/dev/null)" ]; then
+    fail base "--base '$BASE_ARG' and GATE_BASE='$GATE_BASE' are different commits: refusing rather than choosing one"
+  fi
   [ -n "$BASE" ] \
-    || fail base "no base commit to diff against in $ROOT (no origin/main, no HEAD~1): pass GATE_BASE=<ref>, or run where the default branch is fetched"
+    || fail base "no base commit to diff against in $ROOT (no origin/main, no HEAD~1): pass --base <ref>, or run where the default branch is fetched"
 }
 
 # The change, as one set: STATUS<TAB>path records, each NUL-TERMINATED. Scope and
 # size used to compute this separately and disagreed about what "the change" is,
 # which is how an untracked file and a rename's new path escaped one of them.
+# ONE tree for EVERY phase: the working tree against $BASE (two dots) + untracked.
+# It was `$BASE...HEAD` (commits only) while size/secrets diffed `$BASE` (T-15 R11).
 # A path is bytes, not a line: it may contain a newline, so a newline-terminated
 # record split one path into two, and the caller's line loop then judged a prefix
 # that does not exist while the real file was skipped by the size cap and the
@@ -142,7 +160,7 @@ changed_paths() {
     IFS= read -r -d '' f || break
     [ -n "$f" ] || continue
     printf '%s\t%s\0' "$st" "$f"
-  done < <(git -C "$ROOT" diff --name-status --no-renames -z "$BASE"...HEAD 2>/dev/null)
+  done < <(git -C "$ROOT" diff --name-status --no-renames -z "$BASE" 2>/dev/null)
   # Untracked: "STATUS path" in one NUL-terminated record. A rename prints its
   # NEW path first and the old one second, and the new path is the one a scope
   # rule has to judge.
@@ -788,6 +806,43 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'no base commit' \
       || { echo "self-test FAILED: a tree with no base was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a tree with no base commit is refused, not judged as unchanged"
+
+    # T-15 R11: the base could only be named as `GATE_BASE=… bash gate.sh`, which
+    # this repo's guard refuses on shape. A flag that parses and is ignored is the
+    # same defect, so this asserts the VERDICT it moves: one tree, two bases.
+    ( cd "$repo" && git reset -q --hard origin/main \
+      && for i in $(seq 1 700); do echo "line $i"; done >src/big.txt && git add -A && git commit -qm big )
+    big="$(cd "$repo" && git rev-parse HEAD)"; base="$(cd "$repo" && git rev-parse origin/main)"
+    ( cd "$repo" && git reset -q --hard origin/main )
+    expect ok "a base pinned before the 700 lines" fast --ticket T-1 --base "$base" >/dev/null
+    out="$(expect fail "a base pinned after the 700 lines" fast --ticket T-1 --base "$big")"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[size\]' \
+      || { echo "self-test FAILED: --base parsed but did not move the base: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - --base is the base: one tree passes or fails by the ref it names"
+    out="$(expect fail "a --base that is not a commit" fast --ticket T-1 --base 0000000000000000000000000000000000000000)"
+    printf '%s' "$out" | grep -q 'is not a commit' \
+      || { echo "self-test FAILED: a --base that is not a commit was ignored, not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo . >>"$ASSERTIONS"
+    out="$( cd "$repo" && GATE_BASE="$base" GATE_ALLOW_NO_CARGO=1 GATE_ROOT="$repo" GATE_FACTORY="$judge" \
+      timeout 120 bash "$judge/gates/gate.sh" fast --ticket T-1 --base "$big" 2>&1 )"; st=$?
+    { [ "$st" != 0 ] && printf '%s' "$out" | grep -q 'different commits'; } \
+      || { echo "self-test FAILED: --base and GATE_BASE disagreed silently: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a --base that is not a commit, and one that disagrees with GATE_BASE, are both refused by name"
+
+    # T-15 R11: scope diffed `$BASE...HEAD` (commits only) while size and secrets
+    # diffed `$BASE`, so a path BASE carries and HEAD does not was judged by size
+    # and never by scope. One probe, both directions; the path is IN scope.
+    printf -- '---\nid: A-1\nscope: src/,docs/\n---\n# A-1\n' >"$tmp/tickets-docs.md"
+    br="$(cd "$repo" && git rev-parse --abbrev-ref HEAD)"
+    side="$( cd "$repo" && git reset -q --hard origin/main && git checkout -q --detach \
+      && for i in $(seq 1 700); do echo "side $i"; done >docs/side.txt && git add -A && git commit -qm side \
+      && git rev-parse HEAD && git checkout -q "$br" )"
+    out="$(expect fail "a base that is not an ancestor of the head" fast --ticket-file "$tmp/tickets-docs.md" --base "$side")"
+    printf '%s' "$out" | grep -q '1 file(s) inside the mandate' \
+      || { echo "self-test FAILED: scope judged a different tree than size: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf '%s' "$out" | grep -q 'GATE FAIL \[size\]' \
+      || { echo "self-test FAILED: size did not count what scope judged: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - scope and size judge the same tree, so the same file set"
     echo "gate self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     ;;
   all)
@@ -797,5 +852,5 @@ case "$PHASE" in
   fast) phase_scope; phase_size; phase_secrets; phase_fmt; summarise fast "everything but build+test" ;;
   build) phase_build ;;
   test) phase_test ;;
-  *) echo "usage: gate.sh all|fast|build|test|--self-test [--ticket T-n] [--ticket-file p] [--sha <40-hex>]" >&2; exit 2 ;;
+  *) echo "usage: gate.sh all|fast|build|test|--self-test [--ticket T-n] [--ticket-file p] [--sha <40-hex>] [--base <ref>]" >&2; exit 2 ;;
 esac
