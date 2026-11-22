@@ -221,17 +221,16 @@ case "$cmd" in
     t="$TICKETS/${1:?}.md"
     tid="${2:?}"
     live="$(fm_get "$t" live_task)"
-    case "$live" in
-      *"$tid")
-        fm_set "$t" live_task ""
-        ledger "$(basename "$t" .md)" router task-finished "$tid"
-        write_state
-        ;;
-      *)
-        echo "no live task $tid on $1 (live: ${live:-none})" >&2
-        exit 1
-        ;;
-    esac
+    # The task id is the LAST word: a substring match let `done task-1` clear
+    # `task-10`, so the drill in selftest.sh section 4 pins the exact shape.
+    if [ "${live##* }" = "$tid" ]; then
+      fm_set "$t" live_task ""
+      ledger "$(basename "$t" .md)" router task-finished "$tid"
+      write_state
+    else
+      echo "no live task $tid on $1 (live: ${live:-none})" >&2
+      exit 1
+    fi
     ;;
   list) ls "$TICKETS"/T-*.md 2>/dev/null | xargs -r -n1 basename | sed 's/\.md$//' ;;
   resume)

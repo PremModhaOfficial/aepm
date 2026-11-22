@@ -33,6 +33,13 @@ out="$(bash "$TMP/scripts/ticket.sh" dispatch T-1 builder task-bbb 2>&1)"; st=$?
 bash "$TMP/scripts/ticket.sh" done T-1 task-aaa >/dev/null || bad "task completion not recorded"
 bash "$TMP/scripts/ticket.sh" dispatch T-1 builder task-bbb >/dev/null \
   && ok "a dispatch after completion is allowed" || bad "a dispatch after completion was refused"
+# `done` compared with a substring, so `task-1` cleared a live `task-10`.
+bash "$TMP/scripts/ticket.sh" done T-1 task-bbb >/dev/null
+bash "$TMP/scripts/ticket.sh" dispatch T-1 builder task-10 >/dev/null
+out="$(bash "$TMP/scripts/ticket.sh" done T-1 task-1 2>&1)"; st=$?
+[ "$st" -ne 0 ] && ok "done task-1 is refused while task-10 is live" || bad "done task-1 exited 0: $out"
+[ "$(bash "$TMP/scripts/ticket.sh" get T-1 live_task)" = "builder task-10" ] \
+  && ok "task-10 is still live after the refused done" || bad "a substring match cleared task-10"
 
 head1 "5. restart resumes from files, not memory"
 bash "$TMP/scripts/ticket.sh" stage T-1 building >/dev/null
@@ -55,7 +62,7 @@ grep -q "blocked" "$TMP/state.md" && ok "state.md shows the blocked stage" || ba
 
 head1 "7. stop switch pauses and lists in-flight work"
 cp "$FACTORY/config.yml" "$TMP/config.yml"
-# T-1 already carries task-bbb; a dispatch that is refused changes nothing, so
+# T-1 already carries a live task; a dispatch that is refused changes nothing, so
 # the live task is whatever the ticket recorded, not what the test wished for.
 live="$(bash "$TMP/scripts/ticket.sh" get T-1 live_task | awk '{print $2}')"
 [ -n "$live" ] && ok "ticket carries a live task ($live)" || bad "no live task recorded before the stop drill"
