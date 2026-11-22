@@ -530,6 +530,10 @@ doc_claims_match_code() {
   # this as the one claim whose wording is the fact).
   flat_d "$ROOT/AGENTS.md" | grep -qF 'its typed block clears the gate' || return 1
   ! flat_d "$ROOT/AGENTS.md" | grep -qF 'only its typed block identifies one' || return 1
+  # D39's rule lives only in a prompt, so it is read where the reviewer reads it: the paragraph has to sit in `[pr_reviewer]`, and a move to another block is
+  # a removal as far as #150 is concerned.
+  awk '/^\[pr_reviewer\]/{f=1;next} /^\[/{f=0} f&&index($0,"A line inside a comment is not the code"){x=1} END{exit !x}' \
+    "$ROOT/.pr_agent.toml" || return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
     # Here the wording is the fact: D33c says this file is review input *and* that
     # reading it is bounded by the four files listed; a differently worded title
