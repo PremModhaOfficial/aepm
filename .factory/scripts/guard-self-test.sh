@@ -92,6 +92,13 @@ const CASES = [
   ["Router deletes a branch behind a listing flag", "bash", { command: "git branch -a -D foo" }, MAIN, true],
   ["Router renames a branch behind a listing flag", "bash", { command: "git branch -a -m old new" }, MAIN, true],
   ["Router deletes a tag behind a listing flag", "bash", { command: "git tag -l -d v1" }, MAIN, true],
+  // T-15 finding 8: `git branch -v <name>` CREATES <name>, so a listing PREFIX
+  // proved nothing and a branch create hid behind one. Measured: the old guard
+  // allowed all three of these.
+  ["Router creates a branch behind -v", "bash", { command: "git branch -v foo" }, MAIN, true],
+  ["Router creates a branch behind -a (git refuses, guard must not guess)", "bash", { command: "git branch -a foo" }, MAIN, true],
+  ["Router creates a tag with a message", "bash", { command: "git tag -a v1 -m msg" }, MAIN, true],
+  ["Router creates a lightweight tag", "bash", { command: "git tag v1" }, MAIN, true],
   ["Router writes a file with sort's attached -o", "bash", { command: "sort -oout src/main.rs" }, MAIN, true],
 
   // safety (finding 3): the verb sat behind a flag, so `--user enable` was missed.
@@ -116,6 +123,13 @@ const CASES = [
   ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --sha 0000000000000000000000000000000000000000 --ticket-file /home/x/.factory/tickets/T-1.md" }, MAIN, false],
   ["Router lists remotes", "bash", { command: "git remote -v" }, MAIN, false],
   ["Router lists branches", "bash", { command: "git branch -a" }, MAIN, false],
+  ["Router lists branches verbosely", "bash", { command: "git branch -v" }, MAIN, false],
+  ["Router lists branches merged into a commit", "bash", { command: "git branch --merged origin/main" }, MAIN, false],
+  ["Router lists tags matching a pattern", "bash", { command: "git tag -l v1" }, MAIN, false],
+  // T-15 finding 9: `merge` matched `git merge-base` (a hyphen is a word
+  // boundary), so a read-only plumbing command the allowlist names was refused.
+  ["Router runs git merge-base", "bash", { command: "git merge-base HEAD origin/main" }, MAIN, false],
+  ["Router runs git merge-base --is-ancestor", "bash", { command: "git merge-base --is-ancestor origin/main HEAD" }, MAIN, false],
   ["Router sorts to stdout", "bash", { command: "sort -u src/main.rs" }, MAIN, false],
   ["Router reads a PR", "bash", { command: "gh pr view 168 --json state" }, MAIN, false],
   ["Router writes bookkeeping in .factory/", "write", { path: MAIN + "/.factory/state.md" }, MAIN, false],

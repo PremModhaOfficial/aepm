@@ -120,20 +120,30 @@ need_base() {
     || fail base "no base commit to diff against in $ROOT (no origin/main, no HEAD~1): pass GATE_BASE=<ref>, or run where the default branch is fetched"
 }
 
-# The change, as one set: STATUS<TAB>path, with both sides of a rename. Scope and
+# The change, as one set: STATUS<TAB>path records, each NUL-TERMINATED. Scope and
 # size used to compute this separately and disagreed about what "the change" is,
 # which is how an untracked file and a rename's new path escaped one of them.
+# A path is bytes, not a line: it may contain a newline, so a newline-terminated
+# record split one path into two, and the caller's line loop then judged a prefix
+# that does not exist while the real file was skipped by the size cap and the
+# secret scan. Every reader therefore uses `read -d ''`; never a line loop.
 changed_paths() {
-  git -C "$ROOT" diff --name-status --no-renames "$BASE"...HEAD 2>/dev/null || true
-  # -z: NUL-terminated and unquoted, so a path with a space stays one field. A
-  # rename prints its NEW path first and the old one second, and the new path is
-  # the one a scope rule has to judge.
-  local rec st f
+  local st f rec
+  # Tracked: with -z the status field is its own NUL-terminated field (no tab),
+  # and nothing is quoted, so a path with a newline or a space arrives as bytes.
+  while IFS= read -r -d '' st; do
+    IFS= read -r -d '' f || break
+    [ -n "$f" ] || continue
+    printf '%s\t%s\0' "$st" "$f"
+  done < <(git -C "$ROOT" diff --name-status --no-renames -z "$BASE"...HEAD 2>/dev/null)
+  # Untracked: "STATUS path" in one NUL-terminated record. A rename prints its
+  # NEW path first and the old one second, and the new path is the one a scope
+  # rule has to judge.
   while IFS= read -r -d '' rec; do
     st="${rec:0:2}"; f="${rec:3}"
     [ -n "$f" ] || continue
-    printf '%s\t%s\n' "$st" "$f"
-    case "$st" in R*|C*) IFS= read -r -d '' f && printf '%s\t%s\n' "$st" "$f" ;; esac
+    printf '%s\t%s\0' "$st" "$f"
+    case "$st" in R*|C*) IFS= read -r -d '' f && printf '%s\t%s\0' "$st" "$f" ;; esac
   done < <(git -C "$ROOT" status --porcelain -z -uall 2>/dev/null)
 }
 
@@ -164,12 +174,12 @@ if [ -n "$SHA" ]; then
 fi
 
 phase_scope() {
-  local changed f bad=0 allowed tf n
+  local f bad=0 allowed tf n st
   need_base
-  changed="$(changed_paths)"
-  [ -n "$changed" ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
+  # Counted from NUL records, never from lines: a path may contain a newline.
+  n="$(changed_paths | tr -cd '\000' | wc -c | tr -d ' ')"
+  [ "${n:-0}" -gt 0 ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
   allowed="$(scope_list)"
-  n="$(printf '%s\n' "$changed" | wc -l)"
   if [ -z "$allowed" ]; then
     # Name exactly what is missing. The mandate is machine-local state, so a
     # clean clone has no ticket: that is why --ticket-file exists.
@@ -182,7 +192,7 @@ phase_scope() {
     fi
     fail scope "ticket ${TICKET:-$tf} declares no scope in $tf — an issue ticket starts empty (authority: inferred); the planner proposes the mandate and the Router applies it: bash $FACTORY/scripts/ticket.sh set <T> scope '<p1,p2>'"
   fi
-  while IFS=$'\t' read -r st f; do
+  while IFS=$'\t' read -r -d '' st f; do
     [ -n "$f" ] || continue
     exempt "$f" && continue
     local ok=1
@@ -193,13 +203,54 @@ phase_scope() {
       echo "  outside scope: $st $f" >&2
       bad=1
     fi
-  done <<<"$changed"
+  done < <(changed_paths)
   [ "$bad" = 0 ] || fail scope "change(s) outside the ticket mandate (allowed: $(echo "$allowed" | tr '\n' ' '))"
   pass scope "$n file(s) inside the mandate"
 }
 
+# The most bytes this gate will read out of one untracked file, and the most
+# added text it will put through eleven regex passes. Past it a path is refused
+# by name: an unbounded read is how one 120 MiB untracked line passed the 1-line
+# cap and spent 81s in the secret scan.
+SCAN_MAX_BYTES=4194304
+
+untracked_lines() { # <path> — sets UNTRACKED_LINES, or fails by name; never skipped
+  local p="$ROOT/$1" copy bytes nul
+  # A symlink is neither counted nor scanned: following one is unbounded
+  # (`/dev/zero` hangs the gate forever) and it can carry bytes from outside the
+  # repo that this gate has no mandate over. Refused by name, like every other
+  # path it will not read.
+  [ -L "$p" ] && fail size "the change is a symlink, which this gate neither counts nor scans: $1"
+  [ -f "$p" ] || fail size "the change is not a regular file, so it has no lines to count and no bytes to scan: $1"
+  # One read, frozen: the count, the size test and the binary test then describe
+  # the same bytes. Two passes over the original file compared two instants, so a
+  # file that grew while the gate ran was reported as binary.
+  copy="$(mktemp)"
+  if ! head -c "$((SCAN_MAX_BYTES + 1))" -- "$p" >"$copy" 2>/dev/null; then
+    rm -f "$copy"
+    fail size "this path cannot be read, so its lines cannot be counted and its bytes cannot be scanned: $1"
+  fi
+  bytes="$(wc -c <"$copy" | tr -d ' ')"
+  if [ "${bytes:-0}" -gt "$SCAN_MAX_BYTES" ]; then
+    rm -f "$copy"
+    fail size "this untracked file is over the ${SCAN_MAX_BYTES}-byte scan bound, so it is refused rather than half-read: $1"
+  fi
+  # A NUL byte is what makes git call a file binary; without this test a 2 MiB
+  # blob with no newline counted as the one record awk sees and passed the cap.
+  # (`$'\000'` is the empty string in bash, so the test is `tr -dc`, counting the
+  # NULs out of the frozen copy: the same bytes awk counts, not a second read.)
+  nul="$(LC_ALL=C tr -dc '\000' <"$copy" | wc -c | tr -d ' ')"
+  if [ "${nul:-0}" -gt 0 ]; then
+    rm -f "$copy"
+    fail size "the diff refuses to show these files as text, so their lines cannot be counted and their bytes cannot be scanned: $1"
+  fi
+  UNTRACKED_LINES="$(awk 'END{print NR+0}' "$copy")"
+  rm -f "$copy"
+  return 0
+}
+
 phase_size() {
-  local max_lines max_files stat lines files bin st f n bytes
+  local max_lines max_files stat lines files bin st f errf rc
   max_lines="$(cfg diff_lines_max)"; max_lines="${max_lines:-600}"
   max_files="$(cfg diff_files_max)"; max_files="${max_files:-30}"
   # A ticket may carry its own cap. The mandate is already trusted and lives
@@ -210,7 +261,17 @@ phase_size() {
   tmax="$(ticket_field diff_files_max)"; [ -n "$tmax" ] && max_files="$tmax"
   need_base
   # No path is dropped here: .factory/ code counts like any other code.
-  stat="$(git -C "$ROOT" diff --numstat --no-renames "$BASE" 2>/dev/null || true)"
+  # A `git diff` that fails — an unreadable tracked file makes it exit 128 and
+  # print no numstat at all — used to be swallowed by `|| true`, so a 700-line
+  # change with a token counted as "0 lines across 0 files" and passed. It fails
+  # by name now: a count that does not exist is not a count of zero.
+  errf="$(mktemp)"
+  stat="$(git -C "$ROOT" diff --numstat --no-renames "$BASE" 2>"$errf")"; rc=$?
+  if [ "$rc" != 0 ]; then
+    local why; why="$(head -2 "$errf" | tr '\n' ' ')"; rm -f "$errf"
+    fail size "git could not diff this tree against $(git -C "$ROOT" rev-parse --short "$BASE"), so no line count exists (git exit $rc): ${why:-no message}"
+  fi
+  rm -f "$errf"
   # `-` in a numstat column means git will not show the file as text: its lines
   # are absent from the sum below and its bytes from the scan, so fail, not skip.
   bin="$(printf '%s\n' "$stat" | awk -F'\t' '$1=="-"||$2=="-"{print $3}' | tr '\n' ' ')"
@@ -220,20 +281,16 @@ phase_size() {
   # The half `git diff` never shows. An untracked file is scope-checked, so it is
   # the ticket's change and counts here too, or a change grows past the cap by
   # never being added. Runtime state stays exempt: it is not the product change.
-  # `git` has no numstat mark for a path it was never told about, so the text
-  # test is made here. A NUL byte is what makes git call a file binary; without
-  # this, a 2 MiB blob with no newline counts as the one record awk sees and
-  # passes the cap. Refused, like a tracked binary above.
-  while IFS=$'\t' read -r st f; do
+  # `git` has no numstat mark for a path it was never told about, so every test
+  # `git diff` would have made is made here: symlinks, non-files and unreadable
+  # paths are refused by name and an oversized one is refused rather than read.
+  while IFS=$'\t' read -r -d '' st f; do
     [ "$st" = "??" ] && [ -n "$f" ] || continue
     exempt "$f" && continue
-    bytes="$(wc -c <"$ROOT/$f" 2>/dev/null || echo x)"
-    [ "${bytes// /}" = "$(tr -d '\000' <"$ROOT/$f" 2>/dev/null | wc -c | tr -d ' ')" ] \
-      || fail size "the diff refuses to show these files as text, so their lines cannot be counted and their bytes cannot be scanned: $f"
-    n="$(awk 'END{print NR+0}' "$ROOT/$f" 2>/dev/null)"
-    lines=$((lines + ${n:-0}))
+    untracked_lines "$f"
+    lines=$((lines + UNTRACKED_LINES))
     files=$((files + 1))
-  done <<<"$(changed_paths)"
+  done < <(changed_paths)
   [ "${lines:-0}" -le "$max_lines" ] || fail size "diff is ${lines} lines, cap ${max_lines}"
   [ "${files:-0}" -le "$max_files" ] || fail size "diff touches ${files} files, cap ${max_files}"
   pass size "${lines} lines across ${files} files (cap ${max_lines}/${max_files})"
@@ -243,23 +300,46 @@ phase_secrets() {
   # Scan ADDED lines only: a secret already in history is a different ticket.
   # -oE extracts the SECRET, not the line: a live key beside the word "example"
   # is still a live key, and placeholders are filtered per token, not per line.
-  local added pat t hits="" st f
+  local added pat t hits="" st f dfl errf rc abytes why
   need_base
-  # A binary file never reaches the secret scan: the size phase already failed it.
-  # The header filter is git's exact header shape, never a bare `+++` prefix: a
-  # token on a line of its own starting `+++` is an added line, not a header.
-  added="$(git -C "$ROOT" diff -U0 --no-renames "$BASE" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)')"
+  # Added lines are read from the hunk and from nothing else. A header filter
+  # (`grep -vE '^\+\+\+ (a/|b/|/dev/null)'`) also dropped a CONTENT line whose text
+  # begins `++ b/`: the diff writes it as `+++ b/...`, so a token on it was never
+  # scanned. Inside a hunk a line starting `+` is content; a header never is.
+  # A binary file never reaches here: the size phase already failed it.
+  errf="$(mktemp)"; dfl="$(mktemp)"
+  git -C "$ROOT" diff -U0 --no-renames "$BASE" >"$dfl" 2>"$errf"; rc=$?
+  if [ "$rc" != 0 ]; then
+    why="$(head -2 "$errf" | tr '\n' ' ')"; rm -f "$errf" "$dfl"
+    fail secrets "git could not diff this tree against $(git -C "$ROOT" rev-parse --short "$BASE"), so no added line could be scanned (git exit $rc): ${why:-no message}"
+  fi
+  rm -f "$errf"
+  added="$(awk '
+    /^@@/ { hunk = 1; next }
+    !hunk { next }
+    /^\+/ { print substr($0, 2); next }
+    /^[- ]/ { next }
+    { hunk = 0 }
+  ' "$dfl")"
+  rm -f "$dfl"
   # `git diff` never shows an untracked file, so this half is the only way the
   # bytes of a file the scope phase accepted reach the scan: every non-exempt
-  # `??` path is judged by scope and counted by size, so it is scanned here too.
-  # A binary file needs no scan: phase_size refuses both the tracked one (numstat
-  # mark) and the untracked one (NUL bytes), so no binary reaches this half.
-  while IFS=$'\t' read -r st f; do
+  # `??` path is judged by scope, counted and bounded by size, so it is scanned
+  # here too. A binary file needs no scan: phase_size refuses both the tracked
+  # one (numstat mark) and the untracked one (NUL bytes), so no binary reaches
+  # this half.
+  while IFS=$'\t' read -r -d '' st f; do
     [ "$st" = "??" ] && [ -n "$f" ] || continue
     exempt "$f" && continue
-    added="${added:+$added$'\n'}$(cat "$ROOT/$f" 2>/dev/null)"
-  done <<<"$(changed_paths)"
+    untracked_lines "$f"
+    added="${added:+$added$'\n'}$(head -c "$((SCAN_MAX_BYTES + 1))" -- "$ROOT/$f")"
+  done < <(changed_paths)
   [ -n "$added" ] || { pass secrets "no added lines to scan"; return 0; }
+  # Bound the bytes the regex passes read. Eleven -oE passes over one 120 MiB
+  # line cost 81s; past the bound the text is refused by name, never half-scanned.
+  abytes="$(printf '%s' "$added" | wc -c | tr -d ' ')"
+  [ "${abytes:-0}" -le "$SCAN_MAX_BYTES" ] \
+    || fail secrets "the added lines are ${abytes} bytes, over the ${SCAN_MAX_BYTES}-byte scan bound, so they are refused rather than half-scanned"
   for pat in \
     'gh[pousr]_[A-Za-z0-9]{20,}' \
     'github_pat_[A-Za-z0-9_]{20,}' \
@@ -284,7 +364,13 @@ phase_secrets() {
 
 require_cargo() { # the real repo is a Cargo crate; only the sandbox may skip it
   [ -f "$ROOT/Cargo.toml" ] && return 0
-  [ "${GATE_ALLOW_NO_CARGO:-0}" = "1" ] && { pass "$1" "no Cargo.toml in the sandbox"; return 1; }
+  if [ "${GATE_ALLOW_NO_CARGO:-0}" = "1" ]; then
+    # A phase that did not run is never reported as OK: this line is not a pass
+    # and the self-test asserts this exact shape, so a green `[fmt]` claim on a
+    # phase that never ran cannot come back.
+    echo "GATE SKIP [$1]: no Cargo.toml in the sandbox, so $1 did not run (GATE_ALLOW_NO_CARGO=1)"
+    return 1
+  fi
   fail "$1" "no Cargo.toml at $ROOT — refusing to report success on a phase that did not run"
 }
 
@@ -344,8 +430,10 @@ case "$PHASE" in
     printf -- '---\nid: F-3\nscope: src/,.gitattributes\n---\n# F-3\n' >"$tmp/tickets-bin.md"
 
     gs() { # run the JUDGE's gate against ${GS_ROOT:-$repo}; extra args pass through
+      # Bounded: a regression that hangs the gate (a symlink is read forever) must
+      # fail this self-test, not hang it.
       ( cd "${GS_ROOT:-$repo}" && GATE_ALLOW_NO_CARGO=1 GATE_ROOT="${GS_ROOT:-$repo}" GATE_FACTORY="$judge" \
-          bash "$judge/gates/gate.sh" "$@" )
+          timeout 120 bash "$judge/gates/gate.sh" "$@" )
     }
     # Counted in a file: most assertions run inside `$(...)`. The hardcoded "15"
     # had already drifted from the 14 that ran.
@@ -368,6 +456,18 @@ case "$PHASE" in
     printf '%s' "$c1" | grep -q '1 file(s) inside the mandate' \
       || { echo "self-test FAILED: the first assertion judged no diff at all: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
     echo "ok  - a clean tree inside scope passes"
+    # The sandbox has no Cargo.toml, so fmt/build/test cannot run here. A phase
+    # that did not run is a SKIP line, never a green `GATE OK [fmt]`: that shape
+    # said "green" about a check nobody made.
+    printf '%s' "$c1" | grep -q 'GATE SKIP \[fmt\]' \
+      || { echo "self-test FAILED: the sandbox fmt phase was not reported as a skip: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
+    printf '%s' "$c1" | grep -q 'GATE OK *\[fmt\]' \
+      && { echo "self-test FAILED: a phase that did not run printed an OK line" >&2; exit 1; }
+    echo "ok  - a phase that did not run prints SKIP, not OK"
+    out="$(expect ok "the sandbox build phase" build --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE SKIP \[build\]' \
+      || { echo "self-test FAILED: the build phase in the sandbox was not reported as a skip: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
+    echo "ok  - the build phase in the sandbox prints SKIP, not OK"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
@@ -413,6 +513,86 @@ case "$PHASE" in
       || { echo "self-test FAILED: a token in an untracked file escaped the secret scan: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a token in an untracked file inside scope is caught"
     rm -f "$repo/src/untracked-leak.txt"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+
+    # T-15 finding 1: a newline in a path split one NUL-in-a-line record into two.
+    # The real file was never counted nor scanned, and its first half was a decoy
+    # that does exist, so 701 lines and a token read as "2 lines, no secret".
+    ( cd "$repo" && git reset -q --hard origin/main )
+    mkdir -p "$repo/src/aaa"
+    echo decoy >"$repo/src/aaa/x"
+    { for i in $(seq 1 700); do echo "line $i"; done
+      printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123"; } >"$repo/src/aaa/x"$'\n'"y"
+    out="$(expect fail "an untracked path containing a newline" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[size\]' \
+      || { echo "self-test FAILED: a newline in a path split the record and escaped the cap: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a path containing a newline is one record, counted and scanned"
+    rm -rf "$repo/src/aaa"
+
+    # T-15 finding 2, tracked half: `git diff` exits 128 and prints no numstat at
+    # all for a path it cannot read, so `|| true` counted 700 lines as zero and
+    # the scan saw nothing. Root reads a chmod 000 file, so these two drills can
+    # only run unprivileged; that is stated, not silently skipped.
+    if [ "$(id -u)" = 0 ]; then
+      echo "gate self-test: skipped the unreadable-file drills as root (root reads chmod 000)" >&2
+    else
+      ( cd "$repo" && git reset -q --hard origin/main \
+        && for i in $(seq 1 700); do echo "line $i"; done >>src/a.txt \
+        && printf 'ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam big )
+      chmod 000 "$repo/src/a.txt"
+      out="$(expect fail "an unreadable tracked file with 700 lines behind it" fast --ticket T-1)"
+      chmod 644 "$repo/src/a.txt"
+      printf '%s' "$out" | grep -q 'GATE FAIL \[size\].*could not diff' \
+        || { echo "self-test FAILED: an unreadable tracked file counted as zero lines: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+      echo "ok  - an unreadable tracked file fails by name, not as zero lines"
+      # T-15 finding 6: the untracked half said "binary" for a file it could not
+      # read at all, and the shell's own `Permission denied` reached stderr.
+      ( cd "$repo" && git reset -q --hard origin/main )
+      printf 'secret\n' >"$repo/src/locked.txt"; chmod 000 "$repo/src/locked.txt"
+      out="$(expect fail "an unreadable untracked file" fast --ticket T-1)"
+      chmod 644 "$repo/src/locked.txt"; rm -f "$repo/src/locked.txt"
+      printf '%s' "$out" | grep -q 'cannot be read' \
+        || { echo "self-test FAILED: an unreadable untracked file was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+      printf '%s' "$out" | grep -q 'Permission denied' \
+        && { echo "self-test FAILED: the shell's own read error reached stderr" >&2; exit 1; }
+      echo "ok  - an unreadable untracked file is refused as unreadable, and says so quietly"
+    fi
+
+    # T-15 finding 3: the untracked half followed symlinks with no bound. A link
+    # to /dev/zero hung the gate until an external timeout killed it, and a
+    # readable link outside the repo was scanned as if it were the change.
+    ( cd "$repo" && git reset -q --hard origin/main )
+    ln -s /dev/zero "$repo/src/zero"
+    out="$(expect fail "a symlink to /dev/zero" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'is a symlink' \
+      || { echo "self-test FAILED: a symlink was followed instead of refused: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    rm -f "$repo/src/zero"
+    ln -s /etc/hostname "$repo/src/outside"
+    out="$(expect fail "a symlink out of the repo" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'is a symlink' \
+      || { echo "self-test FAILED: a symlink out of the repo was scanned: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    rm -f "$repo/src/outside"
+    echo "ok  - a symlink is refused by name, never followed"
+
+    # T-15 finding 4: one 120 MiB untracked line passed the 1-line cap and spent
+    # 81s in eleven regex passes. Past the bound it is refused, not half-read.
+    ( cd "$repo" && git reset -q --hard origin/main )
+    head -c 5000000 /dev/zero | tr '\0' 'a' >"$repo/src/huge.txt"
+    out="$(expect fail "an untracked file over the scan bound" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'scan bound' \
+      || { echo "self-test FAILED: an oversized untracked file was read anyway: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    rm -f "$repo/src/huge.txt"
+    echo "ok  - an untracked file over the scan bound is refused, not read for a minute"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+
+    # T-15 finding 5: a content line whose text begins `++ b/` arrives as
+    # `+++ b/...`, and the `^\+\+\+ (a/|b/)` header filter dropped it unscanned.
+    ( cd "$repo" && git reset -q --hard HEAD~1 \
+      && printf '++ b/ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret-pp )
+    out="$(expect fail "a token on a line whose text begins '++ b/'" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[secrets\]' \
+      || { echo "self-test FAILED: a content line beginning '++ b/' was read as a header: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a token on a line whose text begins '++ b/' is still scanned"
     ( cd "$repo" && git reset -q --hard "$keep" )
     ( cd "$repo" && git checkout -q . && git reset -q --hard HEAD~1 \
       && printf 'k=ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret )

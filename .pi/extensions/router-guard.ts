@@ -56,9 +56,8 @@ const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
     re: /^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*remote(?:\s+(?:-v|--verbose|get-url|show)\b|\s*$)/,
     what: "git remote listing",
   },
-  // `git branch foo` creates, `git branch -D` deletes: only listings.
-  { re: /^git\s+branch\s+(?:-[arv]+|--list|--show-current|--merged)(?:\s|$)/, what: "git branch listing" },
-  { re: /^git\s+tag\s+(?:-l|--list)(?:\s|$)/, what: "git tag listing" },
+  // `git branch` and `git tag` are judged by readOnlyBranchOrTag below, never by
+  // a shape: `git branch -v <name>` creates <name>.
   {
     re: /^(?:rg|fd|ls|cat|head|tail|wc|stat|file|jq|date|pwd|which|grep|comm|cut|tr|diff|basename|dirname|realpath|seq|echo|printf|uniq)\b/,
     what: "a read-only filter",
@@ -82,15 +81,30 @@ const WRITES_A_FILE = /(^|\s)--output\b/;
 
 // A shape match reads one bare word after `git`, so a write verb can sit behind
 // it (`git remote add`). Any write verb left in the argv refuses the command.
+// The boundary is `(?![-\w])`, not `\b`: a hyphen is a word boundary, so `merge`
+// matched `git merge-base` and a read-only plumbing command was refused.
 const GIT_WRITE_VERB =
-  /(?:^|\s)(?:add|am|apply|checkout|cherry-pick|clean|clone|commit|config|fetch|filter-branch|gc|init|merge|mv|notes|prune|pull|push|rebase|reflog|remove|rename|reset|restore|revert|rm|set-url|stash|submodule|switch|symbolic-ref|update-ref)\b/;
+  /(?:^|\s)(?:add|am|apply|checkout|cherry-pick|clean|clone|commit|config|fetch|filter-branch|gc|init|merge|mv|notes|prune|pull|push|rebase|reflog|remove|rename|reset|restore|revert|rm|set-url|stash|submodule|switch|symbolic-ref|update-ref)(?![-\w])/;
 
-// `git branch -a -D foo` and `git tag -l -d v1` match a listing prefix and then
-// delete: a listing is read-only only while no write flag sits behind it. The
-// flags are read from the argv after the subcommand, not the whole line: a git
-// option in front of it (`-C <dir>`, `--no-pager`) is not one of its flags.
-const GIT_LISTING_WRITE =
-  /(?:^|\s)(?:-[a-zA-Z]*[dDmMcCfu]\w*|--(?:delete|move|copy|force|set-upstream-to|unset-upstream|track|edit-description))(?:\s|=|$)/;
+// `git branch -v <name>` CREATES <name>: -v, -a and -r are not exclusive with a
+// name, so "starts with a listing flag" proved nothing and a branch create hid
+// behind the listing shape. A read shape is: only these flags, each taking at
+// most the one pattern/commit it documents and no other word.
+const BRANCH_TAG_READ_FLAG = new Set([
+  "-a", "-r", "-v", "-vv", "-av", "-ar", "-rv", "-arv", "--all", "--remotes", "--verbose",
+  "--show-current", "--list", "-l", "-n", "--merged", "--no-merged", "--contains", "--no-contains",
+]);
+const TAKES_ONE_WORD = new Set(["--list", "-l", "-n", "--merged", "--no-merged", "--contains", "--no-contains"]);
+
+function readOnlyBranchOrTag(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!BRANCH_TAG_READ_FLAG.has(a)) return false;
+    const next = argv[i + 1];
+    if (TAKES_ONE_WORD.has(a) && next !== undefined && !next.startsWith("-")) i++; // its pattern/commit
+  }
+  return true;
+}
 
 // `gh` writes are the Router's own job (comment, label, merge, report).
 const GH_WRITE =
@@ -137,9 +151,17 @@ function bashDecision(cmd: string): { allow: boolean; reason: string } {
     return { allow: false, reason: "it carries a git write verb, and the Router does not commit" };
   }
   if (/^git\b/.test(bare)) {
-    const after = bare.match(/^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*(?:branch|tag)\b([\s\S]*)$/);
-    if (after && GIT_LISTING_WRITE.test(after[1])) {
-      return { allow: false, reason: "it turns a branch/tag listing into a write with a later -d/-D/-m/-c/-f/-u flag" };
+    const listing = bare.match(/^git\s+(?:(?:-C\s+\S+|--no-pager)\s+)*(?:branch|tag)(?:\s+([\s\S]*))?$/);
+    if (listing) {
+      const argv = (listing[1] ?? "").trim().split(/\s+/).filter(Boolean);
+      return readOnlyBranchOrTag(argv)
+        ? { allow: true, reason: "" }
+        : {
+            allow: false,
+            reason:
+              "it is not a read-only branch/tag listing: `git branch -v <name>` creates <name>, " +
+              "and only -a/-r/-v/--list/--merged style flags with the pattern or commit they document are reads",
+          };
     }
   }
   if (GH_WRITE.test(bare)) return { allow: true, reason: "" };

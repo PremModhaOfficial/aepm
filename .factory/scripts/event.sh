@@ -109,6 +109,9 @@ if [ "${1:-}" = "--self-test" ]; then
   out="$(ev d-8 pull_request '{"action":"synchronize","pull_request":{"number":22,"html_url":"https://github.com/o/r/pull/22"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
   [ "$st" = 3 ] || { echo "self-test FAILED: a PR with no matching ticket was not ignored (exit $st: $out)"; exit 1; }
   okd "a pull_request with no matching ticket exits 3"
+  # The ticket must be free here: the drill above linked #21 to prove the match,
+  # and a ticket that already links a PR now refuses another one (T-15).
+  bash "$tmp/.factory/scripts/ticket.sh" set T-2 pr "" >/dev/null
   # Nothing in the factory wrote `pr:`; only this drill did. A real PR delivery
   # has to teach the ticket its number, and the PR body is where the builder
   # names the ticket (gh pr create with "T-<n>" in it).
@@ -117,6 +120,14 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr)" = "23" ] \
     || { echo "self-test FAILED: a PR delivery naming T-2 in its body writes pr: 23 (T-2 carries pr: $(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr))"; exit 1; }
   okd "a pull_request naming T-2 in its body writes pr: 23"
+  # T-15 finding 7: `ticket.sh set` overwrites, so a second PR naming T-2
+  # replaced pr: 23 with 24 — silently, exit 0 — and the ticket then named a head
+  # it never reviewed while #23's deliveries had no ticket at all.
+  out="$(ev d-11 pull_request '{"action":"opened","pull_request":{"number":24,"html_url":"https://github.com/o/r/pull/24","title":"Another try","body":"Also closes T-2."},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 3 ] || { echo "self-test FAILED: a second PR naming a ticket that already has one was accepted (exit $st: $out)"; exit 1; }
+  [ "$(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr)" = "23" ] \
+    || { echo "self-test FAILED: a second PR replaced the ticket's pr field (now $(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr))"; exit 1; }
+  okd "a second PR naming a linked ticket is refused, not overwritten"
   # A comment delivery carries no issue number when the payload is shaped
   # differently than expected, and the empty pattern `^gh_issue: $` then matched
   # the first ticket whose issue field was still blank: the comment landed on an
@@ -211,6 +222,17 @@ case "$EVENT:$ACTION" in
       tid="$(jq -r '(.pull_request.title // "") + " " + (.pull_request.body // "")' "$PAYLOAD" 2>/dev/null \
         | grep -oE 'T-[0-9]+' | head -1 || true)"
       if [ -n "$tid" ] && [ -f "$FACTORY/tickets/$tid.md" ]; then
+        # A ticket links ONE PR, and `ticket.sh set` overwrites: a second PR
+        # naming the same ticket replaced pr: 60 with pr: 61 silently, so the
+        # first PR's deliveries became orphans and the ticket pointed at a head
+        # it never reviewed. The refusal is here because this is the only writer
+        # of that field; anything already linked is a different ticket's PR.
+        linked="$(bash "$FACTORY/scripts/ticket.sh" get "$tid" pr 2>/dev/null || true)"
+        if [ -n "$linked" ] && [ "$linked" != "$NUM" ]; then
+          say "ignored: PR #$NUM names $tid, which already links PR #$linked"
+          log pr-already-linked "$URL -> $tid (pr: $linked)"
+          exit 3
+        fi
         bash "$FACTORY/scripts/ticket.sh" set "$tid" pr "$NUM" >/dev/null
         TICKET="$FACTORY/tickets/$tid.md"
       fi

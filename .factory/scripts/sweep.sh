@@ -5,19 +5,57 @@
 #   sweep.sh            # human-readable reconcile
 #   sweep.sh --json     # {open_issues, open_prs, untracked_issues, ...}
 set -uo pipefail
-FACTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FACTORY="${SWEEP_FACTORY:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OWNER="$(sed -n 's/^ *authorized_sender: *//p' "$FACTORY/config.yml" | head -1 | sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//')"
 REPO="$(sed -n 's/^repo: *//p' "$FACTORY/config.yml" | head -1 | sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//')"
 JSON=0; [ "${1:-}" = "--json" ] && JSON=1
 
 tracked() { grep -h "^gh_issue: " "$FACTORY"/tickets/T-*.md 2>/dev/null | sed 's/^gh_issue: //' | grep -v '^$' | sort -u; }
 
-issues="$(timeout 60 gh issue list --repo "$REPO" --state open --limit 100 --json number,title,labels \
-  --jq '.[] | select((.labels|map(.name)|index("factory"))|not) | "\(.number)\t\(.title)"' 2>/dev/null || echo '__FETCH_FAILED__')"
-prs="$(timeout 60 gh pr list --repo "$REPO" --state open --limit 100 --json number,title,headRefName,isDraft \
-  --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>/dev/null || echo '__FETCH_FAILED__')"
+# Does not run against the live repo: it builds a throwaway factory and a stub gh.
+if [ "${1:-}" = "--self-test" ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/factory"/{tickets,gates,scripts} "$tmp/bin"
+  cp "$FACTORY/config.yml" "$tmp/factory/config.yml"
+  cp "$FACTORY/scripts/ticket.sh" "$tmp/factory/scripts/ticket.sh"
+  chmod +x "$tmp/factory/scripts/ticket.sh"
+  ASSERTIONS="$tmp/assertions"; : >"$ASSERTIONS"
+  okd() { echo . >>"$ASSERTIONS"; echo "ok  - $1"; }
+  sw() { PATH="$tmp/bin:$PATH" SWEEP_FACTORY="$tmp/factory" bash "${BASH_SOURCE[0]}" --json 2>&1; }
 
-if [ "$issues" = "__FETCH_FAILED__" ] || [ "$prs" = "__FETCH_FAILED__" ]; then
+  # T-15 finding 10: the failure marker was a line of OUTPUT, so a gh that printed
+  # a partial page and then failed counted its fields as two open issues. The read
+  # now reports its own status; nothing it printed can be mistaken for data.
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "61\\ta real title\\n"; exit 1 ;;\n  "pr list") printf "168\\tbranch\\ta PR\\n"; exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" -ne 0 ] || { echo "self-test FAILED: a gh read that failed mid-stream was reported as success: $out" >&2; exit 1; }
+  okd "a gh read that halves through fails the sweep"
+  printf '%s' "$out" | grep -q '__FETCH_FAILED__' \
+    && { echo "self-test FAILED: the failure marker reached the JSON as data: $out" >&2; exit 1; }
+  okd "no failure marker reaches the JSON as an issue"
+
+  # And the other direction: a read that completes is still counted, or the fix
+  # above would pass by always failing.
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "61\\ta real title\\n"; exit 0 ;;\n  "pr list") printf "168\\tbranch\\ta PR\\n"; exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a completed gh read failed the sweep (exit $st: $out)" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"open_issues":1' \
+    || { echo "self-test FAILED: a completed read was not counted: $out" >&2; exit 1; }
+  okd "a completed read is still counted"
+  echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
+  exit 0
+fi
+
+# A failed read is its own thing, not a line of the answer: the old shape echoed
+# `__FETCH_FAILED__` into the output and compared that, so a gh that printed a
+# partial page and then failed counted the marker AND its partial page as issues.
+issues="$(timeout 60 gh issue list --repo "$REPO" --state open --limit 100 --json number,title,labels \
+  --jq '.[] | select((.labels|map(.name)|index("factory"))|not) | "\(.number)\t\(.title)"' 2>/dev/null)"; issues_rc=$?
+prs="$(timeout 60 gh pr list --repo "$REPO" --state open --limit 100 --json number,title,headRefName,isDraft \
+  --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>/dev/null)"; prs_rc=$?
+
+if [ "${issues_rc:-1}" != 0 ] || [ "${prs_rc:-1}" != 0 ]; then
   echo "sweep: gh read failed (offline or rate limited). Do not act on stale state." >&2
   exit 1   # fail loudly: a silent empty sweep looks like "nothing to do"
 fi
