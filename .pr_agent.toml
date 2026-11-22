@@ -7,36 +7,53 @@
 # Command Code Provider API, OpenAI-compatible:
 # https://api.commandcode.ai/provider/v1
 model = "openai/deepseek/deepseek-v4.1-flash"
-fallback_models = ["openai/deepseek/deepseek-v4.1-flash"]
+# A fallback that names the same model buys nothing: run 44910602395 spent
+# 900.27s and 900.1s on that one model and ended
+# `Failed to generate prediction with any model of [x, x]`. Empty means a request
+# that fails has no second model behind it.
+fallback_models = []
 
 # Live model list reports context_length = 1000000. pr-agent refuses an unknown
 # model id unless the window is declared.
 custom_model_max_tokens = 1000000
 # Input and output share this budget: max_model_tokens must exceed
-# max_output_tokens or the prompt has no input capacity left.
-max_model_tokens = 256000
-# Reasoning is on at max. Measured on a review prompt: 70,483 reasoning tokens
-# and 498-509s. A 64k cap returned empty content (`finish_reason=length`); 128k
-# finished. off measured ~22s; low measured 118-417s.
+# max_output_tokens or the prompt has no input capacity left. 256000 left 128000
+# for input, a cap on the diff that the model does not impose: the live list
+# reports context_length = 1000000, so the budget is that window.
+max_model_tokens = 1000000
+# Reasoning is on at max, not high: `medium` is not a value this model accepts — the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
+# D5) and pr-agent forwards the string verbatim, so an unlisted value is never
+# rejected — measured `200` for "medium", which says nothing about whether the
+# value took effect. What a large diff's failure is: not isolated. Run
+# 44910602395 (27,798-token diff) spent 900.27s and 900.1s on the request clock and
+# the attempt between them returned `503 ... error 1102 ... Worker exceeded
+# resource limits` (`retryable: false`, `owner_action_required: true`). Two of the
+# three were killed by the clock, so 1500s is worth its 900s of headroom before any
+# other cause is named. `large_patch_policy` is not overridden, so the pinned
+# default applies: configuration.toml v0.50.0 line 76 sets
+# `large_patch_policy = "clip"`, commented `"clip" (default) or "skip"; a missing
+# value is treated as "clip"`.
+# A 64k cap returned empty content (`finish_reason=length`); 128k finished. off
+# measured ~22s; low measured 118-417s; high is unmeasured on a large diff — if a
+# review still reports 1102 at max, measure high, then drop to low.
 max_output_tokens = 128000
 reasoning_effort = "max"
 # LiteLLM does not know this id, so pr-agent only forwards reasoning_effort when
 # the id is listed here (configuration.toml: additional_reasoning_effort_models).
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
-# Default is 120s, far shorter than a measured max-reasoning review (498-509s).
-# Worst case is bounded: a timeout goes to the fallback entry (same model) once,
-# so 2 x ai_timeout must stay under the workflow's job timeout with room left to
-# post. At 2 x 900s = 1800s against a 30-minute (1800s) job budget the headroom
-# was zero, so a hung provider was killed by the job before it could write its
-# comment (measured: job 1835s, two litellm timeout=900.0 attempts, "Tool
-# reported success but recorded a failure; failing the action").
-# Cutting ai_timeout instead (600 was tried first) trades that death for a new
-# one, and the recordings say how much: over 23 recorded calls (review comment
-# run details, PRs #130-#159) per-call time was p50 325s, p95 414s, max 848s.
-# 600 clips the single 848s call that succeeded; 900 covers every call recorded
-# with 52s to spare. So the budget is the thing that was wrong, not the timeout:
-# the job is 40 minutes (2400s), leaving 600s to post after 2 x 900s.
-ai_timeout = 900
+# Default is 120s at the pinned version (configuration.toml v0.50.0 line 34), far
+# shorter than a measured max-reasoning review (498-509s). It bounds one litellm
+# request and nothing larger. 900 was measured insufficient on a 30,105-token diff
+# (run 44920542869: 900.36s and 900.12s, both litellm timeouts, no comment posted),
+# and the slowest recorded call took 848.3s, so 1500 is 1.8x it. The recorded
+# distribution, and why 600 is rejected, are D10 of .github/PR-AGENT.md.
+# A request the provider *rejects* (429, answered 5xx, non-timeout transport
+# error) is retried up to `num_retries = 4` more times, each attempt under its own
+# `ai_timeout` (v0.50.0 line 38; `_is_rejected_request` and
+# `_stop_same_model_retries` in litellm_ai_handler.py), and `/review` chunks with
+# `max_number_of_calls = 3` (line 219), so up to three calls. What that costs a run,
+# and what bounds it, is D10 of .github/PR-AGENT.md.
+ai_timeout = 1500
 retry_same_model_on_timeout = false
 
 # Read the rules from the default branch, never from the PR branch, so a PR
