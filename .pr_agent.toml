@@ -10,8 +10,10 @@ model = "openai/deepseek/deepseek-v4.1-flash"
 # A fallback that names the same model doubles the worst case without changing
 # who answers: run 44910602395 spent 900.27s and 900.1s on that one model and
 # ended `Failed to generate prediction with any model of [x, x]`. Empty means one
-# attempt, so a hung gateway fails in ~25 minutes (`ai_timeout = 1500`) instead of
-# ~50, and the 40-minute job keeps 900s to post the failure.
+# attempt, so one hung request fails in ~25 minutes (`ai_timeout = 1500`) instead
+# of ~50. A run makes two requests on open (`/describe` and `/review`), so the
+# worst case is ~50 minutes against the 65-minute job, which keeps 900s to post
+# the failure.
 fallback_models = []
 
 # Live model list reports context_length = 1000000. pr-agent refuses an unknown
@@ -41,13 +43,14 @@ reasoning_effort = "max"
 # the id is listed here (configuration.toml: additional_reasoning_effort_models).
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s, far shorter than a measured max-reasoning review (498-509s).
-# One attempt now that fallback_models is empty, so the ceiling is per review, not
-# per attempt: over 23 recorded calls (review comment run details, PRs #130-#159)
+# One attempt now that fallback_models is empty, so the ceiling is per request,
+# not per attempt: over 23 recorded calls (review comment run details, PRs #130-#159)
 # per-call time was p50 325s, p95 414s, max 848s. 600 clips the single 848s call
 # that succeeded; 900 covers every recorded call with 52s to spare but was still
 # killed on a 30,105-token diff (run 44920542869: 900.36s and 900.12s, both
-# litellm timeouts, no comment posted). 1500 is 1.8x the worst recorded call and
-# with one attempt it leaves 900s of the 2400s job budget to post.
+# litellm timeouts, no comment posted). 1500 is 1.8x the worst recorded call; it
+# is a per-request timeout, and a run makes two requests on open, so 3000s of the
+# 3900s job budget is requests and 900s is left to post.
 ai_timeout = 1500
 retry_same_model_on_timeout = false
 
