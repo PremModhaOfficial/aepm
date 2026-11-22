@@ -554,7 +554,7 @@ run fallback-head-from-an-older-review 1 'does not name the commit'
 # deleted row still fails (findings 13d53e61b390, 2e69f9e3c720).
 doc_bounds_are_recorded() {
   local id
-  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e; do
+  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e 691bb9dc9491; do
     grep -qE "^\| D[0-9a-z]+ \|.*$id" "$ROOT/.github/PR-AGENT.md" || return 1
   done
 }
