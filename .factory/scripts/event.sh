@@ -109,6 +109,14 @@ if [ "${1:-}" = "--self-test" ]; then
   out="$(ev d-8 pull_request '{"action":"synchronize","pull_request":{"number":22,"html_url":"https://github.com/o/r/pull/22"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
   [ "$st" = 3 ] || { echo "self-test FAILED: a PR with no matching ticket was not ignored (exit $st: $out)"; exit 1; }
   okd "a pull_request with no matching ticket exits 3"
+  # Nothing in the factory wrote `pr:`; only this drill did. A real PR delivery
+  # has to teach the ticket its number, and the PR body is where the builder
+  # names the ticket (gh pr create with "T-<n>" in it).
+  out="$(ev d-9 pull_request '{"action":"opened","pull_request":{"number":23,"html_url":"https://github.com/o/r/pull/23","title":"Fix the thing","body":"Closes T-2."},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a PR delivery naming T-2 in its body writes pr: 23 (exit $st: $out)"; exit 1; }
+  [ "$(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr)" = "23" ] \
+    || { echo "self-test FAILED: a PR delivery naming T-2 in its body writes pr: 23 (T-2 carries pr: $(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr))"; exit 1; }
+  okd "a PR delivery naming T-2 in its body writes pr: 23"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
