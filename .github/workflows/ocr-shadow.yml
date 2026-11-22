@@ -18,23 +18,16 @@ name: OCR Shadow
 # `.summary.total_tokens`; the top-level field this report used to read does not
 # exist in a v1.13.13 artefact, so it printed `missing` on every run.
 #
-# The guard fails on six shapes, all measured against the pinned binary rather
+# The guard fails on five shapes, all measured against the pinned binary rather
 # than argued: a nonzero exit; a `status` that is not `complete`; a `status` of
 # `skipped` (what an empty range produces — exit 0, "no items were selected",
 # zero files, zero comments, so a guard reading only `status != complete` would
-# already fail it, but the message is what tells an operator why); zero
-# comments; zero `files_reviewed`; and a comment or file count that is not a
-# number, which is what `missing` and `unparsed` are. Red here gates nothing; it
-# only refuses to look green.
-#
-# The row in docs/CI-ARCHITECTURE.md is not a second owner for these facts.
-# scripts/check-ci-architecture.sh asserts one row per workflow *file*: deleting
-# this file's row makes it print, verbatim,
-#   FAIL .github/workflows/ocr-shadow.yml is named 'OCR Shadow' but has no row in the workflow table
-#   FAIL workflow table has 5 rows but the repository has 6 workflow files
-# That assertion covers the row's existence, not its cells, so the cells are not
-# held to anything by it. The row states only the trigger, the job and that it is
-# advisory; the guard, the pins and the ranges are documented here.
+# already fail it, but the message is what tells an operator why); and zero
+# `files_reviewed`, which is comments on nothing. A count that is not a number,
+# what `missing` and `unparsed` are, is the same refusal one step earlier. Zero
+# comments is not one of the shapes: a completed review of files that raises no
+# finding is a clean review and passes. Red here gates nothing; it only refuses
+# to look green.
 
 on:
   workflow_dispatch:
@@ -242,22 +235,18 @@ jobs:
             echo "| total_tokens | \`$tokens\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Red when no review happened, judged by the count rather than by
-          # `status` alone. Measured on #149: a run finished in 3s with 576 tokens
-          # and zero tool calls and still reported `status: failed` with an empty
-          # range, so a guard reading only `status` would have passed a run that
-          # reviewed nothing. The reverse — `complete` with no comments — is what
-          # a degenerate run looks like, so it fails here too.
-          # Red when no review happened. Two reasons the count is read, not just
-          # `status`: measured on a real v1.13.13 artefact, an empty range exits 0
-          # with `status: skipped` and zero comments, and `complete` with no
-          # comments is what the #149 degenerate shape looked like. `comments` is
-          # `missing` when ocr.json was never written and `unparsed` when jq could
-          # not read it; `[ "missing" = 0 ]` is false, so numbers are parsed as
-          # numbers first. `files_reviewed` is checked because comments on zero
-          # files is not a review of the pull request either. An empty --from
-          # would make ocr review the whole workspace, so the counts are only
-          # trusted for a run that named a range.
+          # Red when no review happened, judged by the file count rather than by
+          # `status` or by the comment count. Measured on #149: a run finished in
+          # 3s with 576 tokens and zero tool calls and still reported `status:
+          # failed` with an empty range, so a guard reading only `status` would
+          # have passed a run that reviewed nothing; measured on a real v1.13.13
+          # artefact, an empty range exits 0 with `status: skipped` and zero
+          # files. Zero `comments` is the other case and it is not a failure: a
+          # completed review of files that raises no finding is a clean review,
+          # so the count is printed and not judged. `comments` and `files` are
+          # `missing` when ocr.json was never written and `unparsed` when jq
+          # could not read it; both are refused here rather than compared as
+          # numbers, because [ "missing" = 0 ] is false and would pass.
           case "$comments" in
             ''|*[!0-9]*) echo "::error::comment count is not a number ($comments): no artefact to judge"; exit 1 ;;
           esac
@@ -268,7 +257,7 @@ jobs:
             echo "::error::ocr skipped the review ($(jq -r '.message // "no message"' ocr.json 2>/dev/null)): nothing was reviewed"
             exit 1
           fi
-          if [ "$rc" != 0 ] || [ "$status" != "complete" ] || [ "$comments" = 0 ] || [ "$files" = 0 ]; then
+          if [ "$rc" != 0 ] || [ "$status" != "complete" ] || [ "$files" = 0 ]; then
             echo "::error::no review happened (exit $rc, status $status, comments $comments, files_reviewed $files)"
             exit 1
           fi
