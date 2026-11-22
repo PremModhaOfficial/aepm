@@ -99,6 +99,9 @@ const CASES = [
 
   ["Router reads a file", "read", { path: MAIN + "/src/main.rs" }, MAIN, false],
   ["Router runs read-only git", "bash", { command: "git log --oneline -3" }, MAIN, false],
+  // A read is allowed by shape; a bare write verb in its argv still refuses it.
+  ["Router runs a read that carries a git write verb", "bash", { command: "git log --oneline add" }, MAIN, true, "carries a git write verb"],
+  ["Router runs read-only git on a branch", "bash", { command: "git log --oneline main" }, MAIN, false],
   ["Router lists files", "bash", { command: "ls -la" }, MAIN, false],
   ["Router reads the ticket state", "bash", { command: "cat .factory/state.md" }, MAIN, false],
   ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --sha 0000000000000000000000000000000000000000 --ticket-file /home/x/.factory/tickets/T-1.md" }, MAIN, false],
@@ -117,12 +120,13 @@ const CASES = [
 ];
 
 let bad = 0;
-for (const [name, tool, input, cwd, shouldBlock] of CASES) {
+for (const [name, tool, input, cwd, shouldBlock, wantReason] of CASES) {
   const r = await both(tool, input, cwd);
   const blocked = r?.block === true;
-  const ok = blocked === shouldBlock;
+  const reasonOk = !wantReason || (r?.reason ?? "").includes(wantReason);
+  const ok = blocked === shouldBlock && reasonOk;
   if (!ok) bad++;
-  console.log(`${ok ? "ok  " : "FAIL"} - ${shouldBlock ? "blocked" : "allowed"}: ${name}${r?.reason ? `  [${r.reason.slice(0, 70)}]` : ""}`);
+  console.log(`${ok ? "ok  " : "FAIL"} - ${shouldBlock ? "blocked" : "allowed"}: ${name}${r?.reason ? `  [${r.reason.slice(0, 200)}]` : ""}${reasonOk ? "" : `  [reason does not name "${wantReason}"]`}`);
 }
 console.log(bad === 0 ? `guard self-test: ${CASES.length} assertions hold` : `guard self-test: ${bad} FAILED`);
 process.exit(bad ? 1 : 0);

@@ -116,9 +116,20 @@ unaffected. Its default is deny, in two shapes. A write is allowed only to
 runtime state (`.factory/tickets/`, `state.md`, `ledger.jsonl`, `guard.log`,
 `inbox/`, `research/`, `gates/last-gate.json`, `/tmp` scratch); `.pi/` and
 `.factory/gates/` are code and belong to a builder's PR. A bash command is judged
-by its **argv shape**, never by a substring: any shell metacharacter outside
-single quotes is refused (so `echo pwn > src/main.rs` and `ls && git commit -am x`
-are blocked), and the first word must be in a finite read-only allowlist. The gate
+by its **argv shape** plus, for `git`, a bare-word write verb: any shell
+metacharacter outside single quotes is refused (so `echo pwn > src/main.rs` and
+`ls && git commit -am x` are blocked), the first word must be in a finite
+read-only allowlist, and any bare word in the rest of a `git` argv that is a write
+verb refuses it, so a read that carries one is refused too. The block message
+names the predicate it used, and `bash .factory/scripts/guard-self-test.sh`
+asserts both lines:
+
+    $ git log --oneline add
+    router-guard: … because it carries a git write verb, and the Router does not commit.
+    $ git log --oneline main
+    (allowed: read-only git)
+
+The gate
 is run as `bash .factory/gates/gate.sh …`; a bare `cargo build` in the main
 checkout is not the Router's job. `.pi/extensions/safety.ts` blocks dangerous
 commands, `.env`/`.git/`/`.pi/` writes, force-pushes to the default branch,
