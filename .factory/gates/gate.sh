@@ -37,8 +37,6 @@ TICKET=""
 TICKET_FILE=""
 SHA=""
 BASE_ARG=""
-# Phases that did not run: named in the summary, recorded as `skip`, never `pass`.
-SKIPPED=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ticket) TICKET="$2"; shift 2 ;;
@@ -395,27 +393,20 @@ phase_secrets() {
   pass secrets "no secret pattern in added lines"
 }
 
-require_cargo() { # the real repo is a Cargo crate; only the sandbox may skip it
+require_cargo() { # a phase that cannot run is a failure, never a skip and exit 0
   [ -f "$ROOT/Cargo.toml" ] && return 0
-  if [ "${GATE_ALLOW_NO_CARGO:-0}" = "1" ]; then
-    # A phase that did not run is never reported as OK: this line is not a pass
-    # and the self-test asserts this exact shape, so a green `[fmt]` claim on a
-    # phase that never ran cannot come back.
-    echo "GATE SKIP [$1]: no Cargo.toml in the sandbox, so $1 did not run (GATE_ALLOW_NO_CARGO=1)"
-    return 1
-  fi
   fail "$1" "no Cargo.toml at $ROOT — refusing to report success on a phase that did not run"
 }
 
 phase_fmt() {
-  require_cargo fmt || { SKIPPED="${SKIPPED:+$SKIPPED }fmt"; return 0; }
+  require_cargo fmt
   ( cd "$ROOT" && cargo fmt --all --check ) >/dev/null 2>&1 \
     && pass fmt "cargo fmt --all --check" \
     || fail fmt "cargo fmt --all --check (run: cargo fmt --all)"
 }
 
 phase_build() {
-  require_cargo build || { SKIPPED="${SKIPPED:+$SKIPPED }build"; return 0; }
+  require_cargo build
   ( cd "$ROOT" && cargo clippy --all-targets --all-features --locked -- -D warnings ) \
     || fail build "cargo clippy -D warnings"
   ( cd "$ROOT" && cargo build --locked --all-features ) \
@@ -424,23 +415,15 @@ phase_build() {
 }
 
 phase_test() {
-  require_cargo test || { SKIPPED="${SKIPPED:+$SKIPPED }test"; return 0; }
+  require_cargo test
   ( cd "$ROOT" && cargo test --all-targets --all-features --locked ) \
     || fail test "cargo test --all-targets --all-features --locked"
   pass test "cargo test --all-targets --all-features --locked"
 }
 
-# A phase that did not run is named and recorded as `skip`: `every phase green`
-# over three of six refusals claimed three checks nobody made (T-15 R8, finding 1).
-summarise() { # phase, detail when every phase ran
-  if [ -n "$SKIPPED" ]; then
-    record "$1" skip "$SKIPPED did not run"
-    pass "$1" "(skipped: $SKIPPED) every phase that ran is green"
-  else
-    record "$1" pass "$2"
-    pass "$1" "$2"
-  fi
-}
+# Every phase reaches here having run: a phase that could not run fails inside
+# itself (require_cargo), so no run can end green over a check nobody made.
+summarise() { record "$1" pass "$2"; pass "$1" "$2"; }
 
 case "$PHASE" in
   --self-test)
@@ -461,7 +444,8 @@ case "$PHASE" in
     # measures: without a base ref that assertion could not fail.
     ( cd "$repo" && git init -q && git config user.email t@t && git config user.name t \
       && git config commit.gpgsign false \
-      && echo 'a' >src/a.txt && echo 'b' >docs/b.txt && git add -A && git commit -qm base \
+      && echo 'a' >src/a.txt && echo 'b' >docs/b.txt && printf '[package]\nname = "sandbox"\nversion = "0.1.0"\nedition = "2021"\n' >Cargo.toml \
+      && printf 'fn main() {}\n' >src/main.rs && git add -A && git commit -qm base \
       && git update-ref refs/remotes/origin/main HEAD \
       && echo 'in scope' >>src/a.txt && git commit -qam 'in scope' ) \
       || { echo "self-test FAILED: sandbox repo" >&2; exit 1; }
@@ -474,10 +458,19 @@ case "$PHASE" in
     # cover it or the scope phase fails first and the size phase is never read.
     printf -- '---\nid: F-3\nscope: src/,.gitattributes\n---\n# F-3\n' >"$tmp/tickets-bin.md"
 
+    # The sandbox is a real crate, and this `cargo` is a spy that writes the argv
+    # it was handed and exits ${SPY_EXIT:-0}: the phases below therefore RUN, and
+    # what they run is asserted instead of assumed. The drills used to set
+    # GATE_ALLOW_NO_CARGO=1 in a tree with no manifest, so fmt, build and test
+    # always took the skip path and a wrong flag, a missing --locked or a
+    # swallowed clippy failure was invisible (T-15 R15, 24a0e64470a9).
+    mkdir -p "$tmp/spy"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/argv"\nexit "${SPY_EXIT:-0}"\n' "$tmp/spy" >"$tmp/spy/cargo"
+    chmod +x "$tmp/spy/cargo"
     gs() { # run the JUDGE's gate against ${GS_ROOT:-$repo}; extra args pass through
       # Bounded: a regression that hangs the gate (a symlink is read forever) must
       # fail this self-test, not hang it.
-      ( cd "${GS_ROOT:-$repo}" && GATE_ALLOW_NO_CARGO=1 GATE_ROOT="${GS_ROOT:-$repo}" GATE_FACTORY="$judge" \
+      ( cd "${GS_ROOT:-$repo}" && PATH="$tmp/spy:$PATH" GATE_ROOT="${GS_ROOT:-$repo}" GATE_FACTORY="$judge" \
           timeout 120 bash "$judge/gates/gate.sh" "$@" )
     }
     # Counted in a file: most assertions run inside `$(...)`. The hardcoded "15"
@@ -501,43 +494,72 @@ case "$PHASE" in
     printf '%s' "$c1" | grep -q '1 file(s) inside the mandate' \
       || { echo "self-test FAILED: the first assertion judged no diff at all: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
     echo "ok  - a clean tree inside scope passes"
-    # The sandbox has no Cargo.toml, so fmt/build/test cannot run here. A phase
-    # that did not run is a SKIP line, never a green `GATE OK [fmt]`: that shape
-    # said "green" about a check nobody made.
-    printf '%s' "$c1" | grep -q 'GATE SKIP \[fmt\]' \
-      || { echo "self-test FAILED: the sandbox fmt phase was not reported as a skip: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
-    printf '%s' "$c1" | grep -q 'GATE OK *\[fmt\]' \
-      && { echo "self-test FAILED: a phase that did not run printed an OK line" >&2; exit 1; }
-    echo "ok  - a phase that did not run prints SKIP, not OK"
+    # The fmt phase ran, really: its pass line and the argv cargo was handed.
+    printf '%s' "$c1" | grep -q 'GATE OK   \[fmt\]: cargo fmt --all --check' \
+      || { echo "self-test FAILED: the fmt phase did not run: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
+    grep -qx 'fmt --all --check' "$tmp/spy/argv" \
+      || { echo "self-test FAILED: the fmt phase invoked something else: $(tr '\n' ';' <"$tmp/spy/argv")" >&2; exit 1; }
+    echo "ok  - the fmt phase really invokes cargo fmt --all --check"
+    # build: the exact two invocations, --locked and -D warnings included. A
+    # wrong flag or a dropped --locked turns this red, which the skip path could
+    # never do: the old drill only proved the phase was skipped.
+    : >"$tmp/spy/argv"
     out="$(expect ok "the sandbox build phase" build --ticket T-1)"
-    printf '%s' "$out" | grep -q 'GATE SKIP \[build\]' \
-      || { echo "self-test FAILED: the build phase in the sandbox was not reported as a skip: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
-    echo "ok  - the build phase in the sandbox prints SKIP, not OK"
-    # T-15 round 8, finding 1: `require_cargo <phase> || return 0` made a SKIP
-    # return 0, so `all` said `every phase green` over three phases nobody ran.
+    for want in 'clippy --all-targets --all-features --locked -- -D warnings' 'build --locked --all-features'; do
+      grep -qxF "$want" "$tmp/spy/argv" \
+        || { echo "self-test FAILED: the build phase did not run 'cargo $want': $(tr '\n' ';' <"$tmp/spy/argv")" >&2; exit 1; }
+    done
+    printf '%s' "$out" | grep -q 'GATE OK   \[build\]' \
+      || { echo "self-test FAILED: the build phase did not pass: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
+    echo "ok  - the build phase runs clippy -D warnings then build --locked"
+    out="$(SPY_EXIT=1 expect fail "a cargo that fails" build --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[build\]' \
+      || { echo "self-test FAILED: a failing cargo did not fail the phase: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
+    echo "ok  - a cargo that fails fails the phase, never a green build"
+    : >"$tmp/spy/argv"
+    expect ok "the sandbox test phase" test --ticket T-1 >/dev/null
+    grep -qxF 'test --all-targets --all-features --locked' "$tmp/spy/argv" \
+      || { echo "self-test FAILED: the test phase did not run 'cargo test --all-targets --all-features --locked': $(tr '\n' ';' <"$tmp/spy/argv")" >&2; exit 1; }
+    echo "ok  - the test phase runs cargo test --all-targets --all-features --locked"
+    # The argv spy proves which invocation; these prove the REAL toolchain is on
+    # the other end of it — a real crate that builds, and a real warning that
+    # -D warnings turns into a failure.
+    crate="$tmp/crate"; mkdir -p "$crate/src"
+    printf '[package]\nname = "sandbox-crate"\nversion = "0.1.0"\nedition = "2021"\n' >"$crate/Cargo.toml"
+    printf 'fn main() {}\n' >"$crate/src/main.rs"
+    ( cd "$crate" && cargo generate-lockfile --offline -q ) \
+      || { echo "self-test FAILED: could not prepare the real crate" >&2; exit 1; }
+    echo . >>"$ASSERTIONS"; echo . >>"$ASSERTIONS"
+    out="$( cd "$crate" && GATE_ROOT="$crate" GATE_FACTORY="$judge" \
+      timeout 300 bash "$judge/gates/gate.sh" build 2>&1 )"; st=$?
+    { [ "$st" = 0 ] && printf '%s' "$out" | grep -q 'GATE OK   \[build\]'; } \
+      || { echo "self-test FAILED: a real crate did not build through the gate: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf 'fn main() { let unused = 1; }\n' >"$crate/src/main.rs"
+    out="$( cd "$crate" && GATE_ROOT="$crate" GATE_FACTORY="$judge" \
+      timeout 300 bash "$judge/gates/gate.sh" build 2>&1 )"; st=$?
+    { [ "$st" != 0 ] && printf '%s' "$out" | grep -q 'GATE FAIL \[build\]'; } \
+      || { echo "self-test FAILED: -D warnings did not fail a real warning: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf 'fn main() {}\n' >"$crate/src/main.rs"
+    echo "ok  - a real crate builds through the phase, and a real warning fails it"
     out="$(expect ok "gate all in the sandbox" all --ticket-file "$judge/tickets/T-1.md")"
-    printf '%s' "$out" | grep -qF '(skipped: fmt build test)' \
-      || { echo "self-test FAILED: the all summary did not name the phases that did not run: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
-    printf '%s' "$out" | grep -q 'every phase green' \
-      && { echo "self-test FAILED: the all summary called a run with skipped phases green" >&2; exit 1; }
-    grep -q '"status":"skip"' "$judge/gates/last-gate.json" \
-      || { echo "self-test FAILED: a skipped phase was not recorded as a skip: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
-    echo "ok  - a phase that did not run is named in the all summary and recorded as a skip"
+    printf '%s' "$out" | grep -q 'GATE OK   \[all\]: scope+size+secrets+fmt+build+test' \
+      || { echo "self-test FAILED: gate all did not run every phase: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    grep -q '"status":"pass"' "$judge/gates/last-gate.json" \
+      || { echo "self-test FAILED: gate all was not recorded as a pass: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
+    echo "ok  - gate all runs all six phases and records a pass"
     # T-15 round 8, Q4: the record said `ticket:"none"` under --ticket-file.
     grep -q '"ticket":"T-1"' "$judge/gates/last-gate.json" \
       || { echo "self-test FAILED: last-gate.json did not name the ticket under --ticket-file: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
     echo "ok  - last-gate.json names the ticket when --ticket-file is used"
-    # The escape hatch is sandbox-only, and the exit-0 it leaves behind is only
-    # reachable through it. Without the variable a missing Cargo.toml is a
-    # failure by name, so no skipped phase can ever produce a green run outside
-    # this self-test (T-15 R9: 21409ed6be3d, 638795a4c6cf).
-    out="$( cd "$repo" && GATE_ROOT="$repo" GATE_FACTORY="$judge" \
-      timeout 120 bash "$judge/gates/gate.sh" fast --ticket T-1 2>&1 )"; st=$?
+    # A phase that cannot run is a failure by name, never a skip and never exit 0:
+    # the escape hatch that left both is gone (T-15 R15: 21409ed6be3d, 638795a4c6cf).
+    out="$( cd "$crate" && GATE_ROOT="$tmp/nocrate" GATE_FACTORY="$judge" \
+      timeout 120 bash "$judge/gates/gate.sh" build 2>&1 )"; st=$?
     [ "$st" != 0 ] \
-      || { echo "self-test FAILED: a missing Cargo.toml passed without GATE_ALLOW_NO_CARGO: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
-    printf '%s' "$out" | grep -q 'GATE FAIL \[fmt\].*refusing to report success' \
+      || { echo "self-test FAILED: a missing Cargo.toml passed: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf '%s' "$out" | grep -q 'GATE FAIL \[build\].*refusing to report success' \
       || { echo "self-test FAILED: a missing Cargo.toml was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
-    echo "ok  - without the sandbox escape hatch a missing Cargo.toml fails, never skips"
+    echo "ok  - a phase that cannot run fails by name and cannot be skipped"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
@@ -823,7 +845,7 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'is not a commit' \
       || { echo "self-test FAILED: a --base that is not a commit was ignored, not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo . >>"$ASSERTIONS"
-    out="$( cd "$repo" && GATE_BASE="$base" GATE_ALLOW_NO_CARGO=1 GATE_ROOT="$repo" GATE_FACTORY="$judge" \
+    out="$( cd "$repo" && GATE_BASE="$base" GATE_ROOT="$repo" GATE_FACTORY="$judge" \
       timeout 120 bash "$judge/gates/gate.sh" fast --ticket T-1 --base "$big" 2>&1 )"; st=$?
     { [ "$st" != 0 ] && printf '%s' "$out" | grep -q 'different commits'; } \
       || { echo "self-test FAILED: --base and GATE_BASE disagreed silently: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }

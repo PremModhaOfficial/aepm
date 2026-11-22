@@ -188,6 +188,14 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$(awk 'NR==1{next} /^---$/{exit} {print}' "$t2" | sed -n 's/^scope: *//p' | head -1 | tr -d ' ')" = "" ] \
     || { echo "self-test FAILED: a comment body set the mandate the gate reads"; exit 1; }
   okd "a comment body cannot add front matter or fabricate a tracked issue"
+  # T-15 R15, 67f2988f8855: a non-empty but non-numeric number passed the old
+  # check, and `^gh_issue: .*$` then matched an unrelated ticket. Refused by name,
+  # and the ticket is byte-identical afterwards.
+  cbefore="$(cat "$tmp/.factory/tickets/T-2.md")"
+  out="$(ev d-16 issue_comment '{"action":"created","issue":{"number":".*"},"comment":{"body":"wrong ticket","html_url":"https://github.com/o/r/issues/9#issuecomment-3"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 3 ] && [ "$cbefore" = "$(cat "$tmp/.factory/tickets/T-2.md")" ]; } \
+    || { echo "self-test FAILED: a non-numeric issue number reached a ticket (exit $st: $out)"; exit 1; }
+  okd "a non-numeric comment issue number is refused, and no ticket is touched"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -251,10 +259,14 @@ case "$EVENT:$ACTION" in
       || { say "failed: no ticket created for #$NUM"; log ticket-create-failed "$URL"; exit 1; }
     ;;
   issue_comment:created)
-    # A comment on an existing ticket is a follow-up, not a new ticket. An empty
-    # number makes the pattern below `^gh_issue: $`, which matches every ticket
-    # whose issue field is still blank, so the comment lands on the wrong one.
-    [ -n "$NUM" ] || { say "ignored: comment carries no issue number"; log orphan-comment "$URL"; exit 3; }
+    # A comment on an existing ticket is a follow-up, not a new ticket. `$NUM` is
+    # payload data: empty made the pattern `^gh_issue: $`, which matches every
+    # ticket whose issue field is blank, and a regex-shaped number (`.*`) matched
+    # an unrelated ticket, so it is validated here as the PR branch does
+    # (T-15 R15, 67f2988f8855: the round-11 fix covered one branch, not both).
+    case "$NUM" in
+      ''|*[!0-9]*|0) say "ignored: comment carries no issue number ('$NUM')"; log orphan-comment "$URL"; exit 3 ;;
+    esac
     TICKET="$(grep -l "^gh_issue: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
     if [ -z "$TICKET" ]; then say "ignored: comment on #$NUM has no ticket"; log orphan-comment "$URL"; exit 3; fi
     # Appended raw, a comment carrying `gh_issue: 61` fabricated a tracked issue
