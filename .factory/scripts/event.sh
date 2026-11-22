@@ -88,7 +88,14 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$(awk 'NR==1{next} /^---$/{exit} {print}' "$t" | sed -n 's/^scope: *//p' | head -1 | tr -d ' ')" = "" ] \
     || { echo "self-test FAILED: an issue body set the mandate the gate reads"; exit 1; }
   echo "ok  - an issue body cannot set the mandate or close the front matter"
-  echo "event self-test: 7 assertions hold"
+
+  # A failed ticket create must exit non-zero AND leave no dedupe marker, or
+  # GitHub's retry is a permanent "duplicate" for an event never processed.
+  out="$(ev d-6 issues '{"action":"opened","issue":{"number":12,"title":"No body","html_url":"https://github.com/o/r/issues/12","body":""},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" -ne 0 ] && [ ! -f "$tmp/.factory/inbox/d-6.seen" ] && [ ! -f "$tmp/.factory/tickets/T-5.md" ]; } \
+    || { echo "self-test FAILED: a failed ticket create exited $st, left T-5 or a .seen marker"; exit 1; }
+  echo "ok  - a failed ticket create exits non-zero and leaves no dedupe marker"
+  echo "event self-test: 8 assertions hold"
   exit 0
 fi
 
@@ -101,8 +108,9 @@ SAFE_ID="$(printf '%s' "$ID" | tr -c 'A-Za-z0-9._-' '_')"
 cp "$PAYLOAD" "$INBOX/$SAFE_ID.json"
 
 # 1. Dedupe on the delivery id. GitHub retries a delivery; the ID is the key.
+#    The marker is written only once a ticket exists (see below): a marker for an
+#    event that was never processed would make GitHub's retry a permanent duplicate.
 if [ -f "$INBOX/$SAFE_ID.seen" ]; then say "duplicate delivery $ID — ignored"; log delivery-duplicate "$ID"; exit 2; fi
-: >"$INBOX/$SAFE_ID.seen"
 
 SENDER="$(jq -r '.sender.login // empty' "$PAYLOAD")"
 ACTION="$(jq -r '.action // empty' "$PAYLOAD")"
@@ -139,7 +147,8 @@ case "$EVENT:$ACTION" in
     # (the planner proposes, the Router runs `ticket.sh set <T> scope '<p1,p2>'`)
     # before a builder is dispatched. Nothing here may widen it.
     REQ="$(printf '%s' "$BODY" | head -40 | fm_guard)"
-    TICKET="$(bash "$FACTORY/scripts/ticket.sh" new "issue-$NUM" --request "$REQ" --scope "" --authority inferred --issue "$NUM")"
+    TICKET="$(bash "$FACTORY/scripts/ticket.sh" new "issue-$NUM" --request "$REQ" --scope "" --authority inferred --issue "$NUM")" \
+      || { say "failed: no ticket created for #$NUM"; log ticket-create-failed "$URL"; exit 1; }
     ;;
   issue_comment:created)
     # A comment on an existing ticket is a follow-up, not a new ticket.
@@ -159,6 +168,8 @@ case "$EVENT:$ACTION" in
 esac
 
 TICKET="${TICKET##*/}"; TICKET="${TICKET%.md}"
+[ -f "$FACTORY/tickets/$TICKET.md" ] || { say "failed: no ticket at $TICKET"; log ticket-missing "$URL"; exit 1; }
+: >"$INBOX/$SAFE_ID.seen" # only now: the event was actually processed
 if [ -n "$INJ" ]; then
   {
     echo
