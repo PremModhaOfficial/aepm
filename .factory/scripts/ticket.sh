@@ -3,7 +3,8 @@
 #
 #   ticket.sh new <slug> --request <verbatim> --scope <p1,p2> --authority explicit|inferred [--issue N]
 #   ticket.sh get <T-n> <key>
-#   ticket.sh set <T-n> <key> <value>
+#   ticket.sh set <T-n> <key> <value>           e.g. `set T-1 pr 168`: the PR a ticket's branch opened
+#                                              (event.sh matches a delivery's pull_request.number on it)
 #   ticket.sh stage <T-n> <stage>
 #   ticket.sh dispatch <T-n> <role> <taskId>    refuses while another task is live
 #   ticket.sh done <T-n> <taskId>

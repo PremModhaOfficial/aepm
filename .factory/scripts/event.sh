@@ -95,6 +95,16 @@ if [ "${1:-}" = "--self-test" ]; then
   { [ "$st" -ne 0 ] && [ ! -f "$tmp/.factory/inbox/d-6.seen" ] && [ ! -f "$tmp/.factory/tickets/T-5.md" ]; } \
     || { echo "self-test FAILED: a failed ticket create exited $st, left T-5 or a .seen marker"; exit 1; }
   echo "ok  - a failed ticket create exits non-zero and leaves no dedupe marker"
+
+  # A pull_request delivery is matched on the ticket's `pr` field. Nothing wrote
+  # the "PR #N" text the old grep looked for, so every PR read as an orphan.
+  bash "$tmp/.factory/scripts/ticket.sh" set T-2 pr 21 >/dev/null
+  out="$(ev d-7 pull_request '{"action":"synchronize","pull_request":{"number":21,"html_url":"https://github.com/o/r/pull/21"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a PR delivery matching a ticket's pr field was rejected (exit $st: $out)"; exit 1; }
+  echo "ok  - a pull_request delivery matches the ticket's pr field"
+  out="$(ev d-8 pull_request '{"action":"synchronize","pull_request":{"number":22,"html_url":"https://github.com/o/r/pull/22"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 3 ] || { echo "self-test FAILED: a PR with no matching ticket was not ignored (exit $st: $out)"; exit 1; }
+  echo "ok  - a pull_request with no matching ticket exits 3"
   echo "event self-test: 8 assertions hold"
   exit 0
 fi
@@ -157,7 +167,10 @@ case "$EVENT:$ACTION" in
     printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40)" >>"$TICKET"
     ;;
   pull_request:opened|pull_request:synchronize|pull_request:reopened)
-    TICKET="$(grep -l "PR #$NUM\b" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
+    # Matched on the ticket's `pr` field, which `ticket.sh set <T> pr <num>`
+    # writes. Nothing ever wrote the "PR #N" text this used to grep for, so
+    # every PR delivery read as an orphan.
+    TICKET="$(grep -l "^pr: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
     [ -n "$TICKET" ] || { say "ignored: PR #$NUM has no ticket"; log orphan-pr "$URL"; exit 3; }
     ;;
   *)
