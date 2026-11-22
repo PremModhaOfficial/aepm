@@ -63,9 +63,10 @@ const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
     re: /^(?:rg|fd|ls|cat|head|tail|wc|stat|file|jq|date|pwd|which|grep|comm|cut|tr|diff|basename|dirname|realpath|seq|echo|printf|uniq)\b/,
     what: "a read-only filter",
   },
-  // find -delete/-exec and sort -o write; they are not read-only.
+  // find -delete/-exec and sort -o write; they are not read-only. `-o` is
+  // matched attached as well as spaced: `sort -oout` writes a file too.
   { re: /^find\b(?!.*\s-(?:delete|exec|execdir|ok|fprint|fprintf|fls)\b)/, what: "find without -delete/-exec" },
-  { re: /^sort\b(?!.*\s-o\b)/, what: "sort without -o" },
+  { re: /^sort\b(?!.*\s-[a-zA-Z]*o)/, what: "sort without -o" },
   // Neither awk nor sed is here: both can write (`awk system()`, sed's `w`
   // command), so they are not filters. The factory's own scripts use them, and
   // they run as `bash .factory/...`.
@@ -83,6 +84,13 @@ const WRITES_A_FILE = /(^|\s)--output\b/;
 // it (`git remote add`). Any write verb left in the argv refuses the command.
 const GIT_WRITE_VERB =
   /(?:^|\s)(?:add|am|apply|checkout|cherry-pick|clean|clone|commit|config|fetch|filter-branch|gc|init|merge|mv|notes|prune|pull|push|rebase|reflog|remove|rename|reset|restore|revert|rm|set-url|stash|submodule|switch|symbolic-ref|update-ref)\b/;
+
+// `git branch -a -D foo` and `git tag -l -d v1` match a listing prefix and then
+// delete: a listing is read-only only while no write flag sits behind it. The
+// flags are read from the argv after the subcommand, not the whole line: a git
+// option in front of it (`-C <dir>`, `--no-pager`) is not one of its flags.
+const GIT_LISTING_WRITE =
+  /(?:^|\s)(?:-[a-zA-Z]*[dDmMcCfu]\w*|--(?:delete|move|copy|force|set-upstream-to|unset-upstream|track|edit-description))(?:\s|=|$)/;
 
 // `gh` writes are the Router's own job (comment, label, merge, report).
 const GH_WRITE =
@@ -127,6 +135,12 @@ function bashDecision(cmd: string): { allow: boolean; reason: string } {
   if (WRITES_A_FILE.test(bare)) return { allow: false, reason: "it writes a file with --output" };
   if (/^git\b/.test(bare) && GIT_WRITE_VERB.test(bare.replace(/^git\s+/, ""))) {
     return { allow: false, reason: "it carries a git write verb, and the Router does not commit" };
+  }
+  if (/^git\b/.test(bare)) {
+    const after = bare.match(/^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*(?:branch|tag)\b([\s\S]*)$/);
+    if (after && GIT_LISTING_WRITE.test(after[1])) {
+      return { allow: false, reason: "it turns a branch/tag listing into a write with a later -d/-D/-m/-c/-f/-u flag" };
+    }
   }
   if (GH_WRITE.test(bare)) return { allow: true, reason: "" };
   if (ALLOWED_SHAPES.some((s) => s.re.test(bare))) return { allow: true, reason: "" };

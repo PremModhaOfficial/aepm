@@ -80,6 +80,13 @@ const CASES = [
   ["Router fetches into the main checkout", "bash", { command: "git fetch origin" }, MAIN, true],
   ["Router adds a worktree of its own", "bash", { command: "git worktree add /tmp/wt main" }, MAIN, true],
 
+  // The review on 4fc4162 (finding 1): only the first flag was read, so a write
+  // flag behind a listing prefix deleted, renamed or wrote.
+  ["Router deletes a branch behind a listing flag", "bash", { command: "git branch -a -D foo" }, MAIN, true],
+  ["Router renames a branch behind a listing flag", "bash", { command: "git branch -a -m old new" }, MAIN, true],
+  ["Router deletes a tag behind a listing flag", "bash", { command: "git tag -l -d v1" }, MAIN, true],
+  ["Router writes a file with sort's attached -o", "bash", { command: "sort -oout src/main.rs" }, MAIN, true],
+
   // safety (finding 3): the verb sat behind a flag, so `--user enable` was missed.
   ["Router enables a user timer through systemctl --user", "bash", { command: "systemctl --user enable aepm.timer" }, MAIN, true],
   ["Router enables a timer with systemctl --user --now", "bash", { command: "systemctl --user --now enable aepm.timer" }, MAIN, true],
@@ -94,6 +101,8 @@ const CASES = [
   ["Router reads the ticket state", "bash", { command: "cat .factory/state.md" }, MAIN, false],
   ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --sha 0000000000000000000000000000000000000000 --ticket-file /home/x/.factory/tickets/T-1.md" }, MAIN, false],
   ["Router lists remotes", "bash", { command: "git remote -v" }, MAIN, false],
+  ["Router lists branches", "bash", { command: "git branch -a" }, MAIN, false],
+  ["Router sorts to stdout", "bash", { command: "sort -u src/main.rs" }, MAIN, false],
   ["Router reads a PR", "bash", { command: "gh pr view 168 --json state" }, MAIN, false],
   ["Router writes bookkeeping in .factory/", "write", { path: MAIN + "/.factory/state.md" }, MAIN, false],
   ["Router writes a ticket", "write", { path: MAIN + "/.factory/tickets/T-2.md" }, MAIN, false],
