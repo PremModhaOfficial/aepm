@@ -84,6 +84,24 @@ echo "=== pr-triage doc: the prose counts match the table beside them ==="
 # first merge is what puts the next PR behind. Every count is derived here.
 bash scripts/gate-doc-claims.sh
 
+echo "=== prototype demo matches its goldens ==="
+# F20 — prototype/web/aepm.html embeds tests/golden/*.txt verbatim, and ci.yml's
+# `Prototype (web demo matches the goldens)` job rebuilds the page and diffs it.
+# This script ran neither half: a page committed without a rebuild was green
+# locally and red in CI (2 of 6 red rounds on #162). A golden edit alone is not
+# that gap — tests/golden is src/tui/render.rs's fixtures too, so cargo test
+# catches it. Offline: build.mjs imports node builtins only.
+command -v node >/dev/null 2>&1 || {
+  echo "::error::node not found — ci.sh mirrors ci.yml's Prototype check, which runs node; install node rather than skipping the check"
+  exit 1
+}
+node --test prototype/web/retry.test.mjs
+node prototype/web/build.mjs
+if ! git diff --quiet -- prototype/web/aepm.html; then
+  echo "::error::prototype/web/aepm.html does not match a rebuild from tests/golden; run node prototype/web/build.mjs and commit the result"
+  exit 1
+fi
+
 echo "=== clippy (deny warnings) ==="
 cargo clippy --all-targets --all-features --locked -- -D warnings
 

@@ -558,8 +558,9 @@ T3d landed: a finished install opens the post-install receipt built from
 failure also carries a repair line; disk-full is named when the evidence says
 so. It is read-only and closes with enter or esc. Sim 36 proves the success
 receipt alongside the upgrade. The receipt's attached `p` (sudo pacdiff), copy
-and install-log keys from `TUI.md` are not wired; the receipt says to run
-`sudo pacdiff` after closing. T3's checklist is closed; T4 polish is next.
+and install-log keys from `TUI.md` are not wired, and `p` cannot be on the
+current privilege contract (`PENDING.md`); the receipt says to run `sudo
+pacdiff` after closing. T3's checklist is closed; T4 polish is next.
 
 ### T3e. Gate and action agree; one verdict
 

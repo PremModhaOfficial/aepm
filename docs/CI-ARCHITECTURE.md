@@ -24,9 +24,8 @@ required-check design, and how a failure explains itself. Review policy lives in
 The count is asserted, not typed: `ci.sh` runs
 `scripts/check-ci-architecture.sh`, which fails when a file in
 `.github/workflows/` is missing from this table. That is why the heading no longer
-carries a number — a workflow-adding PR (there is one open, `ocr-review.yml`) would
-turn a typed "five" into a lie on merge, and the gate now catches that instead of
-a reader.
+carries a number — a workflow-adding PR would turn a typed "five" into a lie on
+merge, and the gate now catches that instead of a reader.
 
 | Workflow | Triggers | Jobs | Gating? | Wall clock, successes only (2026-11-21) |
 |---|---|---|---|---|
@@ -77,9 +76,10 @@ re-push to an already-reviewed head skips the model and waits only 244s. That is
 wrong, and the mechanism says why. `pr-agent.yml:81` passes the event's
 `head.sha` to `review-state.sh --reviewed --sha "$SHA"`, and `--reviewed` reports
 `covered=true` only when the head carries a **complete** review of that exact
-commit: `present`, `stale=false` and `complete=true` must all hold
-(`scripts/review-state.sh:320-329`). A review with no typed block is not one,
-because it never records that its run finished — `#142` added that condition.
+commit: `present`, `stale=false` and `complete=true` must all hold (the
+`--reviewed` branch of `scripts/review-state.sh`). A review with no typed block
+is not one, because it never records that its run finished — `#142` added that
+condition.
 A re-push *is* a new head sha, so no existing review can match it, the head is
 stale by definition, and the model runs — 452s, the same as a first review.
 

@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { withRetry } from './retry.mjs';
+import { withRetry, report } from './retry.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
@@ -66,13 +66,15 @@ function noteOf(html) {
   return m ? decode(m[1].replace(/<[^>]+>/g, '')) : '';
 }
 
+// A failure keeps the error it came from, because only its type says whether the
+// browser never produced a DOM (exit 2) or the page is wrong (exit 1).
 const failures = [];
 let pass = 0;
 let scheduled = 0;
-const fail = (msg) => failures.push(msg);
+const fail = (msg, err) => failures.push({ msg, err });
 
 function guarded(label, fn) {
-  try { fn(); } catch (e) { fail(`${label}: ${String(e.message).split('\n')[0]}`); }
+  try { fn(); } catch (e) { fail(`${label}: ${String(e.message).split('\n')[0]}`, e); }
 }
 
 // Text for one screen, compared with the fixture it claims to be.
@@ -196,21 +198,12 @@ checkDom('an unknown scene is declared, not silent', 'scene=nope&norum=1',
 rmSync(profile, { recursive: true, force: true });
 // Coverage must be accounted for: a skipped check is itself a failure.
 if (pass + failures.length !== scheduled) {
-  failures.push(`coverage: ${pass} pass + ${failures.length} fail != ${scheduled} scheduled`);
+  fail(`coverage: ${pass} pass + ${failures.length} fail != ${scheduled} scheduled`);
 }
 const total = scheduled;
-if (failures.length) {
-  // Two distinct exit codes so a red run says which problem it is: 1 means the
-  // page is wrong, 2 means the browser never produced a DOM. Reporting the
-  // second as the first is how run 44901392026 read as a real failure.
-  const infra = failures.filter((f) => /infrastructure fault/.test(f));
-  if (infra.length === failures.length) {
-    console.error(`INFRASTRUCTURE ${pass}/${total}: the browser never produced a DOM`);
-    for (const f of failures) console.error(' - ' + f);
-    process.exit(2);
-  }
-  console.error(`FAIL ${pass}/${total}`);
-  for (const f of failures) console.error(' - ' + f);
-  process.exit(1);
-}
-console.log(`PASS ${pass}/${total}: every captured frame, key path and palette rule matches`);
+// Two distinct exit codes so a red run says which problem it is: 1 means the
+// page is wrong, 2 means the browser never produced a DOM. Reporting the second
+// as the first is how run 44901392026 read as a real failure.
+const verdict = report(failures, { pass, total });
+console[verdict.stream](verdict.text);
+if (verdict.code) process.exit(verdict.code);

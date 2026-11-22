@@ -96,7 +96,8 @@ covers where things stand and the first move. Do not re-plan.
   `/usr/lib/modules`, the `.pacnew` count, kernel-based reboot advice and a
   repair line on failure. It closes with enter or esc. Sim 36 proves the
   success receipt. The attached `p` (sudo pacdiff), copy and install-log keys
-  are not wired; the receipt says to run `sudo pacdiff` after closing. T3 is
+  are not wired, and `p` cannot be on the current privilege contract
+  (`PENDING.md`); the receipt says to run `sudo pacdiff` after closing. T3 is
   closed; T4 polish is next.
 - T2's prefetch slice is landed: `progress::collect` reads `pacman -Qui` and
   the real download cache, fills `report::PrefetchReport`, and the TUI draws
