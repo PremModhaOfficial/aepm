@@ -40,16 +40,17 @@ bash .factory/scripts/ticket.sh dispatch T-<n> <role> <taskId>
 | queued | file the ticket | dispatch researcher (or planner if no external facts) |
 | researching | researcher report | planner |
 | planning | planner report | builder (`isolation: worktree`) |
-| building | builder report + your own `gate.sh fast` | verifier |
+| building | builder report + your own pinned `gate.sh fast --sha <head> --ticket-file <abs>/T-<n>.md` | verifier |
 | verifying | verifier verdict | merging (approve) or back to builder (changes) |
-| merging | `gate.sh all` + verifier + required checks green | `gh pr merge --squash --match-head-commit <sha>` |
+| merging | pinned `gate.sh all --sha <PR head> --ticket-file <abs>/T-<n>.md` + verifier + required checks green | `gh pr merge --squash --match-head-commit <sha>` |
 | post-merge-watch | default-branch CI green | done |
 | blocked | retries exhausted | comment on the issue, wait for the owner |
 
 ## Autonomy rules that are not negotiable
 
-- Squash auto-merge only when all three pass: your own `gate.sh all`, the
-  verifier's `approve`, and the required checks on the PR head. Never
+- Squash auto-merge only when all three pass: your own pinned `gate.sh all --sha
+  <PR head 40-hex> --ticket-file <abs>/T-<n>.md` (§Gates in `.factory/README.md`),
+  the verifier's `approve`, and the required checks on the PR head. Never
   `--admin`, never force-push, never edit branch protection.
 - Gate or verifier failure: `ticket.sh bump`, re-dispatch with thinking `max`
   and the failure text. At `attempts > 2`: stage `blocked` + a comment on the

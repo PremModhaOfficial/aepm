@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # gate.sh — the deterministic gate. Exit code is truth; an agent's opinion is not.
 #
-#   gate.sh all    --ticket T-1     # everything (what the builder must pass)
-#   gate.sh fast   --ticket T-1     # scope + secrets + diff size + fmt (seconds)
-#   gate.sh build  --ticket T-1     # clippy -D warnings + build
-#   gate.sh test   --ticket T-1     # the test suite
+#   gate.sh all    --sha <40-hex> --ticket-file <ticket>   # everything (the builder passes this)
+#   gate.sh fast   --sha <40-hex> --ticket-file <ticket>   # scope + secrets + diff size + fmt (seconds)
+#   gate.sh build  --sha <40-hex> --ticket-file <ticket>   # clippy -D warnings + build
+#   gate.sh test   --sha <40-hex> --ticket-file <ticket>   # the test suite
 #   gate.sh --self-test             # prove this gate can fail
+#
+# Both flags are required for a verdict: --sha names the tree judged,
+# --ticket-file the mandate. Run it from a checkout that is not the head judged.
 #
 #   --sha <40-hex>    judge THAT commit (a clean `git worktree` of it), not $ROOT
 #   --ticket-file <p> read the mandate from <p> instead of $FACTORY/tickets/<T>.md
@@ -13,6 +16,8 @@
 # Checks: changes only inside the ticket scope, diff size, secret scan of added
 # lines, cargo fmt, clippy -D warnings, build, tests. Writes
 # .factory/gates/last-gate.json. Exits non-zero on the first failing phase.
+# A file the diff refuses to show as text is a failure, not a skip: its lines
+# cannot be counted and its bytes cannot be scanned.
 #
 # Two rules keep the gate from judging itself:
 #   1. What the gate reads about its own policy (config.yml: the caps) and its
@@ -100,12 +105,19 @@ ticket_field() { # a front-matter value from the ticket (the JUDGE's copy)
   awk 'NR==1{next} /^---$/{exit} {print}' "$tf" | sed -n "s/^$1: *//p" | head -1
 }
 
-base_ref() {
-  if [ -n "${GATE_BASE:-}" ]; then git -C "$ROOT" rev-parse --verify -q "$GATE_BASE^{commit}" && return; fi
-  git -C "$ROOT" rev-parse --verify -q origin/main >/dev/null \
-    && git -C "$ROOT" merge-base HEAD origin/main \
-    || git -C "$ROOT" rev-parse HEAD~1 2>/dev/null \
-    || git -C "$ROOT" hash-object -t tree /dev/null
+base_ref() { # the commit a change is measured against; empty means "no base"
+  if [ -n "${GATE_BASE:-}" ]; then git -C "$ROOT" rev-parse --verify -q "$GATE_BASE^{commit}" 2>/dev/null && return; fi
+  if git -C "$ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    git -C "$ROOT" merge-base HEAD origin/main && return
+  fi
+  git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null
+}
+
+# A phase that diffs needs a base: the empty tree as a base judged nothing.
+need_base() {
+  BASE="$(base_ref)"
+  [ -n "$BASE" ] \
+    || fail base "no base commit to diff against in $ROOT (no origin/main, no HEAD~1): pass GATE_BASE=<ref>, or run where the default branch is fetched"
 }
 
 # --- pin the judged tree -----------------------------------------------------
@@ -135,11 +147,11 @@ if [ -n "$SHA" ]; then
 fi
 
 phase_scope() {
-  local base changed f bad=0 allowed tf n
-  base="$(base_ref)"
-  changed="$(git -C "$ROOT" diff --name-status --no-renames "$base"...HEAD 2>/dev/null; \
+  local changed f bad=0 allowed tf n
+  need_base
+  changed="$(git -C "$ROOT" diff --name-status --no-renames "$BASE"...HEAD 2>/dev/null; \
     git -C "$ROOT" status --porcelain -uall | awk '{print "M\t"$2}')"
-  [ -n "$changed" ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$base"))"; return 0; }
+  [ -n "$changed" ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
   allowed="$(scope_list)"
   n="$(printf '%s\n' "$changed" | wc -l)"
   if [ -z "$allowed" ]; then
@@ -171,7 +183,7 @@ phase_scope() {
 }
 
 phase_size() {
-  local max_lines max_files base stat lines files
+  local max_lines max_files stat lines files bin
   max_lines="$(cfg diff_lines_max)"; max_lines="${max_lines:-600}"
   max_files="$(cfg diff_files_max)"; max_files="${max_files:-30}"
   # A ticket may carry its own cap. The mandate is already trusted and lives
@@ -180,9 +192,13 @@ phase_size() {
   local tmax
   tmax="$(ticket_field diff_lines_max)"; [ -n "$tmax" ] && max_lines="$tmax"
   tmax="$(ticket_field diff_files_max)"; [ -n "$tmax" ] && max_files="$tmax"
-  base="$(base_ref)"
+  need_base
   # No path is dropped here: .factory/ code counts like any other code.
-  stat="$(git -C "$ROOT" diff --numstat --no-renames "$base" 2>/dev/null || true)"
+  stat="$(git -C "$ROOT" diff --numstat --no-renames "$BASE" 2>/dev/null || true)"
+  # `-` in a numstat column means git will not show the file as text: its lines
+  # are absent from the sum below and its bytes from the scan, so fail, not skip.
+  bin="$(printf '%s\n' "$stat" | awk -F'\t' '$1=="-"||$2=="-"{print $3}' | tr '\n' ' ')"
+  [ -z "${bin// /}" ] || fail size "the diff refuses to show these files as text, so their lines cannot be counted and their bytes cannot be scanned: ${bin% }"
   lines="$(printf '%s\n' "$stat" | awk 'NF{a+=$1; d+=$2} END{print a+d+0}')"
   files="$(printf '%s\n' "$stat" | awk 'NF' | wc -l | tr -d ' ')"
   [ "${lines:-0}" -le "$max_lines" ] || fail size "diff is ${lines} lines, cap ${max_lines}"
@@ -194,9 +210,10 @@ phase_secrets() {
   # Scan ADDED lines only: a secret already in history is a different ticket.
   # -oE extracts the SECRET, not the line: a live key beside the word "example"
   # is still a live key, and placeholders are filtered per token, not per line.
-  local base added pat t hits=""
-  base="$(base_ref)"
-  added="$(git -C "$ROOT" diff -U0 --no-renames "$base" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')"
+  local added pat t hits=""
+  need_base
+  # A binary file never reaches the secret scan: the size phase already failed it.
+  added="$(git -C "$ROOT" diff -U0 --no-renames "$BASE" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')"
   [ -n "$added" ] || { pass secrets "no added lines to scan"; return 0; }
   for pat in \
     'gh[pousr]_[A-Za-z0-9]{20,}' \
@@ -264,22 +281,34 @@ case "$PHASE" in
     repo="$tmp/repo"
     # The global config signs commits with an ssh key; a throwaway repo has no
     # agent socket, so signing is off here or every self-test commit fails.
+    # origin/main is the base and the second commit is what the first assertion
+    # measures: without a base ref that assertion could not fail.
     ( cd "$repo" && git init -q && git config user.email t@t && git config user.name t \
-      && git config commit.gpgsign false
-      echo 'a' >src/a.txt; echo 'b' >docs/b.txt; git add -A && git commit -qm base ) || { echo "self-test FAILED: sandbox repo" >&2; exit 1; }
+      && git config commit.gpgsign false \
+      && echo 'a' >src/a.txt && echo 'b' >docs/b.txt && git add -A && git commit -qm base \
+      && git update-ref refs/remotes/origin/main HEAD \
+      && echo 'in scope' >>src/a.txt && git commit -qam 'in scope' ) \
+      || { echo "self-test FAILED: sandbox repo" >&2; exit 1; }
     printf -- '---\nid: T-1\nscope: src/\n---\n# T-1\n' >"$judge/tickets/T-1.md"
     # A ticket outside the judged tree: the mandate is machine-local state, so a
     # clean clone judges a head with a ticket that is not in that head.
     printf -- '---\nid: F-1\nscope: src/,.factory/\n---\n# F-1\n' >"$tmp/tickets-outside.md"
     printf -- '---\nid: F-2\nscope: src/\n---\n# F-2\n' >"$tmp/tickets-src.md"
+    # The binary-mark attack also adds `.gitattributes`, so the mandate has to
+    # cover it or the scope phase fails first and the size phase is never read.
+    printf -- '---\nid: F-3\nscope: src/,.gitattributes\n---\n# F-3\n' >"$tmp/tickets-bin.md"
 
-    gs() { # run the JUDGE's gate against $repo; extra args pass through
-      ( cd "$repo" && GATE_ALLOW_NO_CARGO=1 GATE_ROOT="$repo" GATE_FACTORY="$judge" \
+    gs() { # run the JUDGE's gate against ${GS_ROOT:-$repo}; extra args pass through
+      ( cd "${GS_ROOT:-$repo}" && GATE_ALLOW_NO_CARGO=1 GATE_ROOT="${GS_ROOT:-$repo}" GATE_FACTORY="$judge" \
           bash "$judge/gates/gate.sh" "$@" )
     }
+    # Counted in a file: most assertions run inside `$(...)`. The hardcoded "15"
+    # had already drifted from the 14 that ran.
+    ASSERTIONS="$tmp/assertions"; : >"$ASSERTIONS"
     expect() { # want status, label, remaining args
       local want="$1" label="$2"; shift 2
       local out st=0
+      echo . >>"$ASSERTIONS"
       out="$(gs "$@" 2>&1)" || st=$?
       if [ "$want" = ok ]; then
         [ "$st" = 0 ] || { echo "self-test FAILED: $label (exit $st): $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
@@ -289,7 +318,10 @@ case "$PHASE" in
       printf '%s' "$out"
     }
 
-    expect ok "a clean tree inside scope passes" fast --ticket T-1 >/dev/null
+    # The base is real, so this measures a diff and can fail.
+    c1="$(expect ok "a clean tree inside scope passes" fast --ticket T-1)"
+    printf '%s' "$c1" | grep -q '1 file(s) inside the mandate' \
+      || { echo "self-test FAILED: the first assertion judged no diff at all: $(printf '%s' "$c1" | tail -2)" >&2; exit 1; }
     echo "ok  - a clean tree inside scope passes"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
@@ -325,6 +357,17 @@ case "$PHASE" in
       && for i in $(seq 1 700); do echo "line $i"; done >>src/a.txt && git commit -qam big )
     expect fail "a 700-line diff" fast --ticket T-1 >/dev/null
     echo "ok  - a 700-line diff fails the size cap"
+
+    # V2: a binary mark shows `-` in both numstat columns and no +/- lines at all.
+    ( cd "$repo" && git reset -q --hard HEAD~1 \
+      && for i in $(seq 1 700); do echo "line $i"; done >>src/a.txt \
+      && printf '%s\n' "$AKIA" >>src/a.txt \
+      && printf 'src/a.txt binary\n' >.gitattributes && git add -A && git commit -qm binary-mark )
+    out="$(expect fail "700 lines behind a .gitattributes binary mark" fast --ticket-file "$tmp/tickets-bin.md")"
+    printf '%s' "$out" | grep -q 'refuses to show these files as text' \
+      || { echo "self-test FAILED: a binary-marked file was skipped instead of refused: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a file the diff refuses to show as text fails instead of being skipped"
+    ( cd "$repo" && git reset -q --hard HEAD~1 )
 
     # F4: .factory/ code is counted. 700 lines of it, with a ticket that allows
     # it, must still hit the cap — otherwise a commit grows itself out of view.
@@ -371,7 +414,18 @@ case "$PHASE" in
     out="$(expect fail "no --ticket at all" fast)"
     printf '%s' "$out" | grep -q "no --ticket" || { echo "self-test FAILED: a missing --ticket was not named: $out" >&2; exit 1; }
     echo "ok  - no --ticket is named as the reason no mandate exists"
-    echo "gate self-test: 15 assertions hold"
+
+    # A one-commit tree with no origin/main has nothing to diff against: refused
+    # by name, not judged as unchanged.
+    repo2="$tmp/repo2"; mkdir -p "$repo2/src"
+    ( cd "$repo2" && git init -q && git config user.email t@t && git config user.name t \
+      && git config commit.gpgsign false && echo a >src/a.txt && git add -A && git commit -qm only ) \
+      || { echo "self-test FAILED: sandbox repo2" >&2; exit 1; }
+    out="$(GS_ROOT="$repo2" expect fail "a tree with no base commit" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'no base commit' \
+      || { echo "self-test FAILED: a tree with no base was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a tree with no base commit is refused, not judged as unchanged"
+    echo "gate self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     ;;
   all)
     phase_scope; phase_size; phase_secrets; phase_fmt; phase_build; phase_test

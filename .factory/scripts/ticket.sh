@@ -57,7 +57,7 @@ next_action() {
     queued) echo "dispatch researcher: bash .factory/scripts/brief.sh <T> researcher" ;;
     researching) echo "await researcher, then write plan via planner (stage planning)" ;;
     planning) echo "await planner, then dispatch builder (isolation: worktree)" ;;
-    building) echo "await builder, then re-run gates/gate.sh all --ticket <T> yourself" ;;
+    building) echo "await builder, then re-run $FACTORY/gates/gate.sh all --sha <head> --ticket-file $FACTORY/tickets/<T>.md yourself" ;;
     verifying) echo "await verifier, then merged = gate+verifier+CI all green" ;;
     merging) echo "watch_pull_request on the head, merge --squash --match-head-commit" ;;
     post-merge-watch) echo "watch default-branch CI; red -> open a revert ticket" ;;
@@ -154,7 +154,7 @@ case "$cmd" in
       echo
       echo "## Acceptance checks"
       echo
-      echo "- [ ] gate exits 0: \`bash .factory/gates/gate.sh all --ticket $id\`"
+      echo "- [ ] gate exits 0: \`bash $FACTORY/gates/gate.sh all --sha \$(git rev-parse HEAD) --ticket-file $FACTORY/tickets/$id.md\`"
       echo "- [ ] verifier: fresh-context verdict recorded below"
       echo "- [ ] required checks green on the PR head"
       echo

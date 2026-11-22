@@ -70,19 +70,38 @@ run command) carries its scope from the start and no role may widen it.
 
 ## Gates
 
-`bash .factory/gates/gate.sh all --ticket T-<n>` — fmt, clippy `-D warnings`,
-build, tests, diff size, secret scan, and *changes only inside the ticket scope*.
-Exit code is truth. The builder must pass it before reporting; Router and verifier
-re-run it independently. `--self-test` proves the gate can fail.
+Every run is pinned twice — `--sha <40-hex>` names the tree that is judged,
+`--ticket-file <abs path>` the machine-local mandate — so a green line is about
+that head and nothing else. Run it from the Router's checkout, never from the
+head under review:
 
-`--sha <40-hex>` judges that commit in a clean `git worktree` of it, and
-`--ticket-file <path>` reads the mandate from a file outside the judged tree. The
-judge (this script, its `config.yml`, the ticket) is never the judged tree: a
-commit cannot raise its own line cap, and only runtime state
-(`.factory/state.md`, `ledger.jsonl`, `guard.log`, `tickets/`, `inbox/`,
-`research/`, `gates/last-gate.json`) is exempt from the scope check. `.factory/`
-code — `gate.sh`, `scripts/`, `roles/`, `config.yml` — is counted and judged like
-any other file, so a commit cannot neuter the gate it is judged by.
+```sh
+JUDGE=/home/prm/project/aur-prefetch          # the Router's checkout: the judge
+bash "$JUDGE/.factory/gates/gate.sh" all --sha "$(git rev-parse HEAD)" \
+  --ticket-file "$JUDGE/.factory/tickets/T-<n>.md"
+```
+
+That runs fmt, clippy `-D warnings`, build, tests, diff size, secret scan, and
+*changes only inside the ticket scope*; `fast`, `build` and `test` take the same
+two flags. Exit code is truth: the builder passes it before reporting, Router and
+verifier re-run it themselves. An unpinned run (`--ticket` alone) is not a
+verdict — it judges whatever tree it happens to sit in.
+
+`--sha` pins the tree; the *judge* is whatever `$FACTORY` the script runs from.
+From another checkout the pin has force, and `--self-test` measures both halves
+in a throwaway tree (`a 700-line diff fails the size cap`, `a commit that neuters
+gate.sh FAILS when judged from the base commit`). From inside the judged tree,
+that tree's own `config.yml` and `gate.sh` are the judge: the flags name the
+tree, the invoke path names the judge.
+
+A file the diff refuses to show as text fails rather than being skipped — its
+lines cannot be counted for the cap and its bytes cannot be read by the secret
+scan — and a tree with no base to diff against is refused by name.
+
+Only runtime state (`.factory/state.md`, `ledger.jsonl`, `guard.log`, `tickets/`,
+`inbox/`, `research/`, `gates/last-gate.json`) is exempt from the scope check;
+`.factory/` code — `gate.sh`, `scripts/`, `roles/`, `config.yml` — is counted and
+judged like any other file.
 
 The mandate is machine-local state, not part of a commit: `/.factory/tickets/`
 and `/.factory/state.md` are gitignored. A clean clone therefore judges a head

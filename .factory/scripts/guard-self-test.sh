@@ -73,6 +73,17 @@ const CASES = [
   ["Router writes with sed's w command (not a filter)", "bash", { command: "sed -n '1w /tmp/x' src/main.rs" }, MAIN, true],
   ["Router runs awk with system()", "bash", { command: "awk 'BEGIN{system(\"id\")}'" }, MAIN, true],
 
+  // The review on aeefbb0 (finding 1): one word decided, so `remote` read as
+  // read-only and `git remote add origin …` wrote. Plus the shape behind it.
+  ["Router adds a git remote (first word 'remote' is a read shape)", "bash", { command: "git remote add origin https://example.invalid/r.git" }, MAIN, true],
+  ["Router repoints a git remote", "bash", { command: "git remote set-url origin https://example.invalid/r.git" }, MAIN, true],
+  ["Router fetches into the main checkout", "bash", { command: "git fetch origin" }, MAIN, true],
+  ["Router adds a worktree of its own", "bash", { command: "git worktree add /tmp/wt main" }, MAIN, true],
+
+  // safety (finding 3): the verb sat behind a flag, so `--user enable` was missed.
+  ["Router enables a user timer through systemctl --user", "bash", { command: "systemctl --user enable aepm.timer" }, MAIN, true],
+  ["Router enables a timer with systemctl --user --now", "bash", { command: "systemctl --user --now enable aepm.timer" }, MAIN, true],
+
   // The two holes beside the allowlist: .env through a redirect, protection edits.
   ["Router leaks .env through a redirect", "bash", { command: "echo SECRET=leaked > .env" }, MAIN, true],
   ["Router edits protection with --method before the path", "bash", { command: "gh api --method PUT repos/o/r/branches/main/protection" }, MAIN, true],
@@ -81,7 +92,8 @@ const CASES = [
   ["Router runs read-only git", "bash", { command: "git log --oneline -3" }, MAIN, false],
   ["Router lists files", "bash", { command: "ls -la" }, MAIN, false],
   ["Router reads the ticket state", "bash", { command: "cat .factory/state.md" }, MAIN, false],
-  ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --ticket T-1" }, MAIN, false],
+  ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --sha 0000000000000000000000000000000000000000 --ticket-file /home/x/.factory/tickets/T-1.md" }, MAIN, false],
+  ["Router lists remotes", "bash", { command: "git remote -v" }, MAIN, false],
   ["Router reads a PR", "bash", { command: "gh pr view 168 --json state" }, MAIN, false],
   ["Router writes bookkeeping in .factory/", "write", { path: MAIN + "/.factory/state.md" }, MAIN, false],
   ["Router writes a ticket", "write", { path: MAIN + "/.factory/tickets/T-2.md" }, MAIN, false],

@@ -13,9 +13,9 @@
  *     the guard could rewrite itself.)
  *   - bash: judged by SHAPE, not by a substring. A command carrying a shell
  *     metacharacter is refused outright, and the first word must be in a finite
- *     read-only allowlist. A substring test let `echo pwn > src/main.rs` and
- *     `ls && git commit -am x` through, because both contain `/tmp/` or nothing
- *     the denylist knew.
+ *     read-only allowlist, with no git write verb anywhere behind it. A
+ *     substring test let `echo pwn > src/main.rs` and `ls && git commit -am x`
+ *     through; a first-word-only test let `git remote add` through as "remote".
  *
  * This is a guard against a model overreaching, not a sandbox: it reads the
  * command, so anything that hides a write behind an unlisted program is refused
@@ -47,8 +47,14 @@ const singleQuoted = (s: string) => s.replace(/'[^']*'/g, "''");
 // The finite set of shapes allowed in the main checkout. Default deny.
 const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
   {
-    re: /^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*(?:status|log|show|diff|rev-parse|merge-base|ls-files|remote|cat-file|worktree\s+list|for-each-ref|describe)\b/,
+    re: /^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*(?:status|log|show|diff|rev-parse|merge-base|ls-files|cat-file|worktree\s+list|for-each-ref|describe)\b/,
     what: "read-only git",
+  },
+  // `git remote` alone lists; `git remote add|set-url` writes, and `remote` used
+  // to be allowed by name, so the first word after `git` decided it was a read.
+  {
+    re: /^git\s+(?:-C\s+\S+\s+|--no-pager\s+)*remote(?:\s+(?:-v|--verbose|get-url|show)\b|\s*$)/,
+    what: "git remote listing",
   },
   // `git branch foo` creates, `git branch -D` deletes: only listings.
   { re: /^git\s+branch\s+(?:-[arv]+|--list|--show-current|--merged)(?:\s|$)/, what: "git branch listing" },
@@ -72,6 +78,11 @@ const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
 ];
 // `git diff --output=x`, `grep --output` etc. write a named file: never allowed.
 const WRITES_A_FILE = /(^|\s)--output\b/;
+
+// A shape match reads one bare word after `git`, so a write verb can sit behind
+// it (`git remote add`). Any write verb left in the argv refuses the command.
+const GIT_WRITE_VERB =
+  /(?:^|\s)(?:add|am|apply|checkout|cherry-pick|clean|clone|commit|config|fetch|filter-branch|gc|init|merge|mv|notes|prune|pull|push|rebase|reflog|remove|rename|reset|restore|revert|rm|set-url|stash|submodule|switch|symbolic-ref|update-ref)\b/;
 
 // `gh` writes are the Router's own job (comment, label, merge, report).
 const GH_WRITE =
@@ -114,6 +125,9 @@ function bashDecision(cmd: string): { allow: boolean; reason: string } {
     return { allow: false, reason: "it carries a shell metacharacter (chain, redirect, subshell or expansion)" };
   }
   if (WRITES_A_FILE.test(bare)) return { allow: false, reason: "it writes a file with --output" };
+  if (/^git\b/.test(bare) && GIT_WRITE_VERB.test(bare.replace(/^git\s+/, ""))) {
+    return { allow: false, reason: "it carries a git write verb, and the Router does not commit" };
+  }
   if (GH_WRITE.test(bare)) return { allow: true, reason: "" };
   if (ALLOWED_SHAPES.some((s) => s.re.test(bare))) return { allow: true, reason: "" };
   if (/^git\b/.test(bare)) return { allow: false, reason: "it is a git write, and the Router does not commit" };

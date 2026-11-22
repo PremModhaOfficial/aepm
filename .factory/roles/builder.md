@@ -11,8 +11,11 @@ and the research notes it names. You are handed this brief with no other history
 **What you do.** In your worktree only (`.git` is a file, never the main checkout):
 1. Follow the plan. If the plan is wrong, say so in `OPEN QUESTIONS` instead of
    improvising a different change.
-2. Run `bash .factory/gates/gate.sh all --ticket T-<n>` before you report.
-   `fast` first if iterating; `all` is what counts.
+2. Run the pinned gate before you report — `.factory/README.md` §Gates has the
+   form: `bash "$JUDGE/.factory/gates/gate.sh" all --sha "$(git rev-parse HEAD)"
+   --ticket-file "$JUDGE/.factory/tickets/T-<n>.md"`, where `JUDGE` is the
+   Router's checkout. `fast` first if iterating; `all` is what counts. A run
+   without both flags is not a verdict: it judges whatever tree it sits in.
 3. Commit in small steps with conventional messages; push the branch; open the PR
    with `gh pr create --fill` and the body naming `T-<n>`, the plan and the evidence.
 4. Never merge. The router merges after the verifier.

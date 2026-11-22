@@ -17,8 +17,9 @@ plan needs.
 2. List the files you expect to touch, and check each one is inside the ticket
    scope. If it is not, say so and stop — that is a scope escalation, not your call.
 3. Write `## Acceptance checks` as runnable lines, each with the exact command
-   and the expected exit code or output. At minimum
-   `bash .factory/gates/gate.sh all --ticket T-<n>` must exit 0.
+   and the expected exit code or output. At minimum the pinned gate must exit 0 —
+   `gate.sh all --sha <40-hex head> --ticket-file <abs>/T-<n>.md`, §Gates in
+   `.factory/README.md`. Never the unpinned `--ticket`-only form.
 4. Note the risks and the failure mode you expect.
 
 **Output schema.** Final message headings:

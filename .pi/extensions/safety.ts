@@ -41,7 +41,9 @@ const NEVER = [
     why: "writing .env through a shell command",
   },
   { re: /\b(pacman|yay|makepkg|paccache|pacdiff)\b/, why: "pacman/yay/makepkg on the development host (sim/run.sh only)" },
-  { re: /\bsystemctl\b\s+(enable|start|restart|disable|stop)\b/, why: "systemd state change on the development host" },
+  // The verb is not always the word after `systemctl`: `--user enable` sits a
+  // flag in front of it, so the whole line up to the newline is scanned.
+  { re: /\bsystemctl\b[^\n]*\b(enable|start|restart|disable|stop|mask|unmask)\b/, why: "systemd state change on the development host" },
   { re: /\bgit\s+reset\b[^\n]*--hard\b/, why: "git reset --hard (use a checkpoint or a worktree)" },
   { re: /\b(cargo|npm|pnpm)\s+publish\b/, why: "publishing a release needs the owner" },
 ];

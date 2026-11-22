@@ -265,8 +265,11 @@ anything under `.factory/`. Two rules that hold for every actor:
   checkout; `safety.ts` blocks dangerous commands, protected paths,
   force-push to the default branch and `gh pr merge --admin`. Never disable
   either to get a change through — dispatch a builder instead.
-- `bash .factory/gates/gate.sh all --ticket T-<n>` is the gate. Exit code is
-  truth. `.factory/tickets/` is the state, so work resumes from files after a
+- The gate is pinned to the head it judges: `bash
+  "$JUDGE/.factory/gates/gate.sh" all --sha <head 40-hex> --ticket-file
+  <abs>/.factory/tickets/T-<n>.md`, run from the Router's checkout (`.factory/README.md`
+  §Gates). An unpinned run is not a verdict. Its exit code is truth.
+  `.factory/tickets/` is the state, so work resumes from files after a
   restart, not from memory.
 
 ## Layout

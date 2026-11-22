@@ -10,8 +10,11 @@ cites. Re-derive what the change claims rather than trusting its description.
 **Allowed tools.** read, grep, find, ls, bash (including the gate and the tests).
 
 **What you do.** In order:
-1. Re-run the gate yourself: `bash .factory/gates/gate.sh all --ticket T-<n>`.
-   Its exit code is the first verdict, not the builder's report.
+1. Re-run the gate yourself, pinned, from a checkout that is not the head under
+   review (§Gates in `.factory/README.md`):
+   `bash "$JUDGE/.factory/gates/gate.sh" all --sha <PR head 40-hex> --ticket-file
+   "$JUDGE/.factory/tickets/T-<n>.md"`. Its exit code is the first verdict, not
+   the builder's report. An unpinned run judges whatever tree it sits in.
 2. Read the diff and ask what it does **not** cover: an edge case, an error path,
    a caller left un-updated, a doc claim now false.
 3. Spot-check the research: take 2 claims the plan leaned on and open their
