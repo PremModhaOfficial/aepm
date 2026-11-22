@@ -354,6 +354,16 @@ case "$PHASE" in
       || { echo "self-test FAILED: a staged rename hid its new path: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a staged rename is judged at its new path"
     ( cd "$repo" && git reset -q --hard "$keep" )
+    # An untracked file is in the scope check and must be in the size check too:
+    # `git diff` never shows one, so 700 lines in src/ used to count as zero.
+    ( cd "$repo" && git reset -q --hard HEAD~1 )
+    for i in $(seq 1 700); do echo "line $i"; done >"$repo/src/untracked.txt"
+    out="$(expect fail "700 untracked lines inside scope" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[size\]' \
+      || { echo "self-test FAILED: an untracked file escaped the size cap: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - 700 lines in an untracked file fail the size cap"
+    rm -f "$repo/src/untracked.txt"
+    ( cd "$repo" && git reset -q --hard "$keep" )
     ( cd "$repo" && git checkout -q . && git reset -q --hard HEAD~1 \
       && printf 'k=ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret )
     expect fail "a planted token" fast --ticket T-1 >/dev/null
