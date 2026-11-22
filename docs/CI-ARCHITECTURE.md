@@ -75,9 +75,10 @@ re-push to an already-reviewed head skips the model and waits only 244s. That is
 wrong, and the mechanism says why. `pr-agent.yml:81` passes the event's
 `head.sha` to `review-state.sh --reviewed --sha "$SHA"`, and `--reviewed` reports
 `covered=true` only when the head carries a **complete** review of that exact
-commit: `present`, `stale=false` and `complete=true` must all hold
-(`scripts/review-state.sh:320-329`). A review with no typed block is not one,
-because it never records that its run finished — `#142` added that condition.
+commit: `present`, `stale=false` and `complete=true` must all hold (the
+`--reviewed` branch of `scripts/review-state.sh`). A review with no typed block
+is not one, because it never records that its run finished — `#142` added that
+condition.
 A re-push *is* a new head sha, so no existing review can match it, the head is
 stale by definition, and the model runs — 452s, the same as a first review.
 

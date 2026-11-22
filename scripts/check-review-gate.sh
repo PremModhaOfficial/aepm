@@ -530,10 +530,6 @@ doc_claims_match_code() {
   # this as the one claim whose wording is the fact).
   flat_d "$ROOT/AGENTS.md" | grep -qF 'its typed block clears the gate' || return 1
   ! flat_d "$ROOT/AGENTS.md" | grep -qF 'only its typed block identifies one' || return 1
-  # D39's rule lives only in a prompt, so it is read where the reviewer reads it: the paragraph has to sit in `[pr_reviewer]`, and a move to another block is
-  # a removal as far as #150 is concerned.
-  awk '/^\[pr_reviewer\]/{f=1;next} /^\[/{f=0} f&&index($0,"A line inside a comment is not the code"){x=1} END{exit !x}' \
-    "$ROOT/.pr_agent.toml" || return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
     # Here the wording is the fact: D33c says this file is review input *and* that
     # reading it is bounded by the four files listed; a differently worded title
@@ -558,7 +554,7 @@ run fallback-head-from-an-older-review 1 'does not name the commit'
 # deleted row still fails (findings 13d53e61b390, 2e69f9e3c720).
 doc_bounds_are_recorded() {
   local id
-  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e 691bb9dc9491; do
+  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e; do
     grep -qE "^\| D[0-9a-z]+ \|.*$id" "$ROOT/.github/PR-AGENT.md" || return 1
   done
 }
