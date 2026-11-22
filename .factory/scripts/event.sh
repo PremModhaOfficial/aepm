@@ -188,6 +188,14 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$(awk 'NR==1{next} /^---$/{exit} {print}' "$t2" | sed -n 's/^scope: *//p' | head -1 | tr -d ' ')" = "" ] \
     || { echo "self-test FAILED: a comment body set the mandate the gate reads"; exit 1; }
   okd "a comment body cannot add front matter or fabricate a tracked issue"
+  # T-15 R16, 4658402372: the delivery carries the issue body too, and the whole
+  # of it was appended as the follow-up. Only the comment is the change.
+  out="$(ev d-17 issue_comment '{"action":"created","issue":{"number":9,"body":"ISSUE-BODY-MARKER"},"comment":{"body":"comment body only","html_url":"https://github.com/o/r/issues/9#issuecomment-4"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"
+  { [ "$?" = 0 ] && grep -q 'comment body only' "$tmp/.factory/tickets/T-2.md"; } \
+    || { echo "self-test FAILED: the comment body was not appended: $out" >&2; exit 1; }
+  grep -q 'ISSUE-BODY-MARKER' "$tmp/.factory/tickets/T-2.md" \
+    && { echo "self-test FAILED: a comment delivery re-appended the issue body" >&2; exit 1; }
+  okd "a comment delivery appends the comment, never the issue body"
   # T-15 R15, 67f2988f8855: a non-empty but non-numeric number passed the old
   # check, and `^gh_issue: .*$` then matched an unrelated ticket. Refused by name,
   # and the ticket is byte-identical afterwards.
@@ -217,6 +225,10 @@ SENDER="$(jq -r '.sender.login // empty' "$PAYLOAD")"
 ACTION="$(jq -r '.action // empty' "$PAYLOAD")"
 REPO="$(jq -r '.repository.full_name // empty' "$PAYLOAD")"
 BODY="$(jq -r '(.issue.body // "") + "\n" + (.comment.body // "") + "\n" + (.pull_request.body // "")' "$PAYLOAD")"
+# What a comment delivery CHANGES is the comment. The payload also carries the
+# issue body, and appending `$BODY` put the whole issue under the ticket again
+# (T-15 R16, 4658402372).
+COMMENT_BODY="$(jq -r '.comment.body // empty' "$PAYLOAD")"
 URL="$(jq -r '.issue.html_url // .pull_request.html_url // .comment.html_url // empty' "$PAYLOAD")"
 NUM="$(jq -r '.issue.number // .pull_request.number // empty' "$PAYLOAD")"
 
@@ -271,7 +283,7 @@ case "$EVENT:$ACTION" in
     if [ -z "$TICKET" ]; then say "ignored: comment on #$NUM has no ticket"; log orphan-comment "$URL"; exit 3; fi
     # Appended raw, a comment carrying `gh_issue: 61` fabricated a tracked issue
     # and a `---` closed the front matter: the same guard as the issue branch.
-    printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40 | fm_guard)" >>"$TICKET"
+    printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$COMMENT_BODY" | head -40 | fm_guard)" >>"$TICKET"
     ;;
   pull_request:opened|pull_request:synchronize|pull_request:reopened)
     # `$NUM` is payload data and `ticket.sh set` refuses nothing, so

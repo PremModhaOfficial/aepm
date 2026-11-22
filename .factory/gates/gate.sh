@@ -39,10 +39,10 @@ SHA=""
 BASE_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --ticket) TICKET="$2"; shift 2 ;;
-    --ticket-file) TICKET_FILE="$2"; shift 2 ;;
-    --sha) SHA="$2"; shift 2 ;;
-    --base) BASE_ARG="$2"; [ -n "$BASE_ARG" ] || { echo "--base needs a ref" >&2; exit 2; }; shift 2 ;;
+    --ticket) [ $# -ge 2 ] || { echo "--ticket needs a value" >&2; exit 2; }; TICKET="$2"; shift 2 ;;
+    --ticket-file) [ $# -ge 2 ] || { echo "--ticket-file needs a value" >&2; exit 2; }; TICKET_FILE="$2"; shift 2 ;;
+    --sha) [ $# -ge 2 ] || { echo "--sha needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
+    --base) [ $# -ge 2 ] && [ -n "$2" ] || { echo "--base needs a ref" >&2; exit 2; }; BASE_ARG="$2"; shift 2 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -159,14 +159,15 @@ changed_paths() {
     [ -n "$f" ] || continue
     printf '%s\t%s\0' "$st" "$f"
   done < <(git -C "$ROOT" diff --name-status --no-renames -z "$BASE" 2>/dev/null)
-  # Untracked: "STATUS path" in one NUL-terminated record. A rename prints its
-  # NEW path first and the old one second, and the new path is the one a scope
-  # rule has to judge.
+  # Untracked only: `git status` also lists every modified tracked file, which the
+  # diff above already emitted, so emitting those here counted one file twice in
+  # the scope phase (T-15 R16, 4658402378). A rename is the diff's D+A pair, so
+  # there is never a second path to unpack here.
   while IFS= read -r -d '' rec; do
     st="${rec:0:2}"; f="${rec:3}"
+    [ "$st" = "??" ] || continue
     [ -n "$f" ] || continue
     printf '%s\t%s\0' "$st" "$f"
-    case "$st" in R*|C*) IFS= read -r -d '' f && printf '%s\t%s\0' "$st" "$f" ;; esac
   done < <(git -C "$ROOT" status --porcelain -z -uall 2>/dev/null)
 }
 
@@ -560,6 +561,23 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'GATE FAIL \[build\].*refusing to report success' \
       || { echo "self-test FAILED: a missing Cargo.toml was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a phase that cannot run fails by name and cannot be skipped"
+    # One record per path: a tracked file modified in the working tree arrives
+    # from the diff AND from `git status`, so the scope phase counted one file as
+    # two (T-15 R16, 4658402378).
+    echo more >>"$repo/src/a.txt"
+    out="$(expect ok "one tracked file, modified" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q '1 file(s) inside the mandate' \
+      || { echo "self-test FAILED: one modified file counted twice: $(printf '%s' "$out" | grep 'inside the mandate')" >&2; exit 1; }
+    ( cd "$repo" && git checkout -- src/a.txt )
+    echo "ok  - a tracked file modified in the working tree is one record, not two"
+    # A flag as the last word is refused by name, not an unbound-variable abort:
+    # `set -u` alone turned `--sha` with no value into exit 1 and a bash message.
+    echo . >>"$ASSERTIONS"
+    out="$( cd "$repo" && GATE_ROOT="$repo" GATE_FACTORY="$judge" \
+      timeout 120 bash "$judge/gates/gate.sh" fast --ticket T-1 --sha 2>&1 )"; st=$?
+    { [ "$st" = 2 ] && printf '%s' "$out" | grep -q -- '--sha needs a value'; } \
+      || { echo "self-test FAILED: a flag with no value was not refused by name (exit $st): $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
+    echo "ok  - a flag with no value is refused by name, exit 2"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
@@ -569,7 +587,9 @@ case "$PHASE" in
     keep="$(cd "$repo" && git rev-parse HEAD)"
     ( cd "$repo" && git reset -q --hard HEAD~1 && git mv src/a.txt docs/moved.txt )
     out="$(expect fail "a staged rename is judged at its new path" fast --ticket T-1)"
-    printf '%s' "$out" | grep -q 'outside scope: R *docs/moved.txt' \
+    # Either shape names the new path: `--no-renames` makes the diff's D+A pair,
+    # and the assertion is that the NEW path is judged, not how porcelain spells it.
+    printf '%s' "$out" | grep -qE 'outside scope: (R|A) *docs/moved.txt' \
       || { echo "self-test FAILED: a staged rename hid its new path: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a staged rename is judged at its new path"
     ( cd "$repo" && git reset -q --hard "$keep" )
