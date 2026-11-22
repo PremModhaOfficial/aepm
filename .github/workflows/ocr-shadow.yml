@@ -139,10 +139,15 @@ jobs:
       - name: Install open-code-review
         run: |
           set -euo pipefail
+          # $RUNNER_TEMP, not /usr/local/bin: the job runs as the unprivileged
+          # `runner` user and /usr/local/bin is root-owned, so writing there
+          # fails before the checksum is ever compared. The binary is verified
+          # where it was written and only then copied into place.
           url="https://github.com/alibaba/open-code-review/releases/download/${OCR_VERSION}/opencodereview-linux-amd64"
-          curl -fsSL --retry 3 -o /usr/local/bin/ocr "$url"
-          echo "${OCR_SHA256}  /usr/local/bin/ocr" | sha256sum -c -
-          chmod +x /usr/local/bin/ocr
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/ocr" "$url"
+          echo "${OCR_SHA256}  $RUNNER_TEMP/ocr" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/ocr"
+          sudo install -m 0755 "$RUNNER_TEMP/ocr" /usr/local/bin/ocr
           ocr --version
 
       - name: Configure the LLM endpoint
