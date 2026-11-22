@@ -120,6 +120,23 @@ need_base() {
     || fail base "no base commit to diff against in $ROOT (no origin/main, no HEAD~1): pass GATE_BASE=<ref>, or run where the default branch is fetched"
 }
 
+# The change, as one set: STATUS<TAB>path, with both sides of a rename. Scope and
+# size used to compute this separately and disagreed about what "the change" is,
+# which is how an untracked file and a rename's new path escaped one of them.
+changed_paths() {
+  git -C "$ROOT" diff --name-status --no-renames "$BASE"...HEAD 2>/dev/null || true
+  # -z: NUL-terminated and unquoted, so a path with a space stays one field. A
+  # rename prints its NEW path first and the old one second, and the new path is
+  # the one a scope rule has to judge.
+  local rec st f
+  while IFS= read -r -d '' rec; do
+    st="${rec:0:2}"; f="${rec:3}"
+    [ -n "$f" ] || continue
+    printf '%s\t%s\n' "$st" "$f"
+    case "$st" in R*|C*) IFS= read -r -d '' f && printf '%s\t%s\n' "$st" "$f" ;; esac
+  done < <(git -C "$ROOT" status --porcelain -z -uall 2>/dev/null)
+}
+
 # --- pin the judged tree -----------------------------------------------------
 # The judge (this script, its config, its ticket) stays put; only the tree that
 # gets diffed, built and tested is pinned. A dirty working tree therefore cannot
@@ -149,8 +166,7 @@ fi
 phase_scope() {
   local changed f bad=0 allowed tf n
   need_base
-  changed="$(git -C "$ROOT" diff --name-status --no-renames "$BASE"...HEAD 2>/dev/null; \
-    git -C "$ROOT" status --porcelain -uall | awk '{print "M\t"$2}')"
+  changed="$(changed_paths)"
   [ -n "$changed" ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
   allowed="$(scope_list)"
   n="$(printf '%s\n' "$changed" | wc -l)"
