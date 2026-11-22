@@ -22,9 +22,9 @@ custom_model_max_tokens = 1000000
 # reports context_length = 1000000, so the budget is that window.
 max_model_tokens = 1000000
 # Reasoning is on at max, not high: `medium` is not a value this model accepts — the CLI registry lists reasoningEfforts=[off,low,high,max] (PR-AGENT.md
-# D5) and pr-agent forwards the string verbatim, so an unlisted value is swallowed
-# by the gateway with no error — measured `200` for "medium", which means it is
-# not evidence of anything. What a large diff's failure is: not isolated. Run
+# D5) and pr-agent forwards the string verbatim, so an unlisted value is never
+# rejected — measured `200` for "medium", which says nothing about whether the
+# value took effect. What a large diff's failure is: not isolated. Run
 # 44910602395 (27,798-token diff) spent 900.27s and 900.1s on the request clock and
 # the attempt between them returned `503 ... error 1102 ... Worker exceeded
 # resource limits` (`retryable: false`, `owner_action_required: true`). Two of the
@@ -47,15 +47,12 @@ additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # (run 44920542869: 900.36s and 900.12s, both litellm timeouts, no comment posted),
 # and the slowest recorded call took 848.3s, so 1500 is 1.8x it. The recorded
 # distribution, and why 600 is rejected, are D10 of .github/PR-AGENT.md.
-# No sum of timeouts bounds a run: a timed-out request is not
-# replayed (`retry_same_model_on_timeout = false`) and there is no fallback model,
-# but a request the provider *rejects* (429, answered 5xx, non-timeout transport
+# A request the provider *rejects* (429, answered 5xx, non-timeout transport
 # error) is retried up to `num_retries = 4` more times, each attempt under its own
 # `ai_timeout` (v0.50.0 line 38; `_is_rejected_request` and
 # `_stop_same_model_retries` in litellm_ai_handler.py), and `/review` chunks with
-# `max_number_of_calls = 3` (line 219), so up to three calls. The bound on a run is
-# the workflow's `timeout-minutes: 65` (3900s), which kills the job whatever the
-# config asks for.
+# `max_number_of_calls = 3` (line 219), so up to three calls. What that costs a run,
+# and what bounds it, is D10 of .github/PR-AGENT.md.
 ai_timeout = 1500
 retry_same_model_on_timeout = false
 
