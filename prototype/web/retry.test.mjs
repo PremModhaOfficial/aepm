@@ -106,6 +106,37 @@ test('the verdict comes from the error type, not from the message text', () => {
   assert.equal(web.report([], { pass: 90, total: 90 }).code, 0);
 });
 
+test('a missing browser is not retried, but it is still no verdict on a golden', () => {
+  const err = new Error('spawnSync chromium ENOENT');
+  err.code = 'ENOENT';
+  err.syscall = 'spawnSync chromium';
+  // The no-retry rule and the exit-code rule are different questions: this run
+  // judged nothing, so it must not read as "every golden is wrong".
+  const verdict = web.report([{ msg: 'tui-120x40.txt: spawnSync chromium ENOENT', err }], { pass: 0, total: 76 });
+  assert.equal(verdict.code, 2, 'the browser never ran, so nothing was judged');
+  assert.match(verdict.text, /INFRASTRUCTURE 0\/76/);
+});
+
+test('a missing fixture file is a finding, not a missing browser', () => {
+  const err = new Error("ENOENT: no such file or directory, open 'tests/golden/tui-x.txt'");
+  err.code = 'ENOENT';
+  err.syscall = "open 'tests/golden/tui-x.txt'";
+  const verdict = web.report([{ msg: 'tui-x.txt: ENOENT', err }], { pass: 75, total: 76 });
+  assert.equal(verdict.code, 1, 'a missing golden is a repo defect, not a browser fault');
+  assert.match(verdict.text, /FAIL 75\/76/);
+});
+
+test('a missing browser beside a real finding still reports the finding', () => {
+  const gone = new Error('spawnSync chromium ENOENT');
+  gone.code = 'ENOENT';
+  gone.syscall = 'spawnSync chromium';
+  const verdict = web.report([
+    { msg: 'tui-120x40.txt: spawnSync chromium ENOENT', err: gone },
+    { msg: 'tui-log-120x40.txt: row 2 differs', err: new Error('screen differs from golden') },
+  ], { pass: 74, total: 76 });
+  assert.equal(verdict.code, 1, 'one finding outranks any number of browser faults');
+});
+
 test('InfraFault carries the last real error for the log', () => {
   try {
     withRetry(() => { const e = new Error('spawnSync ETIMEDOUT'); e.code = 'ETIMEDOUT'; throw e; });

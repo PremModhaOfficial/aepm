@@ -25,6 +25,16 @@ export function isInfraFault(err) {
   return /ETIMEDOUT|timed out/.test(String(err.message));
 }
 
+// Whether the browser never produced a DOM, which is a different question from
+// whether the attempt is worth repeating. A missing binary is not retried and is
+// still infra: no golden was compared, so exit 2 says that and exit 1 would say
+// every golden is wrong. The syscall decides, because a `readFileSync` ENOENT is
+// a missing fixture, which is a repo defect and must stay a finding.
+export function isNoBrowser(err) {
+  return isInfraFault(err)
+    || (err?.code === 'ENOENT' && /^spawn/.test(String(err.syscall || '')));
+}
+
 // One line a runner's log can be read from: the fault, and which attempt it hit.
 const why = (err) => (err && (err.code || err.signal))
   || String((err && err.message) || err).split('\n')[0];
@@ -58,7 +68,7 @@ export function report(failures, { pass, total }) {
   if (!failures.length) {
     return { code: 0, stream: 'log', text: `PASS ${pass}/${total}: every captured frame, key path and palette rule matches` };
   }
-  const infra = failures.every((f) => f.err instanceof InfraFault);
+  const infra = failures.every((f) => isNoBrowser(f.err));
   const header = infra
     ? `INFRASTRUCTURE ${pass}/${total}: the browser never produced a DOM`
     : `FAIL ${pass}/${total}`;
