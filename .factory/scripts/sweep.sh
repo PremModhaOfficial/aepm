@@ -24,9 +24,9 @@ fi
 
 known="$(tracked)"
 new_issues=""
-while IFS=$'\t' read -r n t; do
+while IFS=$(printf '\t') read -r n t; do
   [ -n "$n" ] || continue
-  printf '%s\n' "$known" | grep -qx "$n" || new_issues="$new_issues$n\t$t\n"
+  printf '%s\n' "$known" | grep -qx "$n" || new_issues="${new_issues}#${n} ${t}"$'\n'
 done <<<"$issues"
 
 # Tickets whose issue was closed outside the factory are stale, not active.
@@ -40,7 +40,7 @@ open_tickets="$(bash "$FACTORY/scripts/ticket.sh" resume 2>/dev/null | grep -c '
 if [ "$JSON" = 1 ]; then
   jq -cn --argjson oi "$(printf '%s\n' "$issues" | grep -c . )" \
     --argjson pr "$(printf '%s\n' "$prs" | grep -c .)" \
-    --arg new "$new_issues" --arg stale "$stale" --argjson tickets "${open_tickets:-0}" \
+    --arg new "$(printf '%s' "$new_issues" | tr '\n' ' ')" --arg stale "$stale" --argjson tickets "${open_tickets:-0}" \
     '{open_issues:$oi,open_prs:$pr,untracked_issues:$new,tickets_without_open_issue:$stale,active_tickets:$tickets}'
   exit 0
 fi
@@ -51,7 +51,7 @@ echo "  open PRs: $(printf '%s\n' "$prs" | grep -c .)"
 echo "  active tickets: ${open_tickets:-0}"
 if [ -n "$new_issues" ]; then
   echo "  UNTRACKED ISSUES (no ticket yet — file one):"
-  printf '%s' "$new_issues" | sed 's/^/    #/'
+  printf '%s' "$new_issues" | sed 's/^/    /'
 fi
 [ -n "$stale" ] && echo "  tickets whose issue is closed:$stale"
 echo "  open PRs (re-arm a watch for each):"

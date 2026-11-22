@@ -27,6 +27,10 @@ with `FILES` naming the ticket you edited, and `GATE` = `not run (planner)`.
 
 **Hard don'ts.**
 - Never implement. No source, test or fixture edits — the ticket text only.
-- Never widen the ticket's scope; report the need instead.
+- Never widen an `explicit` ticket's scope; report the need instead. An issue
+  ticket (`authority: inferred`) arrives with an empty scope: propose one in the
+  plan, and the Router applies it with `ticket.sh set <T> scope '<p1,p2>'`
+  before a builder is dispatched. The gate refuses an empty scope by name, so
+  this step is what makes a webhook-filed ticket buildable at all.
 - No plan step without an acceptance check beside it.
 - Never spawn agents. Never settle or archive any thread.

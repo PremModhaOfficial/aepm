@@ -26,9 +26,21 @@ ledger() { # <ticket> <role> <event> <detail>
 frontmatter() { awk 'NR==1{next} /^---$/{exit} {print}' "$1"; }
 fm_get() { frontmatter "$1" | sed -n "s/^$2: *//p" | head -1; }
 
+# A value must never be able to shape the front matter it lands in: `---` closes
+# it, `key:` sets a field, a newline starts one. Untrusted text (an issue body)
+# is therefore written as an indented block scalar, and a single-line value is
+# flattened and stripped to the field's own charset.
+flatten() { printf '%s' "$1" | tr '\n\r' '  '; }
+path_charset() { flatten "$1" | tr -cd 'A-Za-z0-9._/,-'; }
+token_charset() { flatten "$1" | tr -cd 'A-Za-z0-9._-'; }
+block_scalar() { # write stdin as an indented block scalar body
+  sed 's/^/  /'
+}
+
 # fm_set edits only the front matter, inserting the key before its closing ---
 fm_set() {
   local f="$1" k="$2" v="$3" tmp
+  v="$(flatten "$v")" # one line: a newline would start a front-matter field
   tmp="$(mktemp)"
   awk -v k="$k" -v v="$v" '
     NR==1 { print; next }
@@ -96,6 +108,13 @@ case "$cmd" in
       esac
     done
     [ -n "$request" ] || { echo "--request is required" >&2; exit 2; }
+    # The mandate is path prefixes and nothing else. `scope:` is what the gate
+    # reads, so it accepts no `:`, no newline, no `---` — untrusted text cannot
+    # reach it even by accident.
+    scope="$(path_charset "$scope")"
+    slug="$(token_charset "$slug")"
+    issue="$(printf '%s' "$issue" | tr -cd '0-9')"
+    case "$authority" in explicit|inferred) ;; *) echo "--authority explicit|inferred" >&2; exit 2 ;; esac
     last=0
     if compgen -G "$TICKETS/T-*.md" >/dev/null; then
       last=$(ls "$TICKETS"/T-*.md | sed 's/.*\/T-//; s/\.md$//' | sort -n | tail -1)
@@ -107,7 +126,10 @@ case "$cmd" in
       echo "id: $id"
       echo "slug: $slug"
       echo "gh_issue: $issue"
-      echo "original_request: $request"
+      # Untrusted text goes in as a block scalar: every line is indented, so no
+      # line of it can start at column 0 and no `---` of it can close this block.
+      echo "original_request: |"
+      printf '%s\n' "$request" | block_scalar
       echo "scope: $scope"
       echo "authority: $authority"
       echo "stage: queued"
@@ -124,7 +146,7 @@ case "$cmd" in
       echo
       echo "## Original request (verbatim, never rewritten)"
       echo
-      echo "> $request"
+      printf '%s\n' "$request" | sed 's/^/> /'
       echo
       echo "## Scope (the mandate)"
       echo

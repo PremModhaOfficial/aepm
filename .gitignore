@@ -11,7 +11,10 @@
 /sim-logs
 
 # Factory runtime state (tickets, ledger, inbox) is machine-local, not product.
+# The mandate lives here, not in a commit: the gate reads it with --ticket-file.
 /.factory/inbox/
 /.factory/ledger.jsonl
 /.factory/guard.log
 /.factory/gates/last-gate.json
+/.factory/tickets/
+/.factory/state.md

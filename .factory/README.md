@@ -61,6 +61,13 @@ Follow-ups go to the ticket's existing worker with `t3_thread_send`. A second
 dispatch of the same ticket is refused while an unfinished `taskId` is recorded;
 `task_status` decides, not hope.
 
+**Where a mandate comes from.** A ticket filed from a GitHub issue starts with an
+empty scope and `authority: inferred`: the issue text is data, so it can never
+name the mandate. The planning stage fills it in — the planner proposes a scope,
+the Router applies it with `ticket.sh set <T> scope '<p1,p2>'` — and the gate
+refuses an empty scope, naming that command. An `explicit` ticket (the owner's
+run command) carries its scope from the start and no role may widen it.
+
 ## Gates
 
 `bash .factory/gates/gate.sh all --ticket T-<n>` — fmt, clippy `-D warnings`,
@@ -68,14 +75,37 @@ build, tests, diff size, secret scan, and *changes only inside the ticket scope*
 Exit code is truth. The builder must pass it before reporting; Router and verifier
 re-run it independently. `--self-test` proves the gate can fail.
 
+`--sha <40-hex>` judges that commit in a clean `git worktree` of it, and
+`--ticket-file <path>` reads the mandate from a file outside the judged tree. The
+judge (this script, its `config.yml`, the ticket) is never the judged tree: a
+commit cannot raise its own line cap, and only runtime state
+(`.factory/state.md`, `ledger.jsonl`, `guard.log`, `tickets/`, `inbox/`,
+`research/`, `gates/last-gate.json`) is exempt from the scope check. `.factory/`
+code — `gate.sh`, `scripts/`, `roles/`, `config.yml` — is counted and judged like
+any other file, so a commit cannot neuter the gate it is judged by.
+
+The mandate is machine-local state, not part of a commit: `/.factory/tickets/`
+and `/.factory/state.md` are gitignored. A clean clone therefore judges a head
+with `--ticket-file`, and a missing ticket prints the exact path and the command
+that creates it.
+
 ## Guards
 
 `.pi/extensions/router-guard.ts` blocks edits and side-effecting bash in the
-**main checkout** (`.factory/` and `/tmp` excepted) — a worktree is detected by
-`.git` being a file, so workers are unaffected. `.pi/extensions/safety.ts`
-blocks dangerous commands, `.env`/`.git/` writes, force-pushes to the default
-branch and `gh pr merge --admin`. `.pi/extensions/git-checkpoint.ts` stashes a
-checkpoint each turn. A worktree is not a sandbox: keep no secrets on disk.
+**main checkout** — a worktree is detected by `.git` being a file, so workers are
+unaffected. Its default is deny, in two shapes. A write is allowed only to
+runtime state (`.factory/tickets/`, `state.md`, `ledger.jsonl`, `guard.log`,
+`inbox/`, `research/`, `gates/last-gate.json`, `/tmp` scratch); `.pi/` and
+`.factory/gates/` are code and belong to a builder's PR. A bash command is judged
+by its **argv shape**, never by a substring: any shell metacharacter outside
+single quotes is refused (so `echo pwn > src/main.rs` and `ls && git commit -am x`
+are blocked), and the first word must be in a finite read-only allowlist. The gate
+is run as `bash .factory/gates/gate.sh …`; a bare `cargo build` in the main
+checkout is not the Router's job. `.pi/extensions/safety.ts` blocks dangerous
+commands, `.env`/`.git/`/`.pi/` writes, force-pushes to the default branch,
+branch-protection edits in any spelling, and `gh pr merge --admin`.
+`.pi/extensions/git-checkpoint.ts` stashes a checkpoint each turn. A worktree is
+not a sandbox: keep no secrets on disk.
 
 ## Webhook wiring
 
