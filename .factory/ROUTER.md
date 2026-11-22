@@ -53,8 +53,9 @@ bash .factory/scripts/ticket.sh dispatch T-<n> <role> <taskId>
   the verifier's `approve`, and the required checks on the PR head. Never
   `--admin`, never force-push, never edit branch protection.
 - Gate or verifier failure: `ticket.sh bump`, re-dispatch with thinking `max`
-  and the failure text. At `attempts > 2`: stage `blocked` + a comment on the
-  issue naming the failing check and the log tail.
+  and the failure text. `bump` itself parks the ticket `blocked` once the new
+  count exceeds `retry.max_attempts`, then comment on the issue naming the
+  failing check and the log tail.
 - Post-merge: watch the default-branch run. Red -> open a revert ticket
   immediately (that is quality control, not a human gate).
 - 429 or rate limit: back off, leave the ticket queued, retry on the next wake.

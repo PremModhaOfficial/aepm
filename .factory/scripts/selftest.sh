@@ -41,20 +41,16 @@ resumed="$(bash "$TMP/scripts/ticket.sh" resume)"
 printf '%s' "$resumed" | grep -q "T-1 stage=building" && ok "resume reads the stage back from disk" || bad "resume lost the stage: $resumed"
 printf '%s' "$resumed" | grep -q "next: " && ok "resume names the next action" || bad "resume named no next action"
 
-head1 "6. gate failure loops, then parks blocked"
+head1 "6. retries loop, then park blocked at retry.max_attempts"
 bash "$TMP/scripts/ticket.sh" stage T-1 building >/dev/null
-mkdir -p "$TMP/src"; ( cd "$TMP" && git init -q && git config user.email t@t && git config user.name t \
-  && git config commit.gpgsign false && echo a > src/a.txt && git add -A && git commit -qm base ) || bad "sandbox repo"
-echo b >>"$TMP/docs-outside-scope.txt"
-for i in 1 2 3; do
-  bash "$TMP/scripts/ticket.sh" bump T-1 >/dev/null
-  n="$(bash "$TMP/scripts/ticket.sh" get T-1 attempts)"
-  if [ "$n" -gt 2 ]; then bash "$TMP/scripts/ticket.sh" stage T-1 blocked >/dev/null; fi
-done
-[ "$(bash "$TMP/scripts/ticket.sh" get T-1 stage)" = "blocked" ] \
-  && ok "attempts 3 > max 2 parks the ticket blocked" || bad "the ticket did not park blocked"
+for i in 1 2; do bash "$TMP/scripts/ticket.sh" bump T-1 >/dev/null; done
+[ "$(bash "$TMP/scripts/ticket.sh" get T-1 stage)" = "building" ] \
+  && ok "attempts 2 = max 2 keeps the ticket going" || bad "the ticket parked at or below the limit"
+bash "$TMP/scripts/ticket.sh" bump T-1 >/dev/null
 [ "$(bash "$TMP/scripts/ticket.sh" get T-1 attempts)" = "3" ] \
   && ok "attempts counted: 3" || bad "attempts not counted"
+[ "$(bash "$TMP/scripts/ticket.sh" get T-1 stage)" = "blocked" ] \
+  && ok "bump 3 > retry.max_attempts 2 parks the ticket blocked" || bad "the ticket did not park blocked"
 grep -q "blocked" "$TMP/state.md" && ok "state.md shows the blocked stage" || bad "state.md missed the park"
 
 head1 "7. stop switch pauses and lists in-flight work"

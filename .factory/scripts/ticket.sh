@@ -23,6 +23,13 @@ ledger() { # <ticket> <role> <event> <detail>
     '{ts:$ts,ticket:$ticket,role:$role,event:$event,detail:$detail}' >>"$LEDGER"
 }
 
+# retry.max_attempts from the retry: section of config.yml, with its inline comment
+# stripped. The limit lives here, in code, so a drill cannot supply it by hand.
+retry_max() {
+  awk '/^retry:/{f=1;next} f&&/^[^[:space:]]/{f=0} f' "$FACTORY/config.yml" \
+    | sed -n 's/^ *max_attempts: *//p' | head -1 | sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//'
+}
+
 frontmatter() { awk 'NR==1{next} /^---$/{exit} {print}' "$1"; }
 fm_get() { frontmatter "$1" | sed -n "s/^$2: *//p" | head -1; }
 
@@ -179,8 +186,13 @@ case "$cmd" in
   bump)
     t="$TICKETS/${1:?}.md"
     n=$(fm_get "$t" attempts)
-    fm_set "$t" attempts "$(( ${n:-0} + 1 ))"
-    ledger "$(basename "$t" .md)" router attempt-bumped "$(fm_get "$t" attempts)"
+    n=$(( ${n:-0} + 1 ))
+    fm_set "$t" attempts "$n"
+    ledger "$(basename "$t" .md)" router attempt-bumped "$n"
+    # The retry limit is enforced here, not by whoever remembers to check it.
+    # A count above retry.max_attempts parks the ticket; equal does not.
+    max="$(retry_max)"; max="${max:-2}"
+    if [ "$n" -gt "$max" ]; then fm_set "$t" stage blocked; fi
     write_state
     ;;
   stage)
