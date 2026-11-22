@@ -67,12 +67,13 @@ jobs:
     runs-on: ubuntu-latest
     # p100 over 100 runs was 695s, but three reviews sharing one gateway on
     # 2026-11-20 ran past 20 minutes (44787885830 was 21 minutes in and still
-    # going), so 20 would cancel work that finishes. 65 is the worst case plus
-    # the post: `ai_timeout` is a per-request timeout of 1500s and a run makes
-    # two requests on open (`/describe` and `/review`, D12), so 3000s of requests
-    # plus 900s to write the verdict (#157). A timeout at or near the job budget
-    # re-creates the silent kill that posts nothing, so the two numbers move
-    # together.
+    # going), so 20 would cancel work that finishes. 65 bounds a run, and only it
+    # does: `ai_timeout` = 1500s bounds one request, the two commands on open
+    # (`/describe` and `/review`, D12) cost one call each, and 900s is left to
+    # write the verdict (#157). The config can exceed that — a rejected request is
+    # retried up to `num_retries = 4`, and a chunked `/review` makes up to
+    # `max_number_of_calls = 3` calls — so this job timeout is what must kill a
+    # run; a timeout at or near it re-creates the silent kill that posts nothing.
     timeout-minutes: 65
     steps:
       # A PR must not hand the reviewer's side its own copy of the check, so it
