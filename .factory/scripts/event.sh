@@ -183,6 +183,20 @@ case "$EVENT:$ACTION" in
     # writes. Nothing ever wrote the "PR #N" text this used to grep for, so
     # every PR delivery read as an orphan.
     TICKET="$(grep -l "^pr: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
+    # Nothing else writes that field: the builder opens the PR with `gh pr
+    # create` and names the ticket in the body, so the delivery carries the link
+    # and the field is learned here. The first `T-<n>` in the title or body wins,
+    # so a PR naming another ticket first links that one; only the authorized
+    # sender's deliveries reach this line, and the fallout is which ticket a
+    # webhook appends to.
+    if [ -z "$TICKET" ]; then
+      tid="$(jq -r '(.pull_request.title // "") + " " + (.pull_request.body // "")' "$PAYLOAD" 2>/dev/null \
+        | grep -oE 'T-[0-9]+' | head -1 || true)"
+      if [ -n "$tid" ] && [ -f "$FACTORY/tickets/$tid.md" ]; then
+        bash "$FACTORY/scripts/ticket.sh" set "$tid" pr "$NUM" >/dev/null
+        TICKET="$FACTORY/tickets/$tid.md"
+      fi
+    fi
     [ -n "$TICKET" ] || { say "ignored: PR #$NUM has no ticket"; log orphan-pr "$URL"; exit 3; }
     ;;
   *)
