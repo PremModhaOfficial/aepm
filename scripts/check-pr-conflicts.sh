@@ -114,6 +114,12 @@ GH
     '[{"number":157,"mergeable":null,"head":{"ref":"docs/x"}}]' 2 null
   t "a null that clears on the second attempt is retried" \
     '[{"number":158,"mergeable":null,"head":{"ref":"docs/y"}}]' 1 'null,false'
+  # A value that is neither `true` nor `false` is unknown, not clean: the
+  # `false)` arm is matched first, so this case cannot pass at a conflict's
+  # expense. Every non-boolean shape the projection can produce is here, because
+  # `tostring` turns an empty string and a number into a different string each.
+  t "a non-boolean mergeable is unknown, not a pass" \
+    '[{"number":161,"mergeable":"pending","head":{"ref":"a"}},{"number":162,"mergeable":"","head":{"ref":"b"}},{"number":163,"mergeable":0,"head":{"ref":"c"}},{"number":164,"mergeable":"TRUE","head":{"ref":"d"}}]' 2
   t "one conflict among many still fails" \
     '[{"number":1,"mergeable":true,"head":{"ref":"a"}},{"number":2,"mergeable":false,"head":{"ref":"b"}}]' 1
   t "a conflict on a later page still fails" \
@@ -195,6 +201,11 @@ while IFS=$'\t' read -r num ref mergeable; do
         *) unknown+=("#$num  $ref") ;;
       esac
       ;;
+    true) ;;
+    # Anything that is not `true` or `false` -- a future API value, an empty
+    # string, a number -- is unknown, not clean. `false` is matched above, so
+    # this arm cannot turn a real conflict green.
+    *) unknown+=("#$num  $ref") ;;
   esac
 done <<<"$rows"
 
