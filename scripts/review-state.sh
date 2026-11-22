@@ -282,6 +282,8 @@ if [[ -z "$state_json" && -n "$review_body" ]]; then
   # an older fix the header quotes, not the head. The closing paren stays optional,
   # so a truncated header still matches; a short sha is not accepted, because the
   # template writes all 40 hex.
+  # The pattern this describes is prose and never quoted, so a review cannot
+  # reproduce it as this line's implementation (finding 691bb9dc9491).
   review_head="$(sed -n 's/.*Review updated until commit[[:space:]]\{1,\}https:\/\/[^ )]*commit\/\([0-9a-f]\{40\}\).*/\1/p' <<<"$review_body" | head -1)"
   # Then the persistent review line, which is the head a run recorded. A bare
   # `commit/<sha>` in the body is only the last resort: a review that discusses an
