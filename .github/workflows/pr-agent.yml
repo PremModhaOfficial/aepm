@@ -67,11 +67,23 @@ jobs:
     runs-on: ubuntu-latest
     # p100 over 100 runs was 695s, but three reviews sharing one gateway on
     # 2026-11-20 ran past 20 minutes (44787885830 was 21 minutes in and still
-    # going), so 20 would cancel work that finishes. 40 is the worst case plus
-    # the post: 2 x ai_timeout 900s = 1800s, leaving 600s to write the verdict
-    # (#157). Cutting this or ai_timeout alone re-creates the silent kill that
-    # posts nothing.
-    timeout-minutes: 40
+    # going), so 20 would cancel work that finishes.
+    #
+    # The budget is one arithmetic, written here because this is the number it
+    # has to satisfy: 2 x ai_timeout + the post < timeout-minutes. Two attempts,
+    # because a timeout retries the same model through the one fallback entry
+    # (`.pr_agent.toml` keeps `retry_same_model_on_timeout = false`). At
+    # ai_timeout 1500s that is 3000s of model time; the post around it measured
+    # 34s (31s from job start to the first call and 3.3s from the last attempt to
+    # the job ending, run 45006875080; 29.5s and 4.4s in run 45008210572). So the
+    # worst case is 3034s = 50m34s, and 60 minutes leaves 566s.
+    #
+    # 40 was 2 x 900s + 600s (#157) and stopped covering the work on 2026-11-22:
+    # run 45006875080 on a 54,896-token diff burned both 900s attempts (900.34s,
+    # 900.12s) and failed with no review while 505s of this job were still
+    # unspent. Raising this alone buys nothing; cutting it or ai_timeout
+    # re-creates the silent kill that posts no verdict.
+    timeout-minutes: 60
     steps:
       # A PR must not hand the reviewer's side its own copy of the check, so it
       # comes from the default branch, as in review-gate.yml.

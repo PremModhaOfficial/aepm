@@ -25,18 +25,21 @@ reasoning_effort = "max"
 additional_reasoning_effort_models = ["openai/deepseek/deepseek-v4.1-flash"]
 # Default is 120s, far shorter than a measured max-reasoning review (498-509s).
 # Worst case is bounded: a timeout goes to the fallback entry (same model) once,
-# so 2 x ai_timeout must stay under the workflow's job timeout with room left to
-# post. At 2 x 900s = 1800s against a 30-minute (1800s) job budget the headroom
-# was zero, so a hung provider was killed by the job before it could write its
-# comment (measured: job 1835s, two litellm timeout=900.0 attempts, "Tool
-# reported success but recorded a failure; failing the action").
-# Cutting ai_timeout instead (600 was tried first) trades that death for a new
-# one, and the recordings say how much: over 23 recorded calls (review comment
-# run details, PRs #130-#159) per-call time was p50 325s, p95 414s, max 848s.
-# 600 clips the single 848s call that succeeded; 900 covers every call recorded
-# with 52s to spare. So the budget is the thing that was wrong, not the timeout:
-# the job is 40 minutes (2400s), leaving 600s to post after 2 x 900s.
-ai_timeout = 900
+# so 2 x ai_timeout must fit the workflow's job timeout with room left to post.
+# That arithmetic lives in .github/workflows/pr-agent.yml beside the job timeout
+# it has to satisfy; the run it was measured on is D38 in .github/PR-AGENT.md.
+#
+# 900 was chosen on 23 recorded calls (review comment run details, PRs
+# #130-#159): p50 325s, p95 414s, max 848s, so 600 (tried first) clipped the one
+# 848s call that succeeded. 2026-11-22 outgrew it: run 45006875080 read a
+# 54,896-token diff whole ("total tokens under limit: 256000, returning full
+# diff") and hit `timeout value=900.0` twice (time taken 900.34s, 900.12s),
+# ending with no review at all. The ceiling that bit was the per-call one, not
+# the diff and not the job: 505s of the job budget were still unspent. 1500 is
+# that ceiling raised 600s past what the large factory PR needed, without
+# weakening the review — reasoning_effort stays "max" and no path is ignored,
+# because a review that never happens reviews nothing.
+ai_timeout = 1500
 retry_same_model_on_timeout = false
 
 # Read the rules from the default branch, never from the PR branch, so a PR
