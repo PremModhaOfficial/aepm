@@ -555,7 +555,7 @@ run fallback-head-from-an-older-review 1 'does not name the commit'
 # review, so what is asserted is that the finding behind each bound sits on a
 # `| D.. |` row of PR-AGENT.md: the row is the record a reviewer reads. The
 # wording of the row is not asserted, so a reworded row still passes and a
-# deleted row still fails (findings 13d53e61b390, 2e69f9e3c720).
+# deleted row still fails; the ids in the loop below are the findings.
 doc_bounds_are_recorded() {
   local id
   for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e 691bb9dc9491; do
