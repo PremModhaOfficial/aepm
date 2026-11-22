@@ -35,6 +35,7 @@ merge, and the gate now catches that instead of a reader.
 | `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 452s, p90 849s, max 2376s (n=20) |
 | `Scheduled audit` | weekly cron, `dispatch` | `Drift checks (pinned + stable)`, `One issue, not one per run` | no | n/a |
 | `PR conflicts` | daily cron, `dispatch` | `Open PRs whose merge ref cannot be built` | no (reports stuck PRs) | n/a |
+| `OCR Shadow` | manual `dispatch` only, input `pr` | `OCR shadow review` | no — advisory, never required | n/a (dispatched by hand; nothing measured) |
 
 The wall clock column is printed by `gh run list --workflow <name> --limit N
 --json createdAt,updatedAt`, subtracting `createdAt` from `updatedAt`, successes
