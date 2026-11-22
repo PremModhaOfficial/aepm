@@ -24,9 +24,8 @@ required-check design, and how a failure explains itself. Review policy lives in
 The count is asserted, not typed: `ci.sh` runs
 `scripts/check-ci-architecture.sh`, which fails when a file in
 `.github/workflows/` is missing from this table. That is why the heading no longer
-carries a number — a workflow-adding PR (there is one open, `ocr-review.yml`) would
-turn a typed "five" into a lie on merge, and the gate now catches that instead of
-a reader.
+carries a number — a workflow-adding PR would turn a typed "five" into a lie on
+merge, and the gate now catches that instead of a reader.
 
 | Workflow | Triggers | Jobs | Gating? | Wall clock, successes only (2026-11-21) |
 |---|---|---|---|---|
@@ -35,6 +34,7 @@ a reader.
 | `Review Gate` | `workflow_run` of `PR Agent` | `Review Gate` | yes | median 10s, p90 13s, max 19s (n=21) |
 | `PR Agent` | `pull_request` (`opened`, `reopened`, `ready_for_review`, `synchronize`), `issue_comment` | `Review` | no (writes the verdict) | median 452s, p90 849s, max 2376s (n=20) |
 | `Scheduled audit` | weekly cron, `dispatch` | `Drift checks (pinned + stable)`, `One issue, not one per run` | no | n/a |
+| `PR conflicts` | daily cron, `dispatch` | `Open PRs whose merge ref cannot be built` | no (reports stuck PRs) | n/a |
 | `OCR Shadow` | manual `dispatch` only, input `pr` | `OCR shadow review` | no — advisory, never required | n/a (dispatched by hand; nothing measured) |
 
 The wall clock column is printed by `gh run list --workflow <name> --limit N
@@ -77,9 +77,10 @@ re-push to an already-reviewed head skips the model and waits only 244s. That is
 wrong, and the mechanism says why. `pr-agent.yml:81` passes the event's
 `head.sha` to `review-state.sh --reviewed --sha "$SHA"`, and `--reviewed` reports
 `covered=true` only when the head carries a **complete** review of that exact
-commit: `present`, `stale=false` and `complete=true` must all hold
-(`scripts/review-state.sh:320-329`). A review with no typed block is not one,
-because it never records that its run finished — `#142` added that condition.
+commit: `present`, `stale=false` and `complete=true` must all hold (the
+`--reviewed` branch of `scripts/review-state.sh`). A review with no typed block
+is not one, because it never records that its run finished — `#142` added that
+condition.
 A re-push *is* a new head sha, so no existing review can match it, the head is
 stale by definition, and the model runs — 452s, the same as a first review.
 
@@ -174,8 +175,8 @@ from the local ratio, and the first slice below measures it by removing it.
 
 The scaffolding row is what makes the column sum to the stated 57.5s; without it
 the five named parts come to 54.0s and the table silently loses 6% of the job.
-The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 14
-invocations over 12 scripts today (it was 10 invocations at the commit that first
+The gate count is `grep -cE '^(bash scripts/|\./sim/|bash sim/)' ci.sh` → 16
+invocations over 14 scripts today (it was 10 invocations at the commit that first
 published this table). The figure is asserted by
 `scripts/check-ci-architecture.sh`, which is itself one of those invocations, so
 adding a gate fails the build until this sentence is updated — which is exactly

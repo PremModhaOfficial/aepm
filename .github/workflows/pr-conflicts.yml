@@ -1,0 +1,61 @@
+name: PR conflicts
+
+# A pull request whose head cannot merge into its base gets no checks at all:
+# GitHub builds refs/pull/<n>/merge first, and with no merge ref there is no run,
+# so `CI (Linux)`, `Arch simulation` and `Review Gate` never appear and the PR
+# cannot be merged. Nothing turns red; it just sits there. Measured on #147.
+#
+# This cannot be a `pull_request` workflow — that is the failure it reports, so
+# it would never start either. It has to be scheduled.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-conflicts
+  cancel-in-progress: false
+
+jobs:
+  conflicts:
+    name: Open PRs whose merge ref cannot be built
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prove the check itself passes its own cases
+        run: bash scripts/check-pr-conflicts.sh --self-test
+
+      - name: List open PRs whose head conflicts with its base
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --- pr-conflicts-step:begin ---
+          set -euo pipefail
+          # `--paginate` is not optional: without it `gh api` reads page 1 and
+          # stops, so the 101st open PR is never inspected and this job reports
+          # success having looked at part of the list (finding 4a5a9f1d9e0b).
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" > conflicts.json
+          # Fails and prints each conflicted PR. A conflicted PR is stuck, not
+          # broken, so the failure text says what to do rather than what broke.
+          # Exit 2 is its own outcome — the check could not evaluate a PR — and
+          # must never share the success path (finding 6ea304eea0b7).
+          rc=0
+          ./scripts/check-pr-conflicts.sh < conflicts.json || rc=$?
+          case "$rc" in
+            0) ;;
+            1) echo "::error::an open PR cannot be merged into its base, so no workflow can start for it and no required check can ever appear. Rebase it or close it." >&2
+               exit 1 ;;
+            2) echo "::error::could not determine the mergeability of at least one open PR, so this check did not run and is not a pass. Re-run the job; if it stays unknown, inspect the PR." >&2
+               exit 1 ;;
+            *) echo "::error::check-pr-conflicts exited $rc without naming an outcome" >&2
+               exit 1 ;;
+          esac
+          # --- pr-conflicts-step:end ---
