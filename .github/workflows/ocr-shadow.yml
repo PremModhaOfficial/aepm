@@ -13,8 +13,28 @@ name: OCR Shadow
 # The previous attempt hid its own failure: a 3-second, 576-token,
 # zero-tool-call run reported "0 findings" over a review that never happened.
 # So every dispatch prints the exit code, the artefact's `status`, its comment
-# count, its `total_tokens` and the last 20 lines of stderr, and fails red when
-# there was no review. Red here gates nothing; it only refuses to look green.
+# count, its `files_reviewed`, its `total_tokens` and the last 20 lines of
+# stderr, and fails red when there was no review. `total_tokens` lives at
+# `.summary.total_tokens`; the top-level field this report used to read does not
+# exist in a v1.13.13 artefact, so it printed `missing` on every run.
+#
+# The guard fails on six shapes, all measured against the pinned binary rather
+# than argued: a nonzero exit; a `status` that is not `complete`; a `status` of
+# `skipped` (what an empty range produces — exit 0, "no items were selected",
+# zero files, zero comments, so a guard reading only `status != complete` would
+# already fail it, but the message is what tells an operator why); zero
+# comments; zero `files_reviewed`; and a comment or file count that is not a
+# number, which is what `missing` and `unparsed` are. Red here gates nothing; it
+# only refuses to look green.
+#
+# The row in docs/CI-ARCHITECTURE.md is not a second owner for these facts.
+# scripts/check-ci-architecture.sh asserts one row per workflow *file*: deleting
+# this file's row makes it print, verbatim,
+#   FAIL .github/workflows/ocr-shadow.yml is named 'OCR Shadow' but has no row in the workflow table
+#   FAIL workflow table has 5 rows but the repository has 6 workflow files
+# That assertion covers the row's existence, not its cells, so the cells are not
+# held to anything by it. The row states only the trigger, the job and that it is
+# advisory; the guard, the pins and the ranges are documented here.
 
 on:
   workflow_dispatch:
@@ -66,8 +86,8 @@ jobs:
           num="$DISPATCH_PR"
           # A fork head runs untrusted code on this runner; the model key must
           # not be in the environment when it does.
-          if [ "$(gh pr view "$num" --json isCrossRepository --jq .isCrossRepository)" = "true" ]; then
-            echo "::error::PR #$num comes from a fork; refusing to run with the model key"
+          if [[ "$(gh pr view "$num" --json isCrossRepository --jq .isCrossRepository)" != "false" ]]; then
+            echo "::error::PR #$num does not report isCrossRepository=false; refusing to run with the model key"
             exit 1
           fi
           gh pr view "$num" --json number,baseRefName,headRefOid \
@@ -84,7 +104,37 @@ jobs:
           BASE: ${{ steps.r.outputs.base }}
         run: |
           set -euo pipefail
-          git diff --stat "${BASE}...HEAD"
+          # The merge base, not the base tip. Measured against v1.13.13: ocr's own
+          # `resolved_base` for `--from main` on a branch that was behind main was
+          # already the merge base, so the two endpoints do not by themselves pull
+          # in base commits. This step still resolves the merge base explicitly,
+          # because it is the thing that can be checked before the model is paid,
+          # and because the range a review covers should be the range an operator
+          # was shown.
+          # `git merge-base BASE HEAD` exits 0 and prints HEAD when HEAD is already
+          # the base, and 128 with empty stdout when the base ref is missing. Left
+          # alone, the first case reviews an empty range and every check after it
+          # passes, which is the silent green this workflow exists to refuse. So
+          # the sha is validated as a sha and the range is required to be non-empty.
+          mb=$(git merge-base "$BASE" HEAD) || {
+            echo "::error::no merge base for $BASE and HEAD; nothing can be reviewed"
+            exit 1
+          }
+          printf '%s' "$mb" | grep -qE '^[0-9a-f]{40}$' || {
+            echo "::error::merge-base printed no commit sha: [$mb]"
+            exit 1
+          }
+          if [ "$mb" = "$(git rev-parse HEAD)" ]; then
+            echo "::error::HEAD is the base ($mb): the range is empty and a review of it would prove nothing"
+            exit 1
+          fi
+          if [ -z "$(git diff --name-only "$mb" HEAD)" ]; then
+            echo "::error::the range $mb..HEAD changes no files; refusing to review nothing"
+            exit 1
+          fi
+          printf '%s\n' "$mb" > merge-base.txt
+          echo "merge-base: $mb"
+          git diff --stat "$mb" HEAD
 
       - name: Install open-code-review
         run: |
@@ -130,22 +180,34 @@ jobs:
           BASE: ${{ steps.r.outputs.base }}
         run: |
           set +e
+          # A missing merge-base.txt must not fall through to `ocr review` with no
+          # --from: with no range, ocr reviews the whole workspace and a green
+          # result would describe files this pull request never touched.
+          if [ ! -s merge-base.txt ]; then
+            echo "::error::merge-base.txt is missing or empty; refusing to run a range-less review"
+            exit 1
+          fi
           # No token ceiling (--max-tokens-budget 0): a ceiling is exactly what
           # truncated the previous attempt. --timeout is OCR's own task budget in
           # minutes, kept under the job's timeout-minutes so the guard reports
           # rather than the job being killed.
-          timeout 780 ocr review --from "$BASE" --to HEAD \
+          timeout 780 ocr review --from "$(cat merge-base.txt)" --to HEAD \
             --format json --output ocr.json --audience agent \
             --effort high --concurrency 4 --max-tokens-budget 0 \
             --timeout 12 2>ocr-stderr.log
           rc=$?
           set -e
 
-          status=missing; comments=missing; tokens=missing
+          status=missing; comments=missing; tokens=missing; files=missing
           if [ -s ocr.json ]; then
             status=$(jq -r '.status // "missing"' ocr.json 2>/dev/null) || status=unparsed
             comments=$(jq -r '(.comments // []) | length' ocr.json 2>/dev/null) || comments=unparsed
-            tokens=$(jq -r '.total_tokens // .usage.total_tokens // "missing"' ocr.json 2>/dev/null) || tokens=unparsed
+            # The count lives at .summary.total_tokens, not at the top level.
+            # Measured: `.total_tokens // .usage.total_tokens` printed `missing`
+            # on a real artefact (v1.13.13), so the field this report exists to
+            # show was never shown. .summary is kept as the second fallback.
+            tokens=$(jq -r '.total_tokens // .summary.total_tokens // .usage.total_tokens // "missing"' ocr.json 2>/dev/null) || tokens=unparsed
+            files=$(jq -r '.summary.files_reviewed // "missing"' ocr.json 2>/dev/null) || files=unparsed
             echo "top-level keys: $(jq -r 'keys | join(",")' ocr.json 2>/dev/null || echo unparsed)"
           else
             echo "no ocr.json was written"
@@ -154,6 +216,7 @@ jobs:
           echo "OCR exit code: $rc"
           echo "status: $status"
           echo "comments: $comments"
+          echo "files_reviewed: $files"
           echo "total_tokens: $tokens"
           echo "--- last 20 lines of OCR stderr ---"
           tail -n 20 ocr-stderr.log 2>/dev/null || echo "(no stderr captured)"
@@ -166,14 +229,38 @@ jobs:
             echo "| OCR exit code | \`$rc\` |"
             echo "| status | \`$status\` |"
             echo "| comments | \`$comments\` |"
+            echo "| files_reviewed | \`$files\` |"
             echo "| total_tokens | \`$tokens\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Red when no review happened. This job is not a required check and
-          # cannot gate a merge; the colour exists so a silent failure is not
-          # read as a clean review.
-          if [ "$rc" != 0 ] || [ "$status" != "complete" ]; then
-            echo "::error::no review happened (exit $rc, status $status, comments $comments)"
+          # Red when no review happened, judged by the count rather than by
+          # `status` alone. Measured on #149: a run finished in 3s with 576 tokens
+          # and zero tool calls and still reported `status: failed` with an empty
+          # range, so a guard reading only `status` would have passed a run that
+          # reviewed nothing. The reverse — `complete` with no comments — is what
+          # a degenerate run looks like, so it fails here too.
+          # Red when no review happened. Two reasons the count is read, not just
+          # `status`: measured on a real v1.13.13 artefact, an empty range exits 0
+          # with `status: skipped` and zero comments, and `complete` with no
+          # comments is what the #149 degenerate shape looked like. `comments` is
+          # `missing` when ocr.json was never written and `unparsed` when jq could
+          # not read it; `[ "missing" = 0 ]` is false, so numbers are parsed as
+          # numbers first. `files_reviewed` is checked because comments on zero
+          # files is not a review of the pull request either. An empty --from
+          # would make ocr review the whole workspace, so the counts are only
+          # trusted for a run that named a range.
+          case "$comments" in
+            ''|*[!0-9]*) echo "::error::comment count is not a number ($comments): no artefact to judge"; exit 1 ;;
+          esac
+          case "$files" in
+            ''|*[!0-9]*) echo "::error::files_reviewed is not a number ($files): no artefact to judge"; exit 1 ;;
+          esac
+          if [ "$status" = "skipped" ]; then
+            echo "::error::ocr skipped the review ($(jq -r '.message // "no message"' ocr.json 2>/dev/null)): nothing was reviewed"
+            exit 1
+          fi
+          if [ "$rc" != 0 ] || [ "$status" != "complete" ] || [ "$comments" = 0 ] || [ "$files" = 0 ]; then
+            echo "::error::no review happened (exit $rc, status $status, comments $comments, files_reviewed $files)"
             exit 1
           fi
 
