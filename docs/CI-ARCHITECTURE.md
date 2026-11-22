@@ -24,9 +24,8 @@ required-check design, and how a failure explains itself. Review policy lives in
 The count is asserted, not typed: `ci.sh` runs
 `scripts/check-ci-architecture.sh`, which fails when a file in
 `.github/workflows/` is missing from this table. That is why the heading no longer
-carries a number — a workflow-adding PR (there is one open, `ocr-review.yml`) would
-turn a typed "five" into a lie on merge, and the gate now catches that instead of
-a reader.
+carries a number — a workflow-adding PR would turn a typed "five" into a lie on
+merge, and the gate now catches that instead of a reader.
 
 | Workflow | Triggers | Jobs | Gating? | Wall clock, successes only (2026-11-21) |
 |---|---|---|---|---|
