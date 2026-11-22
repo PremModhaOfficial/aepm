@@ -511,6 +511,33 @@ authority_matches_next() {
 }
 check authority-matches-next authority_matches_next
 
+# D39's rule lives only in a prompt, so it is read where the reviewer reads it:
+# the parsed value of `[pr_reviewer] extra_instructions`, not the lines of the
+# file. Both findings on this file are why. Pinning the first sentence only let
+# the operative half be deleted, and a pattern over lines passed a paragraph
+# after the closing `"""` (a file TOML cannot parse) and live text in a different
+# key of the block, each with the check green (finding 691bb9dc9491). The bound
+# this leaves: a quoted negation carrying the same words still passes, because
+# this asserts presence, not meaning.
+review_rule_text() {
+  python3 - "$1" <<'PY'
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as fh:
+        data = tomllib.load(fh)
+except Exception as exc:
+    sys.exit(f"review_rule_text: {sys.argv[1]}: {exc}")
+sys.stdout.write(data.get("pr_reviewer", {}).get("extra_instructions", ""))
+PY
+}
+
+review_rule_holds() {
+  local text
+  text="$(review_rule_text "$1")" || return 1
+  grep -qF 'A line inside a comment is not the code' <<<"$text" || return 1
+  grep -qF 'never quote a removed pattern as current' <<<"$text" || return 1
+}
+
 # Two claims the script refutes, both raised on the previous head: `AGENTS.md`
 # said the typed block is the only marker that identifies a review, while the
 # next sentence says the guide marker selects one too (finding a1a8f8570dc0), and
@@ -518,7 +545,7 @@ check authority-matches-next authority_matches_next
 # it to `repo_context_files` (finding b835ca937d10). The policy file is read, so
 # the row is held to what it actually configures.
 doc_claims_match_code() {
-  local flat_d
+  local flat_d mutated cut_text commented_text
   flat_d() { tr '\n' ' ' <"$1" | tr -s ' '; }
   # This one stays a sentence, and that is deliberate. A prose-level "does the file
   # mention both words" check is too weak here: AGENTS.md names `typed block` and
@@ -530,6 +557,38 @@ doc_claims_match_code() {
   # this as the one claim whose wording is the fact).
   flat_d "$ROOT/AGENTS.md" | grep -qF 'its typed block clears the gate' || return 1
   ! flat_d "$ROOT/AGENTS.md" | grep -qF 'only its typed block identifies one' || return 1
+  # D39's rule lives only in a prompt, so it is read where the reviewer reads it: the paragraph has to sit in `[pr_reviewer]`, and a move to another block is
+  # a removal as far as #150 is concerned.
+  review_rule_holds "$ROOT/.pr_agent.toml" || return 1
+  # A guard that passes the edits it exists to catch has proved nothing, so both
+  # are run here rather than trusted: the paragraph cut to its first sentence (the
+  # operative half deleted), and the clause commented out. Each copy has to be
+  # rejected; the assertions above and below say the mutation really happened, so
+  # a `sed` that stopped matching fails loudly instead of passing vacuously.
+  mutated="$TMP/pr_reviewer.toml"
+  awk '/^A line inside a comment is not the code\./ && !cut {
+         print "A line inside a comment is not the code."; cut=1; next }
+       cut && /^"""/ { cut=0 } cut { next } { print }' \
+    "$ROOT/.pr_agent.toml" >"$mutated"
+  cut_text="$(review_rule_text "$mutated")" || return 1
+  grep -qF 'A line inside a comment is not the code' <<<"$cut_text" || return 1
+  ! grep -qF 'never quote a removed pattern as current' <<<"$cut_text" || return 1
+  review_rule_holds "$mutated" && return 1
+  # The rule deleted from the value and left behind as a TOML comment, which is
+  # the only form a `#`-prefixed copy has in a file that parses: the text is on a
+  # line a pattern finds, and is not what the reviewer is served.
+  awk '/^A line inside a comment is not the code\./ { p=1 }
+       p && /^"""/ { p=0 }
+       p { next }
+       { print }' "$ROOT/.pr_agent.toml" >"$mutated"
+  printf '%s\n' \
+    '# A line inside a comment is not the code. A comment that quotes a pattern, and never quote a removed pattern as current.' \
+    >>"$mutated"
+  commented_text="$(review_rule_text "$mutated")" || return 1
+  ! grep -qF 'A line inside a comment is not the code' <<<"$commented_text" || return 1
+  ! grep -qF 'never quote a removed pattern as current' <<<"$commented_text" || return 1
+  grep -qE '^# .*never quote a removed pattern as current' "$mutated" || return 1
+  review_rule_holds "$mutated" && return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
     # Here the wording is the fact: D33c says this file is review input *and* that
     # reading it is bounded by the four files listed; a differently worded title
@@ -551,10 +610,10 @@ run fallback-head-from-an-older-review 1 'does not name the commit'
 # review, so what is asserted is that the finding behind each bound sits on a
 # `| D.. |` row of PR-AGENT.md: the row is the record a reviewer reads. The
 # wording of the row is not asserted, so a reworded row still passes and a
-# deleted row still fails (findings 13d53e61b390, 2e69f9e3c720).
+# deleted row still fails; the ids in the loop below are the findings.
 doc_bounds_are_recorded() {
   local id
-  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e; do
+  for id in 13d53e61b390 e6024f4c203c bed8f31fda88 aab48f179d5e 691bb9dc9491; do
     grep -qE "^\| D[0-9a-z]+ \|.*$id" "$ROOT/.github/PR-AGENT.md" || return 1
   done
 }
