@@ -77,8 +77,8 @@ exempt() {
     .factory/ledger.jsonl|*/.factory/ledger.jsonl) return 0 ;;
     .factory/guard.log|*/.factory/guard.log) return 0 ;;
     .factory/gates/last-gate.json|*/.factory/gates/last-gate.json) return 0 ;;
-    .factory/tickets|.factory/tickets/|*/.factory/tickets/*) return 0 ;;
-    .factory/inbox|.factory/inbox/|*/.factory/inbox/*) return 0 ;;
+    .factory/tickets|.factory/tickets/|.factory/tickets/*|*/.factory/tickets/*) return 0 ;;
+    .factory/inbox|.factory/inbox/|.factory/inbox/*|*/.factory/inbox/*) return 0 ;;
     .factory/research/*|*/.factory/research/*) return 0 ;;
   esac
   return 1
