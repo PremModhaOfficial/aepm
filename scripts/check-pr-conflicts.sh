@@ -23,8 +23,9 @@
 #   gh api --paginate 'repos/O/R/pulls?state=open&per_page=100' | check-pr-conflicts.sh
 #
 # Exit 0: every open PR is known to be mergeable. Exit 1: at least one is
-# conflicted, listed. Exit 2: the input was not a PR array, or a PR stayed
-# unknown past the retries (never pass a PR this check could not evaluate).
+# conflicted, listed. Exit 2: the input was not a PR array, or a PR's
+# mergeability could not be read — a value that is not a boolean, or a null that
+# stayed null past the retries (never pass a PR this check could not evaluate).
 set -euo pipefail
 
 # Bounded, because the re-query happens inside a job with a 5-minute timeout.
@@ -47,13 +48,20 @@ done
 # would silently read page 1 only (finding 4a5a9f1d9e0b).
 flatten() { jq -sc 'if length == 0 then [] else add end'; }
 
+# The one projection both readers of `mergeable` use. `tostring` alone erased
+# the type, so a JSON string "true" matched the `true)` arm and a PR this check
+# could not evaluate printed "no conflicted open PRs". Only a real boolean may
+# print `true`/`false`; every other shape prints a typed marker, which no arm
+# treats as mergeable.
+project_mergeable='if . == null then "null" elif type == "boolean" then tostring else "nonboolean:" + tojson end'
+
 # One PR's mergeability, straight from the pull endpoint. Prints false|true|null.
 resolve_mergeable() {
   local n=$1 attempt=1 body value=null
   while :; do
     body="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/$n" 2>/dev/null)" || body=""
     value="$(printf '%s' "$body" \
-      | jq -r 'if type == "object" then (.mergeable | tostring) else "null" end' 2>/dev/null)" \
+      | jq -r 'if type == "object" then (.mergeable | '"$project_mergeable"') else "null" end' 2>/dev/null)" \
       || value=null
     case "$value" in
       true|false) printf '%s\n' "$value"; return 0 ;;
@@ -115,11 +123,19 @@ GH
   t "a null that clears on the second attempt is retried" \
     '[{"number":158,"mergeable":null,"head":{"ref":"docs/y"}}]' 1 'null,false'
   # A value that is neither `true` nor `false` is unknown, not clean: the
-  # `false)` arm is matched first, so this case cannot pass at a conflict's
-  # expense. Every non-boolean shape the projection can produce is here, because
-  # `tostring` turns an empty string and a number into a different string each.
-  t "a non-boolean mergeable is unknown, not a pass" \
-    '[{"number":161,"mergeable":"pending","head":{"ref":"a"}},{"number":162,"mergeable":"","head":{"ref":"b"}},{"number":163,"mergeable":0,"head":{"ref":"c"}},{"number":164,"mergeable":"TRUE","head":{"ref":"d"}}]' 2
+  # `false)` arm is matched first, so this cannot pass at a conflict's expense.
+  # One case per shape and not one batch, because a batch of rows exits 2 when
+  # any single row is caught, so it stayed green with the rest read as clean.
+  # `"true"` is here because `tostring` erased the type: the JSON string matched
+  # the `true)` arm and the row read as clean.
+  for shape in '"pending"' '""' '0' '"TRUE"' '"true"'; do
+    t "a mergeable of $shape is unknown, not a pass" \
+      "[{\"number\":161,\"mergeable\":$shape,\"head\":{\"ref\":\"a\"}}]" 2
+  done
+  # The re-query filters the same way: a `gh` answer of `"true"` is a string,
+  # not a boolean, and must not resolve the row to clean either.
+  t 'a re-query answered with a non-boolean "true" is exit 2' \
+    '[{"number":165,"mergeable":null,"head":{"ref":"e"}}]' 2 '"true"'
   t "one conflict among many still fails" \
     '[{"number":1,"mergeable":true,"head":{"ref":"a"}},{"number":2,"mergeable":false,"head":{"ref":"b"}}]' 1
   t "a conflict on a later page still fails" \
@@ -180,7 +196,7 @@ unknown=()
 # its exit status, so a jq error there read no rows and printed "no conflicted
 # open PRs". Projected first, checked, then read.
 if ! rows=$(printf '%s' "$prs" \
-  | jq -r '.[] | [(.number | tostring), (.head.ref | if . == null or . == "" then "?" else . end), (.mergeable | tostring)] | @tsv'); then
+  | jq -r '.[] | [(.number | tostring), (.head.ref | if . == null or . == "" then "?" else . end), (.mergeable | '"$project_mergeable"')] | @tsv'); then
   echo "check-pr-conflicts: could not project the open-PR rows; refusing to report 'no conflicts'" >&2
   exit 2
 fi
@@ -203,8 +219,9 @@ while IFS=$'\t' read -r num ref mergeable; do
       ;;
     true) ;;
     # Anything that is not `true` or `false` -- a future API value, an empty
-    # string, a number -- is unknown, not clean. `false` is matched above, so
-    # this arm cannot turn a real conflict green.
+    # string, a number, or a string that spells a boolean -- is unknown, not
+    # clean. `false` is matched above, so this arm cannot turn a real conflict
+    # green.
     *) unknown+=("#$num  $ref") ;;
   esac
 done <<<"$rows"
@@ -214,7 +231,7 @@ if [ "${#conflicts[@]}" -gt 0 ]; then
   printf '%s\n' "${conflicts[@]}" >&2
 fi
 if [ "${#unknown[@]}" -gt 0 ]; then
-  printf 'open PRs whose mergeability stayed unknown after %s attempt(s), so this check cannot clear them:\n' \
+  printf 'open PRs whose mergeability is unknown (not a boolean, or null after %s attempt(s)), so this check cannot clear them:\n' \
     "$RETRIES" >&2
   printf '%s\n' "${unknown[@]}" >&2
 fi
