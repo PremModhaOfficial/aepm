@@ -202,6 +202,10 @@ if ! rows=$(printf '%s' "$prs" \
 fi
 
 while IFS=$'\t' read -r num ref mergeable; do
+  # An open-PR list of `[]` projects no rows, and a here-string of nothing still
+  # yields one empty line. Without this the `*)` arm would add "#  " to unknown
+  # and fail a repository that has no open PRs; `no open PRs passes` fails
+  # without it. Guarding the loop, not a second early exit, keeps one owner.
   [ -n "${num:-}" ] || continue
   case "$mergeable" in
     false) conflicts+=("#$num  $ref") ;;
