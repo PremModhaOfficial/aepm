@@ -199,7 +199,7 @@ phase_scope() {
 }
 
 phase_size() {
-  local max_lines max_files stat lines files bin
+  local max_lines max_files stat lines files bin st f n
   max_lines="$(cfg diff_lines_max)"; max_lines="${max_lines:-600}"
   max_files="$(cfg diff_files_max)"; max_files="${max_files:-30}"
   # A ticket may carry its own cap. The mandate is already trusted and lives
@@ -217,6 +217,18 @@ phase_size() {
   [ -z "${bin// /}" ] || fail size "the diff refuses to show these files as text, so their lines cannot be counted and their bytes cannot be scanned: ${bin% }"
   lines="$(printf '%s\n' "$stat" | awk 'NF{a+=$1; d+=$2} END{print a+d+0}')"
   files="$(printf '%s\n' "$stat" | awk 'NF' | wc -l | tr -d ' ')"
+  # The half `git diff` never shows. An untracked file is scope-checked, so it is
+  # the ticket's change and counts here too, or a change grows past the cap by
+  # never being added. Runtime state stays exempt: it is not the product change.
+  # shortcut: an untracked binary is counted by newline, not refused like a
+  # tracked binary mark; upgrade when an untracked binary hits a cap.
+  while IFS=$'\t' read -r st f; do
+    [ "$st" = "??" ] && [ -n "$f" ] || continue
+    exempt "$f" && continue
+    n="$(awk 'END{print NR+0}' "$ROOT/$f" 2>/dev/null)"
+    lines=$((lines + ${n:-0}))
+    files=$((files + 1))
+  done <<<"$(changed_paths)"
   [ "${lines:-0}" -le "$max_lines" ] || fail size "diff is ${lines} lines, cap ${max_lines}"
   [ "${files:-0}" -le "$max_files" ] || fail size "diff touches ${files} files, cap ${max_files}"
   pass size "${lines} lines across ${files} files (cap ${max_lines}/${max_files})"
