@@ -201,7 +201,11 @@ phase_scope() {
   fi
   while IFS=$'\t' read -r -d '' st f; do
     [ -n "$f" ] || continue
-    exempt "$f" && continue
+    # Only UNTRACKED runtime state is exempt. A path force-added to a commit
+    # (`git add -f .factory/tickets/x`) is part of the change, not state the
+    # factory wrote while working, so exempting it would land a file outside the
+    # mandate behind a green scope line (T-15 R9, b46c4b2b9c65).
+    [ "$st" = "??" ] && exempt "$f" && continue
     local ok=1
     while IFS= read -r a; do
       # An entry is that path or its subtree behind a `/`: a raw string prefix
@@ -505,6 +509,17 @@ case "$PHASE" in
     grep -q '"ticket":"T-1"' "$judge/gates/last-gate.json" \
       || { echo "self-test FAILED: last-gate.json did not name the ticket under --ticket-file: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
     echo "ok  - last-gate.json names the ticket when --ticket-file is used"
+    # The escape hatch is sandbox-only, and the exit-0 it leaves behind is only
+    # reachable through it. Without the variable a missing Cargo.toml is a
+    # failure by name, so no skipped phase can ever produce a green run outside
+    # this self-test (T-15 R9: 21409ed6be3d, 638795a4c6cf).
+    out="$( cd "$repo" && GATE_ROOT="$repo" GATE_FACTORY="$judge" \
+      timeout 120 bash "$judge/gates/gate.sh" fast --ticket T-1 2>&1 )"; st=$?
+    [ "$st" != 0 ] \
+      || { echo "self-test FAILED: a missing Cargo.toml passed without GATE_ALLOW_NO_CARGO: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf '%s' "$out" | grep -q 'GATE FAIL \[fmt\].*refusing to report success' \
+      || { echo "self-test FAILED: a missing Cargo.toml was not refused by name: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - without the sandbox escape hatch a missing Cargo.toml fails, never skips"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
@@ -542,6 +557,17 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'outside scope: M *docs/b.txt' \
       || { echo "self-test FAILED: a scope line in the ticket body widened the mandate: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a scope line after the front matter does not widen the mandate"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+    # T-15 R9, b46c4b2b9c65: runtime state is exempt because the factory writes
+    # it while it works. `git add -f` turns one into a committed change, and the
+    # exemption then hid a file outside the mandate behind a green scope line.
+    ( cd "$repo" && git reset -q --hard origin/main && mkdir -p .factory/tickets \
+      && printf 'hidden\n' >.factory/tickets/T-9.md \
+      && git add -f .factory/tickets/T-9.md && git commit -qm force-added-ticket )
+    out="$(expect fail "a force-added file under .factory/tickets/" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'outside scope: A *.factory/tickets/T-9.md' \
+      || { echo "self-test FAILED: a committed file under .factory/tickets/ was exempt from the scope check: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a force-added file under .factory/tickets/ is judged, not exempt"
     ( cd "$repo" && git reset -q --hard "$keep" )
     # An untracked file is in the scope check and must be in the size check too:
     # `git diff` never shows one, so 700 lines in src/ used to count as zero.

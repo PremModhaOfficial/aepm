@@ -138,11 +138,21 @@ if [ "${1:-}" = "--self-test" ]; then
   # T-15 finding 7: `ticket.sh set` overwrites, so a second PR naming T-2
   # replaced pr: 23 with 24 — silently, exit 0 — and the ticket then named a head
   # it never reviewed while #23's deliveries had no ticket at all.
-  out="$(ev d-11 pull_request '{"action":"opened","pull_request":{"number":24,"html_url":"https://github.com/o/r/pull/24","title":"Another try","body":"Also closes T-2."},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  out="$(ev d-11 pull_request '{"action":"opened","pull_request":{"number":24,"html_url":"https://github.com/o/r/pull/24","title":"Another try","body":"Closes T-2"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
   [ "$st" = 3 ] || { echo "self-test FAILED: a second PR naming a ticket that already has one was accepted (exit $st: $out)"; exit 1; }
   [ "$(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr)" = "23" ] \
     || { echo "self-test FAILED: a second PR replaced the ticket's pr field (now $(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr))"; exit 1; }
   okd "a second PR naming a linked ticket is refused, not overwritten"
+  # T-15 R9, 61b7769c1112: the ticket is the one named on a dedicated line, not
+  # the first `T-<n>` anywhere in untrusted text. A body that quotes another
+  # issue's title used to link the quoted ticket — and, because a ticket links one
+  # PR, refuse the real PR as already-linked. The decoy is a real ticket, so the
+  # drill fails if the match is anywhere other than a line of its own.
+  out="$(ev d-14 pull_request '{"action":"opened","pull_request":{"number":25,"html_url":"https://github.com/o/r/pull/25","title":"Another try","body":"Fixes the flaky test.\n\nQuoted from the issue title: \"T-4: Widen me\"\nT-4: Widen me\nSee also T-4 and https://github.com/o/r/issues/11"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 3 ] || { echo "self-test FAILED: a PR body that only MENTIONS a ticket linked it (exit $st: $out)"; exit 1; }
+  [ -z "$(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr)" ] \
+    || { echo "self-test FAILED: a PR body linked a ticket it only quoted (T-4 carries pr: $(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr))"; exit 1; }
+  okd "a PR body that only mentions a ticket does not link it"
   # A comment delivery carries no issue number when the payload is shaped
   # differently than expected, and the empty pattern `^gh_issue: $` then matched
   # the first ticket whose issue field was still blank: the comment landed on an
@@ -251,14 +261,17 @@ case "$EVENT:$ACTION" in
     # every PR delivery read as an orphan.
     TICKET="$(grep -l "^pr: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
     # Nothing else writes that field: the builder opens the PR with `gh pr
-    # create` and names the ticket in the body, so the delivery carries the link
-    # and the field is learned here. The first `T-<n>` in the title or body wins,
-    # so a PR naming another ticket first links that one; only the authorized
-    # sender's deliveries reach this line, and the fallout is which ticket a
-    # webhook appends to.
+    # create` and names the ticket on its own line in the body, so the delivery
+    # carries the link and the field is learned here.
     if [ -z "$TICKET" ]; then
-      tid="$(jq -r '(.pull_request.title // "") + " " + (.pull_request.body // "")' "$PAYLOAD" 2>/dev/null \
-        | grep -oE 'T-[0-9]+' | head -1 || true)"
+      # The body is untrusted text, so the ticket this PR owns is the one named on
+      # a DEDICATED line — `Closes T-15`, or a line holding nothing but `T-15` —
+      # never the first `T-<n>` anywhere: a quoted issue title or a link can put
+      # another ticket first, and linking it would then refuse the real PR as
+      # pr-already-linked (T-15 R9, 61b7769c1112).
+      tid="$(jq -r '(.pull_request.title // "") + "\n" + (.pull_request.body // "")' "$PAYLOAD" 2>/dev/null \
+        | grep -oiE '^[[:space:]]*(T-[0-9]+|(closes|fixes|resolves)[[:space:]]+T-[0-9]+)[[:space:].:!]*$' \
+        | grep -oiE 'T-[0-9]+' | head -1 | tr 'a-z' 'A-Z' || true)"
       if [ -n "$tid" ] && [ -f "$FACTORY/tickets/$tid.md" ]; then
         # A ticket links ONE PR, and `ticket.sh set` overwrites: a second PR
         # naming the same ticket replaced pr: 60 with pr: 61 silently, so the
