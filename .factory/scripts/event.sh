@@ -116,7 +116,22 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$st" = 0 ] || { echo "self-test FAILED: a PR delivery naming T-2 in its body writes pr: 23 (exit $st: $out)"; exit 1; }
   [ "$(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr)" = "23" ] \
     || { echo "self-test FAILED: a PR delivery naming T-2 in its body writes pr: 23 (T-2 carries pr: $(bash "$tmp/.factory/scripts/ticket.sh" get T-2 pr))"; exit 1; }
-  okd "a PR delivery naming T-2 in its body writes pr: 23"
+  okd "a pull_request naming T-2 in its body writes pr: 23"
+  # A comment delivery carries no issue number when the payload is shaped
+  # differently than expected, and the empty pattern `^gh_issue: $` then matched
+  # the first ticket whose issue field was still blank: the comment landed on an
+  # unrelated ticket and the delivery read as processed. The blank ticket has to
+  # exist here, or the drill passes with nothing for the empty pattern to hit.
+  oid="$(bash "$tmp/.factory/scripts/ticket.sh" new orphan --request 'no issue yet' --scope 'src/' --authority inferred)"
+  orphan="$oid"
+  [ -f "$orphan" ] || { echo "self-test FAILED: the blank-issue ticket was not created ($orphan)"; exit 1; }
+  before="$(cat "$orphan")"
+  printf '%s' '{"action":"created","comment":{"body":"late note","html_url":"https://github.com/o/r/issues/13#issuecomment-1"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}' >"$tmp/p-num.json"
+  out="$(bash "$tmp/.factory/scripts/event.sh" d-10 issue_comment "$tmp/p-num.json" 2>&1)"; st=$?
+  [ "$st" = 3 ] || { echo "self-test FAILED: a comment with no issue number was not ignored (exit $st: $out)"; exit 1; }
+  [ "$before" = "$(cat "$orphan")" ] \
+    || { echo "self-test FAILED: a comment with no issue number was written into $oid"; exit 1; }
+  okd "a comment delivery with no issue number is ignored, not appended to a ticket"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -173,7 +188,10 @@ case "$EVENT:$ACTION" in
       || { say "failed: no ticket created for #$NUM"; log ticket-create-failed "$URL"; exit 1; }
     ;;
   issue_comment:created)
-    # A comment on an existing ticket is a follow-up, not a new ticket.
+    # A comment on an existing ticket is a follow-up, not a new ticket. An empty
+    # number makes the pattern below `^gh_issue: $`, which matches every ticket
+    # whose issue field is still blank, so the comment lands on the wrong one.
+    [ -n "$NUM" ] || { say "ignored: comment carries no issue number"; log orphan-comment "$URL"; exit 3; }
     TICKET="$(grep -l "^gh_issue: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
     if [ -z "$TICKET" ]; then say "ignored: comment on #$NUM has no ticket"; log orphan-comment "$URL"; exit 3; fi
     printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40)" >>"$TICKET"

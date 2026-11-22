@@ -41,6 +41,16 @@ out="$(bash "$TMP/scripts/ticket.sh" done T-1 task-1 2>&1)"; st=$?
 [ "$(bash "$TMP/scripts/ticket.sh" get T-1 live_task)" = "builder task-10" ] \
   && ok "task-10 is still live after the refused done" || bad "a substring match cleared task-10"
 
+head1 "4b. a ticket value survives a backslash"
+# fm_set wrote the value through `awk -v`, which interprets escapes: `docs\path`
+# came back as `docspath` and `T-\1` as a control byte. Through ENVIRON, verbatim.
+bash "$TMP/scripts/ticket.sh" new backslash --request 'prove a value round-trips' --scope 'src/' --authority explicit >/dev/null
+want='docs\path,T-\1'
+bash "$TMP/scripts/ticket.sh" set T-2 scope "$want" >/dev/null
+got="$(bash "$TMP/scripts/ticket.sh" get T-2 scope)"
+[ "$got" = "$want" ] && ok "a scope value with a backslash round-trips verbatim" \
+  || bad "fm_set mangled the value: want '$want' got '$got'"
+
 head1 "5. restart resumes from files, not memory"
 bash "$TMP/scripts/ticket.sh" stage T-1 building >/dev/null
 grep -q "building" "$TMP/state.md" && ok "state.md carries the stage" || bad "state.md did not carry the stage"

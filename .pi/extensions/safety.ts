@@ -33,11 +33,11 @@ const NEVER = [
   // anywhere on the line, and `--admin` still has to be on it.
   { re: /\bgh\b[^\n]*\bpr\b[^\n]*\bmerge\b[^\n]*--admin/, why: "merge bypassing branch protection (--admin)" },
   // Editing branch protection in every spelling: `/protection` plus ANY write
-  // method or field (-X, --method, -f, -F, --input), in either order. Two
-  // patterns because a regex reads left to right; both name the same write set,
-  // so a new spelling only has to join it.
-  { re: /\bgh\s+api\b[^\n]*\/protection[^\n]*(\s-[XfF]|--method|--input)/, why: "editing branch protection" },
-  { re: /\bgh\s+api\b[^\n]*(\s-[XfF]|--method|--input)[^\n]*\/protection/, why: "editing branch protection" },
+  // method or field (-X, --method, -f, -F, --field, --raw-field, --input), in
+  // either order. Two patterns because a regex reads left to right; both name
+  // the same write set, so a new spelling only has to join it.
+  { re: /\bgh\s+api\b[^\n]*\/protection[^\n]*(\s-[XfF]|--method|--input|--field|--raw-field)/, why: "editing branch protection" },
+  { re: /\bgh\s+api\b[^\n]*(\s-[XfF]|--method|--input|--field|--raw-field)[^\n]*\/protection/, why: "editing branch protection" },
   // .env is a hard no in every tool, not just the file tools: a shell redirect
   // (`echo SECRET=leaked > .env`) writes the same file.
   {

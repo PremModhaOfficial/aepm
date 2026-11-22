@@ -50,7 +50,10 @@ fm_set() {
   local f="$1" k="$2" v="$3" tmp
   v="$(flatten "$v")" # one line: a newline would start a front-matter field
   tmp="$(mktemp)"
-  awk -v k="$k" -v v="$v" '
+  # Through the environment, not `awk -v`: -v interprets backslash escapes, so a
+  # value carrying a backslash (`docs\path`) came back as `docspath`.
+  FM_K="$k" FM_V="$v" awk '
+    BEGIN { k = ENVIRON["FM_K"]; v = ENVIRON["FM_V"] }
     NR==1 { print; next }
     !inbody && /^---$/ { if (!found) print k": "v; inbody=1; print; next }
     !inbody && $0 ~ "^"k":" { print k": "v; found=1; next }

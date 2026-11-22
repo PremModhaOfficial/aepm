@@ -103,6 +103,11 @@ const CASES = [
   ["Router edits protection with --method before the path", "bash", { command: "gh api --method PUT repos/o/r/branches/main/protection" }, MAIN, true],
   ["Router edits protection with -f before the path", "bash", { command: "gh api -f enforce_admins=false repos/o/r/branches/main/protection" }, MAIN, true],
   ["Router edits protection with --input before the path", "bash", { command: "gh api --input /tmp/p.json repos/o/r/branches/main/protection" }, MAIN, true],
+  // The same write set in the two long spellings gh documents: `--field` and
+  // `--raw-field`. `-f` was matched and `--field` was not, so the long form
+  // reached protection in a worktree where only safety can stop it.
+  ["Router edits protection with --field after the path", "bash", { command: "gh api repos/o/r/branches/main/protection --field enforce_admins=false" }, WT, true],
+  ["Router edits protection with --raw-field before the path", "bash", { command: "gh api --raw-field enforce_admins=false repos/o/r/branches/main/protection" }, WT, true],
 
   ["Router reads a file", "read", { path: MAIN + "/src/main.rs" }, MAIN, false],
   ["Router runs read-only git", "bash", { command: "git log --oneline -3" }, MAIN, false],
@@ -121,6 +126,7 @@ const CASES = [
   ["Builder edits the guard in its own worktree", "edit", { path: WT + "/.pi/extensions/safety.ts" }, WT, false],
   ["Builder runs the test suite in its worktree", "bash", { command: "cargo test --locked" }, WT, false],
   ["Builder commits in its worktree", "bash", { command: "git commit -m 'feat: x'" }, WT, false],
+  ["Builder reads branch protection", "bash", { command: "gh api repos/o/r/branches/main/protection" }, WT, false],
 ];
 
 let bad = 0;

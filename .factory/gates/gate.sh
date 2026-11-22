@@ -199,7 +199,7 @@ phase_scope() {
 }
 
 phase_size() {
-  local max_lines max_files stat lines files bin st f n
+  local max_lines max_files stat lines files bin st f n bytes
   max_lines="$(cfg diff_lines_max)"; max_lines="${max_lines:-600}"
   max_files="$(cfg diff_files_max)"; max_files="${max_files:-30}"
   # A ticket may carry its own cap. The mandate is already trusted and lives
@@ -220,11 +220,16 @@ phase_size() {
   # The half `git diff` never shows. An untracked file is scope-checked, so it is
   # the ticket's change and counts here too, or a change grows past the cap by
   # never being added. Runtime state stays exempt: it is not the product change.
-  # shortcut: an untracked binary is counted by newline, not refused like a
-  # tracked binary mark; upgrade when an untracked binary hits a cap.
+  # `git` has no numstat mark for a path it was never told about, so the text
+  # test is made here. A NUL byte is what makes git call a file binary; without
+  # this, a 2 MiB blob with no newline counts as the one record awk sees and
+  # passes the cap. Refused, like a tracked binary above.
   while IFS=$'\t' read -r st f; do
     [ "$st" = "??" ] && [ -n "$f" ] || continue
     exempt "$f" && continue
+    bytes="$(wc -c <"$ROOT/$f" 2>/dev/null || echo x)"
+    [ "${bytes// /}" = "$(tr -d '\000' <"$ROOT/$f" 2>/dev/null | wc -c | tr -d ' ')" ] \
+      || fail size "the diff refuses to show these files as text, so their lines cannot be counted and their bytes cannot be scanned: $f"
     n="$(awk 'END{print NR+0}' "$ROOT/$f" 2>/dev/null)"
     lines=$((lines + ${n:-0}))
     files=$((files + 1))
@@ -247,8 +252,8 @@ phase_secrets() {
   # `git diff` never shows an untracked file, so this half is the only way the
   # bytes of a file the scope phase accepted reach the scan: every non-exempt
   # `??` path is judged by scope and counted by size, so it is scanned here too.
-  # A binary file needs no scan: a tracked one is refused by the numstat mark in
-  # phase_size, and an untracked one is capped there like any other file.
+  # A binary file needs no scan: phase_size refuses both the tracked one (numstat
+  # mark) and the untracked one (NUL bytes), so no binary reaches this half.
   while IFS=$'\t' read -r st f; do
     [ "$st" = "??" ] && [ -n "$f" ] || continue
     exempt "$f" && continue
@@ -385,6 +390,17 @@ case "$PHASE" in
       || { echo "self-test FAILED: an untracked file escaped the size cap: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - 700 lines in an untracked file fail the size cap"
     rm -f "$repo/src/untracked.txt"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+    # A path git was never told about carries no numstat mark, so the "cannot be
+    # counted" refusal above never reached it: a blob with no newline counted as
+    # the single record awk sees, and 64 KiB of binary passed a 600-line cap.
+    ( cd "$repo" && git reset -q --hard origin/main )
+    head -c 65536 /dev/urandom | tr '\n' '\0' >"$repo/src/blob.bin"
+    out="$(expect fail "an untracked binary inside scope" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'GATE FAIL \[size\].*cannot be counted' \
+      || { echo "self-test FAILED: an untracked binary was counted as zero lines: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - an untracked binary is refused, not counted as zero lines"
+    rm -f "$repo/src/blob.bin"
     ( cd "$repo" && git reset -q --hard "$keep" )
     # The other half of the same hole, in the Router's exact shape: the tree is
     # at the base, so `git diff` has no added line at all, while an untracked
