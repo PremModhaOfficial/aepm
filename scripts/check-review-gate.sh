@@ -511,18 +511,31 @@ authority_matches_next() {
 }
 check authority-matches-next authority_matches_next
 
-# D39's rule lives only in a prompt, so it is read where the reviewer reads it.
-# Both halves of the paragraph, in the same awk, and only as live text: a
-# `#`-prefixed line is a TOML comment, so a commented-out copy of the rule is not
-# the rule. Both bounds are findings on this file: pinning the first sentence only
-# let the operative half be deleted, and matching a `#` line let it be commented
-# out, each with the check green (finding 691bb9dc9491).
+# D39's rule lives only in a prompt, so it is read where the reviewer reads it:
+# the parsed value of `[pr_reviewer] extra_instructions`, not the lines of the
+# file. Both findings on this file are why. Pinning the first sentence only let
+# the operative half be deleted, and a pattern over lines passed a paragraph
+# after the closing `"""` (a file TOML cannot parse) and live text in a different
+# key of the block, each with the check green (finding 691bb9dc9491). The bound
+# this leaves: a quoted negation carrying the same words still passes, because
+# this asserts presence, not meaning.
+review_rule_text() {
+  python3 - "$1" <<'PY'
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as fh:
+        data = tomllib.load(fh)
+except Exception as exc:
+    sys.exit(f"review_rule_text: {sys.argv[1]}: {exc}")
+sys.stdout.write(data.get("pr_reviewer", {}).get("extra_instructions", ""))
+PY
+}
+
 review_rule_holds() {
-  awk '/^[[:space:]]*#/ { next }
-       /^\[pr_reviewer\]/{f=1;next} /^\[/{f=0}
-       f&&index($0,"A line inside a comment is not the code"){a=1}
-       f&&index($0,"never quote a removed pattern as current"){b=1}
-       END{exit !(a&&b)}' "$1"
+  local text
+  text="$(review_rule_text "$1")" || return 1
+  grep -qF 'A line inside a comment is not the code' <<<"$text" || return 1
+  grep -qF 'never quote a removed pattern as current' <<<"$text" || return 1
 }
 
 # Two claims the script refutes, both raised on the previous head: `AGENTS.md`
@@ -532,7 +545,7 @@ review_rule_holds() {
 # it to `repo_context_files` (finding b835ca937d10). The policy file is read, so
 # the row is held to what it actually configures.
 doc_claims_match_code() {
-  local flat_d mutated
+  local flat_d mutated cut_text commented_text
   flat_d() { tr '\n' ' ' <"$1" | tr -s ' '; }
   # This one stays a sentence, and that is deliberate. A prose-level "does the file
   # mention both words" check is too weak here: AGENTS.md names `typed block` and
@@ -557,13 +570,24 @@ doc_claims_match_code() {
          print "A line inside a comment is not the code."; cut=1; next }
        cut && /^"""/ { cut=0 } cut { next } { print }' \
     "$ROOT/.pr_agent.toml" >"$mutated"
-  grep -qF 'A line inside a comment is not the code.' "$mutated" || return 1
-  ! grep -qF 'never quote a removed pattern as current' "$mutated" || return 1
+  cut_text="$(review_rule_text "$mutated")" || return 1
+  grep -qF 'A line inside a comment is not the code' <<<"$cut_text" || return 1
+  ! grep -qF 'never quote a removed pattern as current' <<<"$cut_text" || return 1
   review_rule_holds "$mutated" && return 1
-  awk '/never quote a removed pattern as current/ && !/^[[:space:]]*#/ { print "# " $0; next }
+  # The rule deleted from the value and left behind as a TOML comment, which is
+  # the only form a `#`-prefixed copy has in a file that parses: the text is on a
+  # line a pattern finds, and is not what the reviewer is served.
+  awk '/^A line inside a comment is not the code\./ { p=1 }
+       p && /^"""/ { p=0 }
+       p { next }
        { print }' "$ROOT/.pr_agent.toml" >"$mutated"
+  printf '%s\n' \
+    '# A line inside a comment is not the code. A comment that quotes a pattern, and never quote a removed pattern as current.' \
+    >>"$mutated"
+  commented_text="$(review_rule_text "$mutated")" || return 1
+  ! grep -qF 'A line inside a comment is not the code' <<<"$commented_text" || return 1
+  ! grep -qF 'never quote a removed pattern as current' <<<"$commented_text" || return 1
   grep -qE '^# .*never quote a removed pattern as current' "$mutated" || return 1
-  ! grep -qE '^[^#]*never quote a removed pattern as current' "$mutated" || return 1
   review_rule_holds "$mutated" && return 1
   if grep -qF '.github/PR-AGENT.md' "$ROOT/.pr_agent.toml"; then
     # Here the wording is the fact: D33c says this file is review input *and* that
