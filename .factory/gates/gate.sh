@@ -151,24 +151,30 @@ need_base() {
 # that does not exist while the real file was skipped by the size cap and the
 # secret scan. Every reader therefore uses `read -d ''`; never a line loop.
 changed_paths() {
-  local st f rec
+  local st f rec rc raw
+  raw="$(mktemp)"; CHANGED_ERR=""
   # Tracked: with -z the status field is its own NUL-terminated field (no tab),
   # and nothing is quoted, so a path with a newline or a space arrives as bytes.
+  git -C "$ROOT" diff --name-status --no-renames -z "$BASE" >"$raw" 2>/dev/null; rc=$?
+  [ "$rc" = 0 ] || { rm -f "$raw"; CHANGED_ERR="git diff could not list the change against $(git -C "$ROOT" rev-parse --short "$BASE" 2>/dev/null) (git exit $rc)"; return 1; }
   while IFS= read -r -d '' st; do
     IFS= read -r -d '' f || break
     [ -n "$f" ] || continue
     printf '%s\t%s\0' "$st" "$f"
-  done < <(git -C "$ROOT" diff --name-status --no-renames -z "$BASE" 2>/dev/null)
+  done <"$raw"
   # Untracked only: `git status` also lists every modified tracked file, which the
   # diff above already emitted, so emitting those here counted one file twice in
   # the scope phase (T-15 R16, 4658402378). A rename is the diff's D+A pair, so
   # there is never a second path to unpack here.
+  git -C "$ROOT" status --porcelain -z -uall >"$raw" 2>/dev/null; rc=$?
+  [ "$rc" = 0 ] || { rm -f "$raw"; CHANGED_ERR="git status could not list the tree (git exit $rc)"; return 1; }
   while IFS= read -r -d '' rec; do
     st="${rec:0:2}"; f="${rec:3}"
     [ "$st" = "??" ] || continue
     [ -n "$f" ] || continue
     printf '%s\t%s\0' "$st" "$f"
-  done < <(git -C "$ROOT" status --porcelain -z -uall 2>/dev/null)
+  done <"$raw"
+  rm -f "$raw"
 }
 
 # --- pin the judged tree -----------------------------------------------------
@@ -198,11 +204,14 @@ if [ -n "$SHA" ]; then
 fi
 
 phase_scope() {
-  local f bad=0 allowed tf n st
+  local f bad=0 allowed tf n st recs
   need_base
-  # Counted from NUL records, never from lines: a path may contain a newline.
-  n="$(changed_paths | tr -cd '\000' | wc -c | tr -d ' ')"
-  [ "${n:-0}" -gt 0 ] || { pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
+  recs="$(mktemp)"
+  # Counted from NUL records, never from lines (a path may contain a newline), and
+  # from the read's STATUS, never its emptiness (T-15 R18, r4658452342).
+  changed_paths >"$recs" || { rm -f "$recs"; fail scope "the change could not be read, so nothing here says it is inside the mandate: $CHANGED_ERR"; }
+  n="$(tr -cd '\000' <"$recs" | wc -c | tr -d ' ')"
+  [ "${n:-0}" -gt 0 ] || { rm -f "$recs"; pass scope "no changes to judge (head $(git -C "$ROOT" rev-parse --short HEAD) vs base $(git -C "$ROOT" rev-parse --short "$BASE"))"; return 0; }
   allowed="$(scope_list)"
   if [ -z "$allowed" ]; then
     # Name exactly what is missing. The mandate is machine-local state, so a
@@ -235,7 +244,8 @@ phase_scope() {
       echo "  outside scope: $st $f" >&2
       bad=1
     fi
-  done < <(changed_paths)
+  done <"$recs"
+  rm -f "$recs"
   [ "$bad" = 0 ] || fail scope "change(s) outside the ticket mandate (allowed: $(echo "$allowed" | tr '\n' ' '))"
   pass scope "$n file(s) inside the mandate"
 }
@@ -570,6 +580,11 @@ case "$PHASE" in
       || { echo "self-test FAILED: one modified file counted twice: $(printf '%s' "$out" | grep 'inside the mandate')" >&2; exit 1; }
     ( cd "$repo" && git checkout -- src/a.txt )
     echo "ok  - a tracked file modified in the working tree is one record, not two"
+    ( cd "$repo" && cp .git/index "$tmp/idx.bak" && printf junk >.git/index )
+    out="$(expect fail "a diff the gate could not produce" fast --ticket T-1)"
+    ( cd "$repo" && cp "$tmp/idx.bak" .git/index )
+    printf '%s' "$out" | grep -q 'GATE FAIL \[scope\].*could not be read' || { echo "self-test FAILED: a failed diff was not refused by scope: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
+    echo "ok  - a change the gate could not read fails the scope phase by name (r4658452342)"
     # A flag as the last word is refused by name, not an unbound-variable abort:
     # `set -u` alone turned `--sha` with no value into exit 1 and a bash message.
     echo . >>"$ASSERTIONS"

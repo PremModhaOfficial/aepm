@@ -48,6 +48,7 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$st" = 0 ] || { echo "self-test FAILED: a completed gh read failed the sweep (exit $st: $out)" >&2; exit 1; }
   printf '%s' "$out" | grep -q '"open_issues":1' \
     || { echo "self-test FAILED: a completed read was not counted: $out" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"active_tickets":0' || { echo "self-test FAILED: a completed ticket read with no tickets was not a known zero: $out" >&2; exit 1; }
   okd "a completed read is still counted"
 
   # T-15 round 8, finding 3: the parse read the whole file, so a `gh_issue:` line
@@ -117,6 +118,11 @@ if [ "${1:-}" = "--self-test" ]; then
   printf '%s' "$out" | grep -q '"untracked_issues":"#61 ' \
     && { echo "self-test FAILED: a ticketless checkout invented untracked issues: $out" >&2; exit 1; }
   okd "a tracked issue is not untracked, and no ticket at all is unknown, never a list"
+  # T-15 R18, r4658452352: `| grep -c … || true` printed 0 when the ticket read failed, so a broken store read as "no ticket is working"; the counted zero above is the other direction.
+  printf '#!/bin/sh\nprintf "T-1 stage=building\\n"; exit 1\n' >"$tmp/factory/scripts/ticket.sh"; chmod +x "$tmp/factory/scripts/ticket.sh"
+  out="$(sw)"; cp "$FACTORY/scripts/ticket.sh" "$tmp/factory/scripts/ticket.sh"; chmod +x "$tmp/factory/scripts/ticket.sh"
+  printf '%s' "$out" | grep -q '"active_tickets":null,"active_ticket_state":"unknown"' || { echo "self-test FAILED: a failed ticket read was reported as a count: $out" >&2; exit 1; }
+  okd "a failed ticket read is unknown, never zero active tickets"
   echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -169,21 +175,23 @@ else
   done <<<"$known"
 fi
 
-open_tickets="$(bash "$FACTORY/scripts/ticket.sh" resume 2>/dev/null | grep -c 'stage=' || true)"
+# A failed read is "unknown", never a count of zero active tickets (T-15 R18, r4658452352).
+resume="$(bash "$FACTORY/scripts/ticket.sh" resume 2>/dev/null)"; resume_rc=$?
+open_tickets=""; [ "${resume_rc:-1}" = 0 ] && open_tickets="$(printf '%s\n' "$resume" | grep -c 'stage=' || true)"
 
 if [ "$JSON" = 1 ]; then
   jq -cn --argjson oi "$(printf '%s\n' "$issues" | grep -c . )" \
     --argjson pr "$(printf '%s\n' "$prs" | grep -c .)" \
     --arg new "$(printf '%s' "$new_issues" | tr '\n' ' ')" --arg ustate "$untracked_state" \
-    --arg stale "$stale" --arg state "$stale_state" --argjson tickets "${open_tickets:-0}" \
-    '{open_issues:$oi,open_prs:$pr,untracked_issues:$new,untracked_issue_state:$ustate,tickets_without_open_issue:$stale,ticket_issue_state:$state,active_tickets:$tickets}'
+    --arg stale "$stale" --arg state "$stale_state" --argjson tickets "${open_tickets:-null}" \
+    '{open_issues:$oi,open_prs:$pr,untracked_issues:$new,untracked_issue_state:$ustate,tickets_without_open_issue:$stale,ticket_issue_state:$state,active_tickets:$tickets,active_ticket_state:(if $tickets == null then "unknown" else "known" end)}'
   exit 0
 fi
 
 echo "sweep: $(date -u +%Y-%m-%dT%H:%M:%SZ)  repo=$REPO owner=$OWNER"
 echo "  open issues (no factory label): $(printf '%s\n' "$issues" | grep -c .)"
 echo "  open PRs: $(printf '%s\n' "$prs" | grep -c .)"
-echo "  active tickets: ${open_tickets:-0}"
+echo "  active tickets: ${open_tickets:-unknown}"
 if [ -n "$new_issues" ]; then
   echo "  UNTRACKED ISSUES (no ticket yet — file one):"
   printf '%s' "$new_issues" | sed 's/^/    /'

@@ -204,6 +204,13 @@ if [ "${1:-}" = "--self-test" ]; then
   { [ "$st" = 3 ] && [ "$cbefore" = "$(cat "$tmp/.factory/tickets/T-2.md")" ]; } \
     || { echo "self-test FAILED: a non-numeric issue number reached a ticket (exit $st: $out)"; exit 1; }
   okd "a non-numeric comment issue number is refused, and no ticket is touched"
+  # T-15 R18, r4658452347: the pr write's status was dropped, so a refused write read as a link (stub refuses `set`; root included).
+  mv "$tmp/.factory/scripts/ticket.sh" "$tmp/.factory/scripts/ticket.real"
+  printf '#!/bin/sh\n[ "$1" = set ] && exit 1\nexec bash "%s" "$@"\n' "$tmp/.factory/scripts/ticket.real" >"$tmp/.factory/scripts/ticket.sh"; chmod +x "$tmp/.factory/scripts/ticket.sh"
+  out="$(ev d-18 pull_request '{"action":"opened","pull_request":{"number":26,"html_url":"https://github.com/o/r/pull/26","title":"Another try","body":"Closes T-4"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  mv "$tmp/.factory/scripts/ticket.real" "$tmp/.factory/scripts/ticket.sh"; chmod +x "$tmp/.factory/scripts/ticket.sh"
+  { [ "$st" != 0 ] && [ -z "$(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr)" ] && [ ! -f "$tmp/.factory/inbox/d-18.seen" ]; } || { echo "self-test FAILED: a refused pr write read as a link (exit $st: $out)" >&2; exit 1; }
+  okd "a refused pr write is reported, and the ticket stays unlinked"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -319,7 +326,9 @@ case "$EVENT:$ACTION" in
           log pr-already-linked "$URL -> $tid (pr: $linked)"
           exit 3
         fi
-        bash "$FACTORY/scripts/ticket.sh" set "$tid" pr "$NUM" >/dev/null
+        # The write is checked: a refused write read as a linked PR (T-15 R18, r4658452347).
+        bash "$FACTORY/scripts/ticket.sh" set "$tid" pr "$NUM" >/dev/null \
+          || { say "failed: could not link PR #$NUM to $tid"; log pr-link-failed "$URL -> $tid"; exit 1; }
         TICKET="$FACTORY/tickets/$tid.md"
       fi
     fi
