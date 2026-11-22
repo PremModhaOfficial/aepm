@@ -28,12 +28,14 @@ export function isInfraFault(err) {
 // Whether the browser never produced a DOM, which is a different question from
 // whether the attempt is worth repeating. A missing binary is not retried and is
 // still infra: no golden was compared, so exit 2 says that and exit 1 would say
-// every golden is wrong. The syscall decides, because a `readFileSync` ENOENT is
-// a missing fixture, which is a repo defect and must stay a finding.
+// every golden is wrong. Type and fields decide, never message text: a finding
+// may quote a golden that contains "timed out", and the syscall decides between a
+// missing binary and a missing fixture (`readFileSync` opens, it does not spawn).
 export function isNoBrowser(err) {
-  return err instanceof InfraFault              // the retry already wrapped it
-    || isInfraFault(err)
-    || (err?.code === 'ENOENT' && /^spawn/.test(String(err.syscall || '')));
+  if (!err) return false;
+  if (err instanceof InfraFault) return true;        // the retry already wrapped it
+  if (err.signal || err.code === 'ETIMEDOUT') return true;   // killed, or outran the budget
+  return err.code === 'ENOENT' && /^spawn/.test(String(err.syscall || ''));
 }
 
 // One line a runner's log can be read from: the fault, and which attempt it hit.

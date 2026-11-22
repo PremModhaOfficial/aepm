@@ -137,6 +137,15 @@ test('a missing browser beside a real finding still reports the finding', () => 
   assert.equal(verdict.code, 1, 'one finding outranks any number of browser faults');
 });
 
+test('a finding that merely says "timed out" is still a finding', () => {
+  // A golden frame can carry a TUI status line: the comparison error then quotes
+  // "timed out" without being a browser fault. Only type and fields decide.
+  const quoting = new Error('tui-prefetch-120x40.txt: want "⏱ 6s timed out" got "⏱ 6s"');
+  const verdict = web.report([{ msg: quoting.message, err: quoting }], { pass: 75, total: 76 });
+  assert.equal(verdict.code, 1, 'a golden mismatch that quotes the words is not infrastructure');
+  assert.match(verdict.text, /FAIL 75\/76/);
+});
+
 test('a signal-killed browser is classified infra after the retry wraps it', () => {
   // The wrap drops code and signal, so the type has to carry the verdict: a
   // SIGKILL on a memory-limited runner never compared a golden.
