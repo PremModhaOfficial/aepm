@@ -328,6 +328,16 @@ case "$PHASE" in
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
+    # A staged rename prints `R  old -> new`. Field 2 of that line is the OLD
+    # path, so `awk '{print $2}'` judged src/a.txt -> docs/moved.txt from the
+    # inside and never saw the new path outside the mandate.
+    keep="$(cd "$repo" && git rev-parse HEAD)"
+    ( cd "$repo" && git reset -q --hard HEAD~1 && git mv src/a.txt docs/moved.txt )
+    out="$(expect fail "a staged rename is judged at its new path" fast --ticket T-1)"
+    printf '%s' "$out" | grep -q 'outside scope: R *docs/moved.txt' \
+      || { echo "self-test FAILED: a staged rename hid its new path: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a staged rename is judged at its new path"
+    ( cd "$repo" && git reset -q --hard "$keep" )
     ( cd "$repo" && git checkout -q . && git reset -q --hard HEAD~1 \
       && printf 'k=ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret )
     expect fail "a planted token" fast --ticket T-1 >/dev/null
