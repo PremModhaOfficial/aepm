@@ -35,6 +35,8 @@ shift || true
 TICKET=""
 TICKET_FILE=""
 SHA=""
+# Phases that did not run: named in the summary, recorded as `skip`, never `pass`.
+SKIPPED=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ticket) TICKET="$2"; shift 2 ;;
@@ -54,9 +56,14 @@ pass() { echo "GATE OK   [$1]: $2"; }
 
 RESULT_FILE="$FACTORY/gates/last-gate.json"
 record() { # phase status detail
+  # `--ticket-file` carries no id, so read it from the ticket: the record names it.
+  local tid="${TICKET:-}"
+  if [ -z "$tid" ] && [ -n "$TICKET_FILE" ] && [ -f "$TICKET_FILE" ]; then
+    tid="$(awk 'NR==1{next} /^---$/{exit} {print}' "$TICKET_FILE" | sed -n 's/^id: *//p' | head -1)"
+  fi
   mkdir -p "$FACTORY/gates"
   jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg phase "$1" \
-    --arg status "$2" --arg detail "$3" --arg ticket "${TICKET:-none}" \
+    --arg status "$2" --arg detail "$3" --arg ticket "${tid:-none}" \
     --arg head "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo none)" \
     '{ts:$ts,ticket:$ticket,phase:$phase,status:$status,detail:$detail,head:$head}' \
     >"$RESULT_FILE"
@@ -197,7 +204,11 @@ phase_scope() {
     exempt "$f" && continue
     local ok=1
     while IFS= read -r a; do
-      case "$f" in "$a"*) ok=0 ;; esac
+      # An entry is that path or its subtree behind a `/`: a raw string prefix
+      # (`"$a"*`) let a mandate of `src` admit `srcfoo/evil.txt`.
+      a="${a%/}"
+      [ "$f" = "$a" ] && ok=0
+      case "$f" in "$a"/*) ok=0 ;; esac
     done <<<"$allowed"
     if [ "$ok" = 1 ]; then
       echo "  outside scope: $st $f" >&2
@@ -375,14 +386,14 @@ require_cargo() { # the real repo is a Cargo crate; only the sandbox may skip it
 }
 
 phase_fmt() {
-  require_cargo fmt || return 0
+  require_cargo fmt || { SKIPPED="${SKIPPED:+$SKIPPED }fmt"; return 0; }
   ( cd "$ROOT" && cargo fmt --all --check ) >/dev/null 2>&1 \
     && pass fmt "cargo fmt --all --check" \
     || fail fmt "cargo fmt --all --check (run: cargo fmt --all)"
 }
 
 phase_build() {
-  require_cargo build || return 0
+  require_cargo build || { SKIPPED="${SKIPPED:+$SKIPPED }build"; return 0; }
   ( cd "$ROOT" && cargo clippy --all-targets --all-features --locked -- -D warnings ) \
     || fail build "cargo clippy -D warnings"
   ( cd "$ROOT" && cargo build --locked --all-features ) \
@@ -391,10 +402,22 @@ phase_build() {
 }
 
 phase_test() {
-  require_cargo test || return 0
+  require_cargo test || { SKIPPED="${SKIPPED:+$SKIPPED }test"; return 0; }
   ( cd "$ROOT" && cargo test --all-targets --all-features --locked ) \
     || fail test "cargo test --all-targets --all-features --locked"
   pass test "cargo test --all-targets --all-features --locked"
+}
+
+# A phase that did not run is named and recorded as `skip`: `every phase green`
+# over three of six refusals claimed three checks nobody made (T-15 R8, finding 1).
+summarise() { # phase, detail when every phase ran
+  if [ -n "$SKIPPED" ]; then
+    record "$1" skip "$SKIPPED did not run"
+    pass "$1" "(skipped: $SKIPPED) every phase that ran is green"
+  else
+    record "$1" pass "$2"
+    pass "$1" "$2"
+  fi
 }
 
 case "$PHASE" in
@@ -468,6 +491,20 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'GATE SKIP \[build\]' \
       || { echo "self-test FAILED: the build phase in the sandbox was not reported as a skip: $(printf '%s' "$out" | tail -2)" >&2; exit 1; }
     echo "ok  - the build phase in the sandbox prints SKIP, not OK"
+    # T-15 round 8, finding 1: `require_cargo <phase> || return 0` made a SKIP
+    # return 0, so `all` said `every phase green` over three phases nobody ran.
+    out="$(expect ok "gate all in the sandbox" all --ticket-file "$judge/tickets/T-1.md")"
+    printf '%s' "$out" | grep -qF '(skipped: fmt build test)' \
+      || { echo "self-test FAILED: the all summary did not name the phases that did not run: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    printf '%s' "$out" | grep -q 'every phase green' \
+      && { echo "self-test FAILED: the all summary called a run with skipped phases green" >&2; exit 1; }
+    grep -q '"status":"skip"' "$judge/gates/last-gate.json" \
+      || { echo "self-test FAILED: a skipped phase was not recorded as a skip: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
+    echo "ok  - a phase that did not run is named in the all summary and recorded as a skip"
+    # T-15 round 8, Q4: the record said `ticket:"none"` under --ticket-file.
+    grep -q '"ticket":"T-1"' "$judge/gates/last-gate.json" \
+      || { echo "self-test FAILED: last-gate.json did not name the ticket under --ticket-file: $(cat "$judge/gates/last-gate.json")" >&2; exit 1; }
+    echo "ok  - last-gate.json names the ticket when --ticket-file is used"
     ( cd "$repo" && echo c >>docs/b.txt && git commit -qam out )
     expect fail "a change outside the ticket scope" fast --ticket T-1 >/dev/null
     echo "ok  - a change outside the ticket scope fails"
@@ -480,6 +517,31 @@ case "$PHASE" in
     printf '%s' "$out" | grep -q 'outside scope: R *docs/moved.txt' \
       || { echo "self-test FAILED: a staged rename hid its new path: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
     echo "ok  - a staged rename is judged at its new path"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+    # T-15 round 8, finding 2: a raw string prefix (`"$a"*`) let `src` admit
+    # `srcfoo/evil.txt`. An entry is that path or its subtree behind a `/` (Q2).
+    printf -- '---\nid: P-1\nscope: src\n---\n# P-1\n' >"$tmp/tickets-prefix.md"
+    ( cd "$repo" && git reset -q --hard HEAD~1 && mkdir -p srcfoo && echo evil >srcfoo/evil.txt && git add -A && git commit -qm sibling )
+    out="$(expect fail "a directory that only shares a prefix" fast --ticket-file "$tmp/tickets-prefix.md")"
+    printf '%s' "$out" | grep -q 'outside scope: A *srcfoo/evil.txt' \
+      || { echo "self-test FAILED: a scope entry admitted a sibling of the same prefix: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a scope entry admits itself and its subtree, never a sibling of the same prefix"
+    # The convention itself: an entry with no trailing slash is that path and its
+    # subtree, so a fix cannot pass by refusing every prefix.
+    ( cd "$repo" && git reset -q --hard HEAD~1 )
+    out="$(expect ok "a subtree under an entry with no trailing slash" fast --ticket-file "$tmp/tickets-prefix.md")"
+    printf '%s' "$out" | grep -q 'inside the mandate' \
+      || { echo "self-test FAILED: an entry with no trailing slash did not admit its own subtree: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - an entry with no trailing slash still admits its subtree"
+    ( cd "$repo" && git reset -q --hard "$keep" )
+    # `scope` is read from the front matter only, so a `scope:` line after the
+    # closing `---` cannot widen the mandate. Already true at 6f43fe2; kept true.
+    printf -- '---\nid: P-2\nscope: src\n---\n# P-2\n\nscope: docs/\n' >"$tmp/tickets-body-scope.md"
+    ( cd "$repo" && echo x >>docs/b.txt && git commit -qam body-scope )
+    out="$(expect fail "a scope line after the front matter" fast --ticket-file "$tmp/tickets-body-scope.md")"
+    printf '%s' "$out" | grep -q 'outside scope: M *docs/b.txt' \
+      || { echo "self-test FAILED: a scope line in the ticket body widened the mandate: $(printf '%s' "$out" | tail -3)" >&2; exit 1; }
+    echo "ok  - a scope line after the front matter does not widen the mandate"
     ( cd "$repo" && git reset -q --hard "$keep" )
     # An untracked file is in the scope check and must be in the size check too:
     # `git diff` never shows one, so 700 lines in src/ used to count as zero.
@@ -704,10 +766,9 @@ case "$PHASE" in
     ;;
   all)
     phase_scope; phase_size; phase_secrets; phase_fmt; phase_build; phase_test
-    record all pass "scope+size+secrets+fmt+build+test"
-    pass all "every phase green"
+    summarise all "scope+size+secrets+fmt+build+test"
     ;;
-  fast) phase_scope; phase_size; phase_secrets; phase_fmt; pass fast "everything but build+test" ;;
+  fast) phase_scope; phase_size; phase_secrets; phase_fmt; summarise fast "everything but build+test" ;;
   build) phase_build ;;
   test) phase_test ;;
   *) echo "usage: gate.sh all|fast|build|test|--self-test [--ticket T-n] [--ticket-file p] [--sha <40-hex>]" >&2; exit 2 ;;
