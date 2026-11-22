@@ -72,7 +72,7 @@ jobs:
     # two requests on open (`/describe` and `/review`, D12), so 3000s of requests
     # plus 900s to write the verdict (#157). A timeout at or near the job budget
     # re-creates the silent kill that posts nothing, so the two numbers move
-    # together, and a budget covering only one request was that silent kill.
+    # together.
     timeout-minutes: 65
     steps:
       # A PR must not hand the reviewer's side its own copy of the check, so it
