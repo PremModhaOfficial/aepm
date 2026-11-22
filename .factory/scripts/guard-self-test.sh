@@ -94,6 +94,8 @@ const CASES = [
   // The two holes beside the allowlist: .env through a redirect, protection edits.
   ["Router leaks .env through a redirect", "bash", { command: "echo SECRET=leaked > .env" }, MAIN, true],
   ["Router edits protection with --method before the path", "bash", { command: "gh api --method PUT repos/o/r/branches/main/protection" }, MAIN, true],
+  ["Router edits protection with -f before the path", "bash", { command: "gh api -f enforce_admins=false repos/o/r/branches/main/protection" }, MAIN, true],
+  ["Router edits protection with --input before the path", "bash", { command: "gh api --input /tmp/p.json repos/o/r/branches/main/protection" }, MAIN, true],
 
   ["Router reads a file", "read", { path: MAIN + "/src/main.rs" }, MAIN, false],
   ["Router runs read-only git", "bash", { command: "git log --oneline -3" }, MAIN, false],
