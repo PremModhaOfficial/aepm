@@ -134,6 +134,13 @@ const CASES = [
   ["Router reads a PR", "bash", { command: "gh pr view 168 --json state" }, MAIN, false],
   ["Router writes bookkeeping in .factory/", "write", { path: MAIN + "/.factory/state.md" }, MAIN, false],
   ["Router writes a ticket", "write", { path: MAIN + "/.factory/tickets/T-2.md" }, MAIN, false],
+  // T-15 round 8, finding 5: only the absolute spelling was accepted, so the
+  // relative path the Router types was refused. Code and `..` stay refused.
+  ["Router writes a relative state path", "write", { path: ".factory/state.md" }, MAIN, false],
+  ["Router writes a relative ticket path", "write", { path: ".factory/tickets/T-2.md" }, MAIN, false],
+  ["Router edits a relative source path", "edit", { path: "src/main.rs" }, MAIN, true],
+  ["Router edits a relative guard path", "write", { path: ".pi/extensions/router-guard.ts" }, MAIN, true],
+  ["Router writes a relative path that escapes the checkout", "write", { path: "../main/.factory/state.md" }, MAIN, true],
   ["Router writes a scratch file in /tmp", "write", { path: "/tmp/factory-note.md" }, MAIN, false],
 
   ["Builder edits in its own worktree", "edit", { path: WT + "/src/main.rs" }, WT, false],

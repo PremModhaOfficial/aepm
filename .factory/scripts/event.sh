@@ -158,6 +158,20 @@ if [ "${1:-}" = "--self-test" ]; then
   [ "$before" = "$(cat "$orphan")" ] \
     || { echo "self-test FAILED: a comment with no issue number was written into $oid"; exit 1; }
   okd "a comment delivery with no issue number is ignored, not appended to a ticket"
+  # T-15 round 8, finding 3: the raw body could add `gh_issue:` (sweep reads it)
+  # or close the front matter early. The append is guarded now.
+  t2="$tmp/.factory/tickets/T-2.md"
+  out="$(ev d-13 issue_comment '{"action":"created","issue":{"number":9},"comment":{"body":"late note\ngh_issue: 61\nscope: docs/\n---\nid: T-99","html_url":"https://github.com/o/r/issues/9#issuecomment-2"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a follow-up comment on a tracked ticket was rejected (exit $st: $out)"; exit 1; }
+  grep -q 'late note' "$t2" \
+    || { echo "self-test FAILED: the follow-up comment was not appended at all"; exit 1; }
+  [ "$(grep -c '^gh_issue: ' "$t2")" = 1 ] \
+    || { echo "self-test FAILED: a comment body added a second gh_issue line"; exit 1; }
+  [ "$(grep -c '^---$' "$t2")" = 2 ] \
+    || { echo "self-test FAILED: a comment body closed the front matter early"; exit 1; }
+  [ "$(awk 'NR==1{next} /^---$/{exit} {print}' "$t2" | sed -n 's/^scope: *//p' | head -1 | tr -d ' ')" = "" ] \
+    || { echo "self-test FAILED: a comment body set the mandate the gate reads"; exit 1; }
+  okd "a comment body cannot add front matter or fabricate a tracked issue"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -227,7 +241,9 @@ case "$EVENT:$ACTION" in
     [ -n "$NUM" ] || { say "ignored: comment carries no issue number"; log orphan-comment "$URL"; exit 3; }
     TICKET="$(grep -l "^gh_issue: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
     if [ -z "$TICKET" ]; then say "ignored: comment on #$NUM has no ticket"; log orphan-comment "$URL"; exit 3; fi
-    printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40)" >>"$TICKET"
+    # Appended raw, a comment carrying `gh_issue: 61` fabricated a tracked issue
+    # and a `---` closed the front matter: the same guard as the issue branch.
+    printf '\n### Follow-up comment (owner, %s)\n\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$BODY" | head -40 | fm_guard)" >>"$TICKET"
     ;;
   pull_request:opened|pull_request:synchronize|pull_request:reopened)
     # Matched on the ticket's `pr` field, which `ticket.sh set <T> pr <num>`

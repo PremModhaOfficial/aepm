@@ -24,7 +24,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 // Runtime state the Router owns, relative to the checkout root. Code is never
 // in this list.
@@ -124,18 +124,20 @@ const normalise = (p: string) => p.replace(/\\/g, "/");
  * True only for runtime state, and never for a path that escapes with `..`.
  * Inside the checkout only this factory's own state qualifies; outside it, only
  * /tmp scratch does. A plain `.includes("/tmp/")` test said yes to every path in
- * a checkout that happens to live under /tmp.
+ * a checkout that happens to live under /tmp. A RELATIVE path is resolved
+ * against cwd first: refusing one spelling of a legal write is a guard bug.
  */
 function isStatePath(raw: string, cwd: string): boolean {
   const p = normalise(raw);
   if (/\/\.\.(\/|$)/.test(p) || p.startsWith("../")) return false;
+  const abs = p.startsWith("/") ? p : normalise(resolve(cwd, p));
   const root = normalise(cwd).replace(/\/$/, "");
-  const rel = p === root ? "" : p.startsWith(root + "/") ? p.slice(root.length + 1) : null;
+  const rel = abs === root ? "" : abs.startsWith(root + "/") ? abs.slice(root.length + 1) : null;
   if (rel !== null) {
     if (rel === "") return false;
     return STATE_UNDER_ROOT.some((s) => rel === s.replace(/\/$/, "") || rel.startsWith(s));
   }
-  return p.startsWith("/tmp/");
+  return abs.startsWith("/tmp/");
 }
 
 /** The decision for one bash command in the main checkout. */

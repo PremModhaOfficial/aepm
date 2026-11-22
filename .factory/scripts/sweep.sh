@@ -10,7 +10,13 @@ OWNER="$(sed -n 's/^ *authorized_sender: *//p' "$FACTORY/config.yml" | head -1 |
 REPO="$(sed -n 's/^repo: *//p' "$FACTORY/config.yml" | head -1 | sed 's/[[:space:]]*#.*//; s/[[:space:]]*$//')"
 JSON=0; [ "${1:-}" = "--json" ] && JSON=1
 
-tracked() { grep -h "^gh_issue: " "$FACTORY"/tickets/T-*.md 2>/dev/null | sed 's/^gh_issue: //' | grep -v '^$' | sort -u; }
+tracked() { # the front matter only: a `gh_issue:` line a comment appends is not a link
+  local t
+  for t in "$FACTORY"/tickets/T-*.md; do
+    [ -f "$t" ] || continue
+    awk 'NR==1{next} /^---$/{exit} /^gh_issue: /{sub(/^gh_issue: /,""); print}' "$t"
+  done | grep -v '^$' | sort -u || true
+}
 
 # Does not run against the live repo: it builds a throwaway factory and a stub gh.
 if [ "${1:-}" = "--self-test" ]; then
@@ -43,6 +49,39 @@ if [ "${1:-}" = "--self-test" ]; then
   printf '%s' "$out" | grep -q '"open_issues":1' \
     || { echo "self-test FAILED: a completed read was not counted: $out" >&2; exit 1; }
   okd "a completed read is still counted"
+
+  # T-15 round 8, finding 3: the parse read the whole file, so a `gh_issue:` line
+  # a comment appended counted as a tracked issue. Front matter only.
+  printf -- '---\nid: T-1\ngh_issue: 61\nscope: src/\n---\n# T-1\n\ngh_issue: 62\n' >"$tmp/factory/tickets/T-1.md"
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "62\\tanother title\\n"; exit 0 ;;\n  "pr list") printf "168\\tbranch\\ta PR\\n"; exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a completed gh read failed the sweep (exit $st: $out)" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '#62 another title' \
+    || { echo "self-test FAILED: a gh_issue: line outside the front matter counted as tracked: $out" >&2; exit 1; }
+  okd "a gh_issue: line outside the front matter is not a tracked issue"
+
+  # T-15 round 8, finding 4: an empty listing is not evidence of a closed issue.
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") exit 0 ;;\n  "pr list") printf "168\\tbranch\\ta PR\\n"; exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a successful empty read failed the sweep (exit $st: $out)" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"ticket_issue_state":"unknown"' \
+    || { echo "self-test FAILED: an empty listing was reported as a known stale list: $out" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"tickets_without_open_issue":" 61"' \
+    && { echo "self-test FAILED: an empty listing marked a tracked issue stale: $out" >&2; exit 1; }
+  okd "an empty gh listing is unknown, never stale"
+
+  # Other direction: a listing that did return rows still decides staleness.
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "63\\tstill open\\n"; exit 0 ;;\n  "pr list") exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: a completed read failed the sweep (exit $st: $out)" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"ticket_issue_state":"known"' \
+    || { echo "self-test FAILED: a listing that returned rows was reported as unknown: $out" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"tickets_without_open_issue":" 61"' \
+    || { echo "self-test FAILED: an issue absent from a completed listing was not reported stale: $out" >&2; exit 1; }
+  okd "a completed listing still reports a closed issue as stale"
   echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -67,19 +106,24 @@ while IFS=$(printf '\t') read -r n t; do
   printf '%s\n' "$known" | grep -qx "$n" || new_issues="${new_issues}#${n} ${t}"$'\n'
 done <<<"$issues"
 
-# Tickets whose issue was closed outside the factory are stale, not active.
-stale=""
-while IFS= read -r n; do
-  [ -n "$n" ] && ! printf '%s\n' "$issues" | cut -f1 | grep -qx "$n" && stale="$stale $n"
-done <<<"$known"
+# Tickets whose issue was closed outside the factory are stale. An empty listing
+# is not evidence of that: no rows is reported as unknown, never as stale (R8, #4).
+stale=""; stale_state="known"
+if [ -z "$(printf '%s' "$issues" | tr -d '[:space:]')" ]; then
+  stale_state="unknown"
+else
+  while IFS= read -r n; do
+    [ -n "$n" ] && ! printf '%s\n' "$issues" | cut -f1 | grep -qx "$n" && stale="$stale $n"
+  done <<<"$known"
+fi
 
 open_tickets="$(bash "$FACTORY/scripts/ticket.sh" resume 2>/dev/null | grep -c 'stage=' || true)"
 
 if [ "$JSON" = 1 ]; then
   jq -cn --argjson oi "$(printf '%s\n' "$issues" | grep -c . )" \
     --argjson pr "$(printf '%s\n' "$prs" | grep -c .)" \
-    --arg new "$(printf '%s' "$new_issues" | tr '\n' ' ')" --arg stale "$stale" --argjson tickets "${open_tickets:-0}" \
-    '{open_issues:$oi,open_prs:$pr,untracked_issues:$new,tickets_without_open_issue:$stale,active_tickets:$tickets}'
+    --arg new "$(printf '%s' "$new_issues" | tr '\n' ' ')" --arg stale "$stale" --arg state "$stale_state" --argjson tickets "${open_tickets:-0}" \
+    '{open_issues:$oi,open_prs:$pr,untracked_issues:$new,tickets_without_open_issue:$stale,ticket_issue_state:$state,active_tickets:$tickets}'
   exit 0
 fi
 
@@ -92,5 +136,6 @@ if [ -n "$new_issues" ]; then
   printf '%s' "$new_issues" | sed 's/^/    /'
 fi
 [ -n "$stale" ] && echo "  tickets whose issue is closed:$stale"
+[ "$stale_state" = unknown ] && echo "  tickets whose issue is closed: unknown (gh issue list returned no rows)"
 echo "  open PRs (re-arm a watch for each):"
 printf '%s\n' "$prs" | sed 's/^/    PR #/'
