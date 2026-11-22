@@ -22,14 +22,15 @@ upload needs a change to the tree.
 
 ## Not proven, on purpose
 
-Named here so no later reader mistakes them for covered ground. Both are stated
-at the work too: `sim/README.md`, "Traps this level cost hours on", and the
-release notes.
+Named here so no later reader mistakes them for covered
+ground. The first two are stated at the work too: `sim/README.md`, "Traps this
+level cost hours on", and the release notes.
 
 | gap | why it is not proven | what it would take |
 |---|---|---|
 | the GRUB menu | GRUB 2.16-1 in the sim lands on its own `grub>` prompt instead of loading its config, so the guest boots its kernel straight from `/boot`. The kernel, initramfs and default subvolume — where a rollback takes effect — are covered | a bootloader image that loads its config on a serial console |
 | `SPACE_LIMIT`'s unmet branch | btrfs reports a parent qgroup's exclusive usage as zero, so 700 MiB of snapshot-only data still satisfies a 600 MiB limit. Scenario 62 asserts today's behaviour and goes red when that closes | a btrfs that reports parent usage, or a different quota mechanism |
+| the D39 rule's effect | the rule is one paragraph in `.pr_agent.toml`'s `[pr_reviewer] extra_instructions`, and that file is read from the default branch (`repo_context_from_default_branch = true`), so the PR that added it was reviewed by the old rules; afterwards the effect is a model's choice on a later review, and a review that never meets a comment-as-code case looks the same as one where the rule worked. The instance it was written for is finding `691bb9dc9491` at `096c126:235-236`, a head that is not an ancestor of `main`, so it cannot be replayed | two logged reviews on a head whose diff carries a comment quoting a retired pattern, one before the rule applied and one after, each read with `gh api --paginate "repos/PremModhaOfficial/aepm/pulls/<n>/comments"`: a finding at that line before and no finding at it after is the pair. One non-finding alone proves nothing, and the counters stay locatable only: `rg -c 'A line inside a comment is not the code' .pr_agent.toml` → `1`, `bash scripts/check-review-gate.sh` → `ok doc-claims-match-code` |
 
 ## Not shipped
 
