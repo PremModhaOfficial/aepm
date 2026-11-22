@@ -585,15 +585,17 @@ Two options. Both leave branch protection, every required check, and every file
 in Part 4 untouched. They differ in one thing: whether OCR survives as an
 operator-dispatched *measurement* — not a reviewer, no comment, no check.
 
-**A1 — recommended. Keep PR #161 and change one word.**
+**A1 — recommended, and already applied. PR #161 keeps the shadow and changed
+one word.**
 
 The shadow already exists and is already the right shape:
 `workflow_dispatch`-only, posts no comment, is not a required check, and its
 guard goes red on six shapes of "no review happened"
-(`ci/ocr-shadow:.github/workflows/ocr-shadow.yml:1-30`). It differs from the
-configuration measured to **complete** by exactly one flag: `:194-197` passes
+(`ci/ocr-shadow:.github/workflows/ocr-shadow.yml:1-30`). It differed from the
+configuration measured to **complete** by exactly one flag: `:194-197` passed
 `--effort high`, and §3.1 shows `high` produced 0 completed files in 15 minutes
-while `low` completed 5 files in 12 minutes with 6 findings.
+while `low` completed 5 files in 12 minutes with 6 findings. #161 head
+`163b4c4` passes `low` (`grep -n 'effort' .github/workflows/ocr-shadow.yml`).
 
 ```diff
 -            --effort high --concurrency 4 --max-tokens-budget 0 \
@@ -645,9 +647,12 @@ reverted alone.
    `feat/ocr-shadow-reviewer` is local-only and 4 commits ahead of `origin/main`,
    so `-D` discards it; if that history matters, `git tag archive/ocr-shadow-reviewer
    f92b1f3` first.
-3. **A1 and A2 both — fix what the decision makes false.** `docs/CI-ARCHITECTURE.md` (read from
-   `main`) line 27 currently reads: "a workflow-adding PR (there is one open,
-   `ocr-review.yml`)". That sentence is **already false** as of #149's close
+3. **A1 and A2 both — fix what the decision makes false.** *Done separately, not
+   here: #166 merged as `a358188` deletes the parenthetical below, because this
+   document is prose and that sentence is a lie on `main`. The remainder of this
+   step is a follow-up.* `docs/CI-ARCHITECTURE.md` (read from
+   `main`) line 27 read: "a workflow-adding PR (there is one open,
+   `ocr-review.yml`)". That sentence was **already false** as of #149's close
    (`gh pr view 149 --json state,closedAt` → `CLOSED`, `2026-11-21T12:47:12Z`),
    and `scripts/check-ci-architecture.sh` does not read it — its assertions are a row
    per workflow *file* (`:27-47`), not a sentence — so the gate stays green while
@@ -710,12 +715,13 @@ reverted alone.
    #158's sixth workflow); on a clean extract of `origin/main` it prints `13
    assertions hold, 0 failed`. No `NEXT.md` item names the reviewer
    (`rg -n -i 'ocr|reviewer' NEXT.md` → no reviewer hits), so no checkbox applies.
-9. **Commit this document and cite it.** It is currently untracked
+9. **Commit this document and cite it.** It was untracked
    (`git status --porcelain docs/research/` → `?? docs/research/`), so every
-   number above would live on one machine. The step order matters: commit
-   `docs/research/reviewer-decision.md` in the same change as the `PENDING.md`
-   row and the `docs/CI-ARCHITECTURE.md:27` fix, so the row cites a file that
-   exists in a commit.
+   number above would have lived on one machine. It is committed by #167 with
+   the decision row (D40 in `.github/PR-AGENT.md`), not with the `PENDING.md`
+   row: the `:27` fix landed first as #166 (`a358188`), so those two cannot
+   share a commit with this file, and the `PENDING.md` row (step 4) is a
+   follow-up on the same PR that cites this document by path.
 
 Parity is Parts 2's table: every OCR capability that decides a merge is either
 native to pr-agent or already implemented here, and the one thing it lacks
