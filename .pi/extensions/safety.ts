@@ -39,9 +39,12 @@ const NEVER = [
   { re: /\bgh\s+api\b[^\n]*\/protection[^\n]*(\s-[XfF]|--method|--input|--field|--raw-field)/, why: "editing branch protection" },
   { re: /\bgh\s+api\b[^\n]*(\s-[XfF]|--method|--input|--field|--raw-field)[^\n]*\/protection/, why: "editing branch protection" },
   // .env is a hard no in every tool, not just the file tools: a shell redirect
-  // (`echo SECRET=leaked > .env`) writes the same file.
+  // (`echo SECRET=leaked > .env`) writes the same file. The name is matched as a
+  // PREFIX, not a whole word: `.envrc` has no word boundary after `env`, and it
+  // holds a direnv script that exports the whole file, so it leaks exactly the
+  // same way. Nothing but `.env` and its siblings starts with `.env` here.
   {
-    re: /(?:>>?|\bcp\b|\bmv\b|\brm\b|\btee\b|\bdd\b|\bsed\s+-i\b|\binstall\b)[^\n]*\.env(?:\.[A-Za-z0-9]+)?\b/,
+    re: /(?:>>?|\bcp\b|\bmv\b|\brm\b|\btee\b|\bdd\b|\bsed\s+-i\b|\binstall\b)[^\n]*\.env[A-Za-z0-9_.-]*/,
     why: "writing .env through a shell command",
   },
   { re: /\b(pacman|yay|makepkg|paccache|pacdiff)\b/, why: "pacman/yay/makepkg on the development host (sim/run.sh only)" },

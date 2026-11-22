@@ -21,6 +21,40 @@ bash "$FACTORY/scripts/event.sh" --self-test || bad "event self-test"
 head1 "3. router-guard blocks the Router and permits a worktree"
 bash "$FACTORY/scripts/guard-self-test.sh" || bad "guard self-test"
 
+head1 "3b. safety blocks every .env-prefixed name through a shell write"
+D="$(mktemp -d)"
+printf 'export type ExtensionAPI = any;\nexport const isToolCallEventType = (n: string, e: any) => e.toolName === n;\n' >"$D/stub.ts"
+sed 's|"@earendil-works/pi-coding-agent"|"./stub.ts"|g' "$ROOT/.pi/extensions/safety.ts" >"$D/safety.ts"
+cat >"$D/t.mjs" <<'EOF'
+import safety from "./safety.ts";
+const load = (ext) => { const h = {}; ext({ on: (n, f) => (h[n] = f), registerCommand: () => {} }); return h; };
+const s = load(safety);
+// [label, tool, input, blocked?] — the review on 0b2018e found the first six ALLOW:
+// the name was matched with a trailing word boundary, and `.envrc` has none between
+// `v` and `r`, so a direnv file that exports every secret was writable. The last two
+// are the other direction: a prefix match must not swallow an unrelated redirect.
+const CASES = [
+  ["shell redirect into .envrc", "bash", { command: "echo SECRET=leaked > .envrc" }, true],
+  ["shell append into .envrc", "bash", { command: "echo A=1 >> .envrc" }, true],
+  ["cp over .envrc", "bash", { command: "cp a .envrc" }, true],
+  ["shell redirect into .env.prefixed", "bash", { command: "echo x > .env.prefixed" }, true],
+  ["shell redirect into .env", "bash", { command: "echo SECRET=leaked > .env" }, true],
+  ["edit of .envrc (the PROTECTED list is a substring test, so it holds)", "edit", { path: "/repo/.envrc" }, true],
+  ["shell redirect into notes.txt", "bash", { command: "echo hi > notes.txt" }, false],
+  ["shell redirect into src/env.rs", "bash", { command: "echo hi > src/env.rs" }, false],
+];
+let bad = 0;
+for (const [label, tool, input, shouldBlock] of CASES) {
+  const r = await s.tool_call({ toolName: tool, input }, { cwd: "/repo", hasUI: false });
+  const ok = (r?.block === true) === shouldBlock;
+  if (!ok) bad++;
+  console.log(`${ok ? "ok  " : "FAIL"} - ${shouldBlock ? "blocked" : "allowed"}: ${label}`);
+}
+process.exit(bad ? 1 : 0);
+EOF
+node "$D/t.mjs" || bad "safety .env drill"
+rm -rf "$D"
+
 head1 "4. duplicate dispatch is refused (idempotency)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 cp -r "$FACTORY/scripts" "$FACTORY/config.yml" "$TMP/"
@@ -90,6 +124,20 @@ printf '#!/bin/sh\nexit 1\n' >"$BIN/gh"; chmod +x "$BIN/gh"
 out="$(cd "$ROOT" && PATH="$BIN:$PATH" bash .factory/scripts/sweep.sh 2>&1)"; st=$?
 [ "$st" -ne 0 ] && ok "an unreadable GitHub fails the sweep (exit $st)" || bad "the sweep reported success while offline: $out"
 printf '%s' "$out" | grep -q "gh read failed" && ok "the sweep says why it failed" || bad "the sweep failed silently: $out"
+
+head1 "9. sweep self-test: unknown-vs-zero and the failed ticket read"
+# sweep.sh --self-test carries the drills for a gh read that halves through, an
+# empty listing being unknown rather than stale, and front-matter-only tracking.
+# Nothing ran them: section 8 above only proves the offline exit.
+out="$(bash "$FACTORY/scripts/sweep.sh" --self-test 2>&1)"; st=$?
+[ "$st" = 0 ] && ok "the sweep self-test passed" || bad "sweep self-test (exit $st): $out"
+count="$(printf '%s\n' "$out" | sed -n 's/^sweep self-test: \([0-9][0-9]*\) assertions hold$/\1/p')"
+[ -n "$count" ] && ok "the sweep self-test reported its assertion count ($count)" \
+  || bad "the sweep self-test printed no assertion count: $out"
+printf '%s\n' "$out" | grep -q "^ok  - an empty gh listing is unknown, never stale$" \
+  && ok "the unknown-vs-zero drill ran" || bad "the unknown-vs-zero drill did not run: $out"
+printf '%s\n' "$out" | grep -q "^ok  - a gh read that halves through fails the sweep$" \
+  && ok "the failed-read drill ran" || bad "the failed-read drill did not run: $out"
 
 echo
 if [ "$FAILED" = 0 ]; then echo "factory self-test: all drills hold"; else echo "factory self-test: $FAILED drill(s) FAILED"; fi
