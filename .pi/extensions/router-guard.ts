@@ -60,8 +60,9 @@ const ALLOWED_SHAPES: { re: RegExp; what: string }[] = [
   // find -delete/-exec and sort -o write; they are not read-only.
   { re: /^find\b(?!.*\s-(?:delete|exec|execdir|ok|fprint|fprintf|fls)\b)/, what: "find without -delete/-exec" },
   { re: /^sort\b(?!.*\s-o\b)/, what: "sort without -o" },
-  { re: /^sed\s+-n\b/, what: "sed -n" },
-  { re: /^awk\b/, what: "awk" },
+  // Neither awk nor sed is here: both can write (`awk system()`, sed's `w`
+  // command), so they are not filters. The factory's own scripts use them, and
+  // they run as `bash .factory/...`.
   { re: /^command\s+-v\b/, what: "command -v" },
   { re: /^cargo\s+(?:metadata|tree)\b/, what: "cargo metadata/tree" },
   { re: /^cargo\s+fmt\b[^\n]*\s--check\b/, what: "cargo fmt --check" },

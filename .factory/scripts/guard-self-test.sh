@@ -70,6 +70,8 @@ const CASES = [
   ["Router deletes files with find -delete", "bash", { command: "find src -delete" }, MAIN, true],
   ["Router subshells a write", "bash", { command: "sh -c 'echo x > src/main.rs'" }, MAIN, true],
   ["Router builds in the main checkout (gate only)", "bash", { command: "cargo build --release" }, MAIN, true],
+  ["Router writes with sed's w command (not a filter)", "bash", { command: "sed -n '1w /tmp/x' src/main.rs" }, MAIN, true],
+  ["Router runs awk with system()", "bash", { command: "awk 'BEGIN{system(\"id\")}'" }, MAIN, true],
 
   // The two holes beside the allowlist: .env through a redirect, protection edits.
   ["Router leaks .env through a redirect", "bash", { command: "echo SECRET=leaked > .env" }, MAIN, true],
