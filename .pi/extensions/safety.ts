@@ -5,15 +5,41 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 
 const PROTECTED = [".env", ".git/", ".gpg/", "node_modules/", "id_rsa", "id_ed25519"];
+
+// The factory's own judge. A builder in its own worktree may change it — that is
+// how a guard fix reaches a PR — but in the main checkout the thing that decides
+// is not editable by the session it decides about (router-guard's F1 hole; this
+// is the second layer, so neither extension alone can be talked out of it).
+const MAIN_CHECKOUT_ONLY_PROTECTED = [".pi/"];
+
+function isWorktree(cwd: string): boolean {
+  try {
+    return statSync(join(cwd, ".git")).isFile();
+  } catch {
+    return false;
+  }
+}
 
 // Never allowed, no confirmation offered: these break a hard rule or destroy work.
 const NEVER = [
   { re: /\bgit\s+push\b[^\n]*(--force|-f\b)[^\n]*\b(main|master)\b/, why: "force-push to the default branch" },
   { re: /\bgit\s+push\b[^\n]*\b(main|master)\b/, why: "push to the default branch" },
   { re: /\bgh\s+pr\s+merge\b[^\n]*--admin/, why: "merge bypassing branch protection (--admin)" },
-  { re: /\bgh\s+api\b[^\n]*-X\s*(DELETE|PATCH|PUT)\b[^\n]*\/protection/, why: "editing branch protection" },
+  // Editing branch protection, in every spelling: the method flag may come
+  // before or after the path, or be implied by a field.
+  { re: /\bgh\s+api\b[^\n]*\/protection[^\n]*(-X|--method[= ])\s*(POST|PUT|PATCH|DELETE)\b/, why: "editing branch protection" },
+  { re: /\bgh\s+api\b[^\n]*(-X|--method[= ])\s*(POST|PUT|PATCH|DELETE)\b[^\n]*\/protection/, why: "editing branch protection" },
+  { re: /\bgh\s+api\b[^\n]*\/protection[^\n]*(\s-f\b|\s-F\b|--input|-X\s*POST|--method[= ]POST)\b/, why: "editing branch protection" },
+  // .env is a hard no in every tool, not just the file tools: a shell redirect
+  // (`echo SECRET=leaked > .env`) writes the same file.
+  {
+    re: /(?:>>?|\bcp\b|\bmv\b|\brm\b|\btee\b|\bdd\b|\bsed\s+-i\b|\binstall\b)[^\n]*\.env(?:\.[A-Za-z0-9]+)?\b/,
+    why: "writing .env through a shell command",
+  },
   { re: /\b(pacman|yay|makepkg|paccache|pacdiff)\b/, why: "pacman/yay/makepkg on the development host (sim/run.sh only)" },
   { re: /\bsystemctl\b\s+(enable|start|restart|disable|stop)\b/, why: "systemd state change on the development host" },
   { re: /\bgit\s+reset\b[^\n]*--hard\b/, why: "git reset --hard (use a checkpoint or a worktree)" },
@@ -49,6 +75,17 @@ export default function (pi: ExtensionAPI) {
       const path = String((event.input as { path?: string }).path ?? "");
       const hit = PROTECTED.find((p) => path.includes(p));
       if (hit) return { block: true, reason: `safety: "${path}" is a protected path (${hit}).` };
+      if (!isWorktree(ctx.cwd)) {
+        const guard = MAIN_CHECKOUT_ONLY_PROTECTED.find((p) => path.includes(p));
+        if (guard) {
+          return {
+            block: true,
+            reason:
+              `safety: "${path}" is the factory's own guard (${guard}). It changes through a ` +
+              `builder's PR in a worktree, never from the main checkout that it judges.`,
+          };
+        }
+      }
     }
 
     return undefined;
