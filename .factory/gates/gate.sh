@@ -213,7 +213,9 @@ phase_secrets() {
   local added pat t hits=""
   need_base
   # A binary file never reaches the secret scan: the size phase already failed it.
-  added="$(git -C "$ROOT" diff -U0 --no-renames "$BASE" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+')"
+  # The header filter is git's exact header shape, never a bare `+++` prefix: a
+  # token on a line of its own starting `+++` is an added line, not a header.
+  added="$(git -C "$ROOT" diff -U0 --no-renames "$BASE" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+ (a/|b/|/dev/null)')"
   [ -n "$added" ] || { pass secrets "no added lines to scan"; return 0; }
   for pat in \
     'gh[pousr]_[A-Za-z0-9]{20,}' \
@@ -352,6 +354,13 @@ case "$PHASE" in
     ( cd "$repo" && git commit -qam secret-gitlab )
     expect fail "a glpat- token and a database URL with an inline password" fast --ticket T-1 >/dev/null
     echo "ok  - a glpat- token and a database URL with an inline password fail the secret scan"
+
+    # A token on a line that itself begins `+++` arrives as `++++...` in the
+    # diff. A bare `+++` header filter dropped it, so the scan never saw it.
+    ( cd "$repo" && git reset -q --hard HEAD~1 \
+      && printf '+++ghp_%s\n' "abcdefghijklmnopqrstuvwx" >>src/a.txt && git commit -qam secret-plus )
+    expect fail "a token on a line beginning with +++" fast --ticket T-1 >/dev/null
+    echo "ok  - a token on a line beginning with +++ fails the secret scan"
 
     ( cd "$repo" && git reset -q --hard HEAD~1 \
       && for i in $(seq 1 700); do echo "line $i"; done >>src/a.txt && git commit -qam big )
