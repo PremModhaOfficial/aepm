@@ -9,3 +9,9 @@
 !src/lock.rs
 # Per-run scenario logs, written by sim/run.sh.
 /sim-logs
+
+# Factory runtime state (tickets, ledger, inbox) is machine-local, not product.
+/.factory/inbox/
+/.factory/ledger.jsonl
+/.factory/guard.log
+/.factory/gates/last-gate.json

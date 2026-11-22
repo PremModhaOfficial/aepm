@@ -253,6 +253,22 @@ The PR review is a machine surface first, human second. Read it, decide, act.
   prints prompt tokens only, so that section is the usage record.
 - **Decisions and measurements:** `.github/PR-AGENT.md`.
 
+## Factory
+
+The factory runs this repo's SDLC from GitHub issues and PRs on full auto: it
+triages, researches, plans, builds in a worktree, verifies, and squash-merges
+when the deterministic gate, an independent verifier, and the required checks
+all pass. Read [`.factory/README.md`](.factory/README.md) before changing
+anything under `.factory/`. Two rules that hold for every actor:
+
+- `.pi/extensions/router-guard.ts` blocks the Router from editing the main
+  checkout; `safety.ts` blocks dangerous commands, protected paths,
+  force-push to the default branch and `gh pr merge --admin`. Never disable
+  either to get a change through — dispatch a builder instead.
+- `bash .factory/gates/gate.sh all --ticket T-<n>` is the gate. Exit code is
+  truth. `.factory/tickets/` is the state, so work resumes from files after a
+  restart, not from memory.
+
 ## Layout
 
 | Path | Role |
