@@ -17,7 +17,11 @@ tracked() { # the front matter only: a `gh_issue:` line a comment appends is not
   # a blank `gh_issue:` line is not a ticket and a duplicate is one value.
   local t v rc=0 out=""
   for t in "$FACTORY"/tickets/T-*.md; do
-    [ -e "$t" ] || continue
+    # `-L`: a broken symlink the glob matches is not `-e`, and skipping it made a
+    # store it cannot read look like a known baseline (the comment below says an
+    # unreadable matched path is UNREAD, never absent). `-e` alone still covers the
+    # unmatched glob, which is a literal path here.
+    [ -e "$t" ] || [ -L "$t" ] || continue
     # A matched path that is not a readable file is an unread ticket, not an absent
     # one: awk SKIPS a directory with exit 0, so the check has to be made here.
     [ -f "$t" ] && [ -r "$t" ] || { rc=1; continue; }
@@ -162,6 +166,21 @@ if [ "${1:-}" = "--self-test" ]; then
   { [ "$st" = 0 ] && [ "$out" = 61 ]; } \
     || { echo "self-test FAILED: tracked() emitted a blank or a duplicate gh_issue (exit $st, output '$out')" >&2; exit 1; }
   okd "tracked() drops a blank and a duplicate gh_issue"
+  # Round-13 defect 4: `[ -e "$t" ] || continue` skipped a BROKEN SYMLINK the glob
+  # matched, so a store it could not read reported a KNOWN baseline — the opposite
+  # of what the comment two lines below it says. `-L` keeps the path in the read
+  # set, where the readable-file check turns it into `unknown`.
+  rm -rf "$tmp/factory/tickets"; mkdir -p "$tmp/factory/tickets"
+  printf -- '---\nid: T-1\ngh_issue: 61\n---\n' >"$tmp/factory/tickets/T-1.md"
+  ln -s /nonexistent/T-9.md "$tmp/factory/tickets/T-9.md"
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "61\\topen\\ttracked\\n62\\topen\\tuntracked\\n"; exit 0 ;;\n  "pr list") exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  { [ "$st" = 0 ] && printf '%s' "$out" | grep -q '"untracked_issue_state":"unknown"'; } \
+    || { echo "self-test FAILED: a broken ticket symlink read as a known baseline: $out" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"untracked_issues":"#62 ' \
+    && { echo "self-test FAILED: a broken ticket symlink left the open issues looking untracked: $out" >&2; exit 1; }
+  okd "a broken ticket symlink makes the baseline unknown, never a list"
   echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
