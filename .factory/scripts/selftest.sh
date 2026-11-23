@@ -135,12 +135,23 @@ bash "$TMP/scripts/stop.sh" resume >/dev/null
 [ "$(bash "$TMP/scripts/stop.sh" status)" = "auto" ] && ok "resume restores auto" || bad "resume failed"
 
 head1 "8. sweep fails loudly instead of reporting an empty success"
-# A gh that always fails: the sweep must fail, not print an empty reconcile.
+# A gh that always fails: the sweep must fail, not print an empty reconcile. The
+# drill runs against a throwaway SWEEP_FACTORY: sweeps reads config.yml and
+# tickets/ before anything else, so run from $ROOT it read the live, gitignored
+# store, and its verdict depended on machine-local state.
+SW="$TMP/sweep-sandbox"; mkdir -p "$SW/tickets" "$SW/scripts"
+sed 's|^\(repo:\).*|\1 throwaway/sentinel|' "$FACTORY/config.yml" >"$SW/config.yml"
+cp "$FACTORY/scripts/ticket.sh" "$SW/scripts/ticket.sh"; chmod +x "$SW/scripts/ticket.sh"
 BIN="$TMP/bin"; mkdir -p "$BIN"
-printf '#!/bin/sh\nexit 1\n' >"$BIN/gh"; chmod +x "$BIN/gh"
-out="$(cd "$ROOT" && PATH="$BIN:$PATH" bash .factory/scripts/sweep.sh 2>&1)"; st=$?
+# The stub records the repo the sweep asked for, so a drill that went back to the
+# real store fails even though both read failures exit non-zero.
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/gh-argv"\nexit 1\n' "$SW" >"$BIN/gh"; chmod +x "$BIN/gh"
+out="$(SWEEP_FACTORY="$SW" PATH="$BIN:$PATH" bash "$FACTORY/scripts/sweep.sh" 2>&1)"; st=$?
 [ "$st" -ne 0 ] && ok "an unreadable GitHub fails the sweep (exit $st)" || bad "the sweep reported success while offline: $out"
 printf '%s' "$out" | grep -q "gh read failed" && ok "the sweep says why it failed" || bad "the sweep failed silently: $out"
+grep -q -- "--repo throwaway/sentinel" "$SW/gh-argv" 2>/dev/null \
+  && ok "the offline drill reads only its throwaway store" \
+  || bad "the offline drill read the live store, not the throwaway: $(cat "$SW/gh-argv" 2>/dev/null)"
 
 head1 "9. sweep self-test: unknown-vs-zero and the failed ticket read"
 # sweep.sh --self-test carries the drills for a gh read that halves through, an
@@ -175,6 +186,14 @@ else
     && bad "the README documents a GATE SKIP line the gate no longer prints" \
     || ok "the README advertises no GATE SKIP line the gate does not print"
 fi
+
+head1 "11. the documented intake matches the script's argv"
+# The README documented `scripts/event.sh <payload.json>` while the script parses a
+# delivery id, an event name and a payload path, so a reader following it got a
+# usage failure. The documented form is the one the script actually accepts.
+grep -qF 'scripts/event.sh <delivery-id> <event-name> <payload.json>' "$FACTORY/README.md" \
+  && ok "README documents the three-argument intake" \
+  || bad "README does not document the three-argument intake: $(grep -n 'event.sh' "$FACTORY/README.md")"
 
 echo
 if [ "$FAILED" = 0 ]; then echo "factory self-test: all drills hold"; else echo "factory self-test: $FAILED drill(s) FAILED"; fi
