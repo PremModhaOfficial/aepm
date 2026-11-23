@@ -98,6 +98,16 @@ A file the diff refuses to show as text fails rather than being skipped — its
 lines cannot be counted for the cap and its bytes cannot be read by the secret
 scan — and a tree with no base to diff against is refused by name.
 
+Two bounds apply to one untracked file. At most `SCAN_MAX_BYTES` — 4194304 bytes
+(4 MiB) — is read, in one frozen pass: the line count, the size test and the binary
+test all describe the same bytes, so a file that grows while the gate runs cannot be
+reported as binary. A file over the bound is `GATE FAIL [size]` naming the bound
+rather than being half-read; a symlink, a non-regular file, and a path whose bytes
+cannot be read are refused by name, never counted as zero.
+
+There is no `GATE SKIP` line: a phase that cannot run fails (`require_cargo`), so a
+green `GATE OK` line means every check in that phase actually ran.
+
 Only runtime state (`.factory/state.md`, `ledger.jsonl`, `guard.log`, `tickets/`,
 `inbox/`, `research/`, `gates/last-gate.json`) is exempt from the scope check;
 `.factory/` code — `gate.sh`, `scripts/`, `roles/`, `config.yml` — is counted and
