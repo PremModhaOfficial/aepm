@@ -128,13 +128,14 @@ case "$cmd" in
   new)
     slug="${1:?slug}"
     shift
-    request="" scope="" authority="inferred" issue=""
+    request="" scope="" authority="inferred" issue="" base=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --request) request="$2"; shift 2 ;;
         --scope) scope="$2"; shift 2 ;;
         --authority) authority="$2"; shift 2 ;;
         --issue) issue="$2"; shift 2 ;;
+        --base) base="$2"; shift 2 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
       esac
     done
@@ -145,6 +146,10 @@ case "$cmd" in
     scope="$(path_charset "$scope")"
     slug="$(token_charset "$slug")"
     issue="$(printf '%s' "$issue" | tr -cd '0-9')"
+    # The base lands in the front matter and in an emitted command, so it is a
+    # ref and nothing else: `A-Za-z0-9._/-` carries no shell metacharacter and no
+    # whitespace, which is what router-guard refuses on shape.
+    base="$(flatten "$base" | tr -cd 'A-Za-z0-9._/-')"
     case "$authority" in explicit|inferred) ;; *) echo "--authority explicit|inferred" >&2; exit 2 ;; esac
     last=0
     if compgen -G "$TICKETS/T-*.md" >/dev/null; then
@@ -163,6 +168,7 @@ case "$cmd" in
       printf '%s\n' "$request" | block_scalar
       echo "scope: $scope"
       echo "authority: $authority"
+      echo "base: ${base:-}"
       echo "stage: queued"
       echo "task_ids:"
       echo "live_task:"
@@ -185,7 +191,17 @@ case "$cmd" in
       echo
       echo "## Acceptance checks"
       echo
-      echo "- [ ] gate exits 0: \`bash $FACTORY/gates/gate.sh all --sha \$(git rev-parse HEAD) --ticket-file $FACTORY/tickets/$id.md\`"
+      # A ticket is filed before its head exists, so the head stays a word the
+      # runner substitutes. The pasted shape is the one router-guard allows: a
+      # relative gate path, a literal base, no `$(` and no `$(git`.
+      if [ -n "$base" ]; then
+        echo "- [ ] gate exits 0 (substitute HEAD_SHA from \`git rev-parse HEAD\`): \`bash .factory/gates/gate.sh all --base $base --sha HEAD_SHA --ticket-file $FACTORY/tickets/$id.md\`"
+      else
+        # Loud, not a green line that judged nothing: with no base the gate falls
+        # back to `merge-base HEAD origin/main`, which lists every other ticket's
+        # files as outside this one's mandate, so the line would be unrunnable.
+        echo "- [ ] gate: NOT EMITTED — no base recorded, so a pasted line would judge \`merge-base HEAD origin/main\`. Record it with \`bash .factory/scripts/ticket.sh set $id base <ref>\`, or pass \`--base <ref>\` to \`new\`."
+      fi
       echo "- [ ] verifier: fresh-context verdict recorded below"
       echo "- [ ] required checks green on the PR head"
       echo
@@ -377,6 +393,40 @@ T-2 stage=queued issue= attempts=0
       *) echo "self-test FAILED: an unknown subcommand printed no usage line: $out" >&2; exit 1 ;;
     esac
     okd "an unknown subcommand still exits 2 with the usage line"
+    # The base a ticket records, and the line it emits. router-guard refuses any
+    # command carrying `$` or `(` on shape alone, and a line naming no base lets
+    # the gate fall back to merge-base origin/main, i.e. another ticket's diff.
+    bsha=d915c6dc262d1ec118201117728fd46319cdbd7a
+    st=0; f="$(tk new based --request 'a base' --scope 'src/' --authority explicit --base "$bsha" 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: new --base exited $st: $f" >&2; exit 1; }
+    bid="$(basename "$f" .md)"
+    [ "$(tk get "$bid" base)" = "$bsha" ] \
+      || { echo "self-test FAILED: new --base recorded '$(tk get "$bid" base)'" >&2; exit 1; }
+    line="$(sed -n '/^- \[ \] gate exits 0/p' "$f")" || line=""
+    case "$line" in
+      *"bash .factory/gates/gate.sh all --base $bsha"*) ;;
+      *) echo "self-test FAILED: the emitted line names no relative gate path and base: $line" >&2; exit 1 ;;
+    esac
+    case "$line" in
+      *'$('*|*'$FACTORY'*) echo "self-test FAILED: the emitted line carries a substitution the guard refuses: $line" >&2; exit 1 ;;
+    esac
+    okd "new --base records the ref and emits a relative, guard-legal --base line"
+    st=0; f="$(tk new unbased --request 'no base' --scope 'src/' --authority explicit 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: new without --base exited $st; event.sh files every ticket that way" >&2; exit 1; }
+    bid="$(basename "$f" .md)"
+    [ -z "$(tk get "$bid" base)" ] || { echo "self-test FAILED: a ticket with no --base recorded one" >&2; exit 1; }
+    line="$(sed -n '/NOT EMITTED/p' "$f")" || line=""
+    case "$line" in *--base*) ;; *) echo "self-test FAILED: no NOT EMITTED line, and no refusal by name: $line" >&2; exit 1 ;; esac
+    case "$line" in *"ticket.sh set"*) ;; *) echo "self-test FAILED: the refused line names no way to record a base: $line" >&2; exit 1 ;; esac
+    okd "new without --base still exits 0 and refuses to emit a line that judged nothing"
+    st=0; f="$(tk new junky --request 'junk base' --scope 'src/' --authority explicit --base 'a b;$(id)/x&y' 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: new --base rejected a hostile ref instead of stripping it (exit $st)" >&2; exit 1; }
+    junk="$(tk get "$(basename "$f" .md)" base)"
+    [ -n "$junk" ] || { echo "self-test FAILED: a hostile --base recorded nothing" >&2; exit 1; }
+    case "$junk" in
+      *[!A-Za-z0-9._/-]*) echo "self-test FAILED: an untrusted --base reached the front matter: $junk" >&2; exit 1 ;;
+    esac
+    okd "an untrusted --base cannot carry a metacharacter into the front matter"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
