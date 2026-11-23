@@ -11,9 +11,26 @@ FAILED=0
 ok()   { echo "ok   - $1"; }
 bad()  { echo "FAIL - $1"; FAILED=$((FAILED + 1)); }
 head1() { echo; echo "== $1 =="; }
+skipped_drills() { case "$1" in *"skipped the unreadable-file drills as root"*) return 0 ;; esac; return 1; }
 
 head1 "1. deterministic gate can fail (self-test)"
-bash "$FACTORY/gates/gate.sh" --self-test || bad "gate self-test"
+out="$(bash "$FACTORY/gates/gate.sh" --self-test 2>&1)"; st=$?
+printf '%s\n' "$out"
+if [ "$st" != 0 ]; then bad "gate self-test (exit $st)"
+elif skipped_drills "$out"; then
+  bad "gate self-test skipped the unreadable-file drills (re-run unprivileged, or fix gate.sh: T-15)"
+else ok "the gate self-test ran every drill"
+fi
+# The detector is the fix, so drill it on both answers: a root run must not read as
+# a pass, a clean run must not read as a skip. Matches gate.sh:700's wording.
+# shortcut: the match is gate.sh's root-skip sentence; when T-15 fixes that skip this
+# goes quiet (the drill still passes) and §1 returns to a plain exit check.
+skipped_drills "gate self-test: skipped the unreadable-file drills as root (root reads chmod 000)" \
+  && ok "a skipped gate self-test is refused, not reported as ok" \
+  || bad "the root-skip line was not recognised"
+skipped_drills "ok  - the gate can fail" \
+  && bad "a clean gate self-test was read as a skip" \
+  || ok "a clean gate self-test is a pass"
 
 head1 "2. intake: sender check, duplicate, injection"
 bash "$FACTORY/scripts/event.sh" --self-test || bad "event self-test"
@@ -138,6 +155,26 @@ printf '%s\n' "$out" | grep -q "^ok  - an empty gh listing is unknown, never sta
   && ok "the unknown-vs-zero drill ran" || bad "the unknown-vs-zero drill did not run: $out"
 printf '%s\n' "$out" | grep -q "^ok  - a gh read that halves through fails the sweep$" \
   && ok "the failed-read drill ran" || bad "the failed-read drill did not run: $out"
+
+head1 "10. the README documents the bound the gate enforces"
+bound="$(sed -n 's/^SCAN_MAX_BYTES=\([0-9][0-9]*\)$/\1/p' "$FACTORY/gates/gate.sh")"
+if [ -z "$bound" ]; then bad "gate.sh declares no SCAN_MAX_BYTES"
+elif grep -qE "(^|[^0-9])$bound([^0-9]|$)" "$FACTORY/README.md"; then
+  ok "the README names gate.sh's scan bound ($bound bytes)"
+else bad "the README does not name gate.sh's scan bound ($bound bytes)"
+fi
+# GATE SKIP was removed at 61f249c. Documenting it, or omitting it while gate.sh
+# prints it, is a false claim in one direction or the other. The match is the
+# line's own shape (`GATE SKIP [<phase>]`), so prose saying there is none is not
+# read as announcing one.
+if grep -q 'GATE SKIP \[' "$FACTORY/gates/gate.sh"; then
+  grep -q 'GATE SKIP \[' "$FACTORY/README.md" && ok "the README documents the gate's GATE SKIP line" \
+    || bad "gate.sh prints GATE SKIP and the README does not document it"
+else
+  grep -q 'GATE SKIP \[' "$FACTORY/README.md" \
+    && bad "the README documents a GATE SKIP line the gate no longer prints" \
+    || ok "the README advertises no GATE SKIP line the gate does not print"
+fi
 
 echo
 if [ "$FAILED" = 0 ]; then echo "factory self-test: all drills hold"; else echo "factory self-test: $FAILED drill(s) FAILED"; fi
