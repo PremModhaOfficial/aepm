@@ -265,7 +265,11 @@ case "$cmd" in
         echo "$(basename "$t" .md) stage=$st issue=$(fm_get "$t" gh_issue) attempts=$(fm_get "$t" attempts)"
         echo "   next: $(next_action "$st")"
         live="$(fm_get "$t" live_task)"
-        [ -n "$live" ] && echo "   live: $live (task_status before any re-dispatch)"
+        # An `if` whose test fails and which has no `else` still returns 0. The AND
+        # list this replaced returned 1, the loop returned its last body's status,
+        # and bash exited with it: `resume` reported failure whenever the last
+        # listed ticket had no live task (measured at d555886 and at ca6d35a).
+        if [ -n "$live" ]; then echo "   live: $live (task_status before any re-dispatch)"; fi
       done
     else
       echo "(no tickets)"
@@ -345,6 +349,34 @@ case "$cmd" in
       *'T-1'*) echo "self-test FAILED: done is not skipped by resume: $out" >&2; exit 1 ;;
     esac
     okd "done is skipped by write_state and resume, not routed"
+    # The tail of resume's loop body is a status: if its last statement can fail,
+    # the loop, the `if` and bash all return 1. T-1 is re-opened with a live task
+    # so the list carries both branches, and T-2 is filed last with none — the
+    # shape that exited 1 before the guard, and the shape PR 175's all-`done`
+    # assertion cannot reach because `continue` never runs the body.
+    tk stage T-1 queued >/dev/null
+    tk dispatch T-1 builder task-a >/dev/null
+    tk new resume-drill --request 'prove resume status' --scope 'src/' --authority explicit >/dev/null
+    want="mode: $(sed -n 's/^mode: *//p' "$tmp/.factory/config.yml" | head -1 | sed 's/ *#.*//')"
+    want="$want
+T-1 stage=queued issue= attempts=0
+   next: dispatch researcher: bash .factory/scripts/brief.sh <T> researcher
+   live: builder task-a (task_status before any re-dispatch)
+T-2 stage=queued issue= attempts=0
+   next: dispatch researcher: bash .factory/scripts/brief.sh <T> researcher"
+    st=0; out="$(tk resume 2>&1)" || st=$?
+    [ "$st" = 0 ] \
+      || { echo "self-test FAILED: resume exited $st although its last ticket (T-2) has no live task" >&2; exit 1; }
+    [ "$out" = "$want" ] \
+      || { echo "self-test FAILED: resume's list changed. want: $want / got: $out" >&2; exit 1; }
+    okd "resume exits 0 and prints the same list when the last ticket has no live task"
+    st=0; out="$(tk nosuchverb 2>&1)" || st=$?
+    [ "$st" = 2 ] || { echo "self-test FAILED: an unknown subcommand exited $st, not 2" >&2; exit 1; }
+    case "$out" in
+      *"usage: ticket.sh"*) ;;
+      *) echo "self-test FAILED: an unknown subcommand printed no usage line: $out" >&2; exit 1 ;;
+    esac
+    okd "an unknown subcommand still exits 2 with the usage line"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
