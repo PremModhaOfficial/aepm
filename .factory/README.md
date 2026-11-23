@@ -139,6 +139,9 @@ not a sandbox: keep no secrets on disk.
 ## Webhook wiring
 
 `bash .factory/scripts/setup-card.sh` prints the exact T3 scheduled-task values
-(`setup-card.txt`). `scripts/event.sh <payload.json>` is the whole intake: sender
-check, dedupe, injection scan, ticket. `scripts/sweep.sh` is the polling
-fallback for a delivery that never arrived.
+(`setup-card.txt`). `scripts/event.sh <delivery-id> <event-name> <payload.json>`
+is the whole intake: sender check, dedupe, injection scan, ticket. It exits 0 when
+a ticket exists or was updated, 1 on a malformed payload or a failed write, 2 on
+a duplicate delivery, and 3 when the delivery is ignored (an untrusted sender, a
+factory-authored event, or an action that does not trigger). `scripts/sweep.sh` is
+the polling fallback for a delivery that never arrived.
