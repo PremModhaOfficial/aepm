@@ -43,4 +43,4 @@ roles:
   researcher: {model: inherit, thinking: medium, isolation: shared, tools: [read, grep, find, ls, bash, web_search, fetch_content, source_check]}
   planner:    {model: inherit, thinking: high,   isolation: shared, tools: [read, grep, find, ls, bash]}
   builder:    {model: inherit, thinking: high,   isolation: worktree, tools: [read, write, edit, bash, grep, find, ls]}
-  verifier:   {model: inherit, thinking: high,   isolation: shared, fresh_context: true, tools: [read, grep, find, ls, bash]}
+  verifier:   {model: inherit, thinking: high,   isolation: worktree, fresh_context: true, tools: [read, grep, find, ls, bash]}
