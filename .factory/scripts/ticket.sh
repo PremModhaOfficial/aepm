@@ -245,6 +245,15 @@ case "$cmd" in
     t="$TICKETS/${1:?}.md"
     role="${2:?}"
     tid="${3:?}"
+    # A worker's role file refuses anything outside the ticket's scope, so a ticket
+    # with no scope is a mandate nobody can act inside — measured at c2aaf8d, where
+    # dispatch printed `dispatched` for a `scope:` of nothing. Filing with an empty
+    # scope stays legal (the planner fills it in); dispatching on one does not.
+    scope="$(fm_get "$t" scope)"
+    if [ -z "$scope" ]; then
+      echo "REFUSED: $1 has no scope, so no worker could act inside it. Set the mandate: bash .factory/scripts/ticket.sh set $1 scope '<p1,p2>'" >&2
+      exit 2
+    fi
     live="$(fm_get "$t" live_task)"
     if [ -n "$live" ]; then
       echo "REFUSED: $1 already has a live task ($live). task_status it first." >&2
@@ -427,6 +436,40 @@ T-2 stage=queued issue= attempts=0
       *[!A-Za-z0-9._/-]*) echo "self-test FAILED: an untrusted --base reached the front matter: $junk" >&2; exit 1 ;;
     esac
     okd "an untrusted --base cannot carry a metacharacter into the front matter"
+    # A ticket filed with no scope is legal (event.sh files every webhook ticket
+    # that way); dispatching a worker into it is not. Keys on emptiness: a
+    # present-but-short `src/` was measured dispatching and must keep dispatching.
+    st=0; nf="$(tk new noscope --request 'no mandate' --scope '' --authority inferred 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: filing a ticket with an empty scope exited $st" >&2; exit 1; }
+    nid="$(basename "$nf" .md)"
+    [ -z "$(tk get "$nid" scope)" ] || { echo "self-test FAILED: the empty-scope fixture is not empty" >&2; exit 1; }
+    before="$(cksum <"$nf")"
+    st=0; out="$(tk dispatch "$nid" builder task-x 2>&1)" || st=$?
+    [ "$st" = 2 ] \
+      || { echo "self-test FAILED: dispatch accepted a ticket with no scope (exit $st): $out" >&2; exit 1; }
+    case "$out" in *scope*) ;; *) echo "self-test FAILED: the refusal does not name the field: $out" >&2; exit 1 ;; esac
+    case "$out" in *"ticket.sh set"*) ;; *) echo "self-test FAILED: the refusal names no command to fix it: $out" >&2; exit 1 ;; esac
+    [ -z "$(tk get "$nid" live_task)" ] || { echo "self-test FAILED: a refused dispatch wrote live_task" >&2; exit 1; }
+    [ "$(cksum <"$nf")" = "$before" ] || { echo "self-test FAILED: a refused dispatch changed the ticket" >&2; exit 1; }
+    okd "dispatch refuses an empty scope with exit 2, names the field and how to set it, and writes nothing"
+    st=0; sf="$(tk new shortscope --request 'a short mandate' --scope 'src/' --authority explicit 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: filing a short-scope ticket exited $st" >&2; exit 1; }
+    st=0; out="$(tk dispatch "$(basename "$sf" .md)" builder task-s 2>&1)" || st=$?
+    [ "$st" = 0 ] \
+      || { echo "self-test FAILED: a present-but-short scope was refused (exit $st): $out" >&2; exit 1; }
+    okd "a present-but-short scope still dispatches"
+    # The refusal is dispatch's half only: the same ticket still takes every verb.
+    st=0
+    tk get "$nid" scope >/dev/null || st=$?
+    tk set "$nid" live_task "builder task-x" >/dev/null || st=$?
+    tk stage "$nid" building >/dev/null || st=$?
+    tk bump "$nid" >/dev/null || st=$?
+    tk resume >/dev/null || st=$?
+    tk next >/dev/null || st=$?
+    tk done "$nid" task-x >/dev/null || st=$?
+    [ "$st" = 0 ] \
+      || { echo "self-test FAILED: the empty-scope refusal leaked into another verb (exit $st)" >&2; exit 1; }
+    okd "the empty-scope refusal is dispatch's alone: get set stage bump resume next done still exit 0"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
