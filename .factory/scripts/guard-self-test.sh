@@ -134,6 +134,22 @@ const CASES = [
   ["Router lists files", "bash", { command: "ls -la" }, MAIN, false],
   ["Router reads the ticket state", "bash", { command: "cat .factory/state.md" }, MAIN, false],
   ["Router runs the gate", "bash", { command: "bash .factory/gates/gate.sh fast --sha 0000000000000000000000000000000000000000 --ticket-file /home/x/.factory/tickets/T-1.md" }, MAIN, false],
+  // T-32: one row per shape the guard's `bash .factory/scripts/[\w.-]+.sh` rule
+  // admits. The wake path rides that one regex, so a widening of it — or a new
+  // judged-file writer dropped into scripts/ — has to fail a test here rather
+  // than wait for a review to notice. The gate row above covers gates/gate.sh.
+  ["Router runs ticket.sh next", "bash", { command: "bash .factory/scripts/ticket.sh next" }, MAIN, false],
+  ["Router runs sweep.sh", "bash", { command: "bash .factory/scripts/sweep.sh" }, MAIN, false],
+  ["Router runs stop.sh status", "bash", { command: "bash .factory/scripts/stop.sh status" }, MAIN, false],
+  ["Router runs stop.sh resume", "bash", { command: "bash .factory/scripts/stop.sh resume" }, MAIN, false],
+  ["Router runs stop.sh pause", "bash", { command: "bash .factory/scripts/stop.sh pause" }, MAIN, false],
+  ["Router runs brief.sh", "bash", { command: "bash .factory/scripts/brief.sh T-32 builder" }, MAIN, false],
+  ["Router runs event.sh", "bash", { command: "bash .factory/scripts/event.sh /tmp/delivery.json" }, MAIN, false],
+  // The shape admits a name, never a second command: the metacharacter test runs
+  // before the allowlist, so a script path cannot carry a chain behind it. The
+  // payload is `git commit`, which safety.ts does not block — this row rides
+  // router-guard alone, as the `ls && git commit` row does.
+  ["Router chains a factory script with a commit", "bash", { command: "bash .factory/scripts/ticket.sh next; git commit -am x" }, MAIN, true],
   ["Router lists remotes", "bash", { command: "git remote -v" }, MAIN, false],
   ["Router lists branches", "bash", { command: "git branch -a" }, MAIN, false],
   ["Router lists branches verbosely", "bash", { command: "git branch -v" }, MAIN, false],
