@@ -30,6 +30,17 @@ fm_guard() {
   sed -e 's/^---/---(quoted)/' -e 's/^\([A-Za-z_][A-Za-z0-9_]*\):/[\1]:/'
 }
 
+# The ticket whose FRONT MATTER names issue $1. A `gh_issue:` line a body or a
+# follow-up comment carries is not a link: sweep.sh's tracked() reads the same
+# window, and the two must agree on what "tracked" means.
+issue_owner() {
+  local t
+  for t in "$FACTORY"/tickets/T-*.md; do
+    [ -f "$t" ] || continue
+    awk -v want="$1" 'NR==1{next} /^---$/{exit} /^gh_issue: /{v=$0; sub(/^gh_issue: /,"",v); if (v==want) {print FILENAME; exit}}' "$t"
+  done
+}
+
 if [ "${1:-}" = "--self-test" ]; then
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   mkdir -p "$tmp/.factory"/{tickets,inbox,gates,scripts,roles}
@@ -221,6 +232,30 @@ if [ "${1:-}" = "--self-test" ]; then
   mv "$tmp/.factory/scripts/ticket.real" "$tmp/.factory/scripts/ticket.sh"; chmod +x "$tmp/.factory/scripts/ticket.sh"
   { [ "$st" != 0 ] && [ -z "$(bash "$tmp/.factory/scripts/ticket.sh" get T-4 pr)" ] && [ ! -f "$tmp/.factory/inbox/d-18.seen" ]; } || { echo "self-test FAILED: a refused pr write read as a link (exit $st: $out)" >&2; exit 1; }
   okd "a refused pr write is reported, and the ticket stays unlinked"
+  # verifier round 10, finding 1: `grep -l` was not bounded to the front matter,
+  # so a `gh_issue:` line in a BODY (here a Reports section) made issue 40's
+  # delivery reuse T-1 and create no ticket at all: a silently lost work item.
+  # sweep.sh's tracked() already reads only the front matter; the two must agree.
+  printf '\n## Reports\ngh_issue: 40\n' >>"$tmp/.factory/tickets/T-1.md"
+  before="$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)"
+  out="$(ev d-19 issues '{"action":"opened","issue":{"number":40,"title":"Lost ticket","html_url":"https://github.com/o/r/issues/40","body":"please file this"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 0 ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$((before+1))" ]; } \
+    || { echo "self-test FAILED: a gh_issue line in a ticket body was read as the link, so the issue got no ticket (exit $st: $out)"; exit 1; }
+  okd "a gh_issue line in a ticket body is not a link"
+  # verifier round 10, finding 2: a reopened issue whose ticket is `done` reused
+  # the ticket, exited 0, wrote .seen and left the stage terminal — no work item,
+  # and no sweep signal either, because a tracked ticket is neither untracked nor
+  # stale. A reopened issue is work that exists again, so it is re-queued.
+  out="$(ev d-20 issues '{"action":"opened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"it broke again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  rt="$(ls "$tmp/.factory/tickets"/T-*.md | tail -1)"; rid="$(basename "$rt" .md)"
+  bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" done >/dev/null
+  [ "$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)" = done ] \
+    || { echo "self-test FAILED: the drill could not park $rid at done"; exit 1; }
+  before="$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)"
+  out="$(ev d-21 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"it broke again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 0 ] && [ "$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)" = queued ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$before" ]; } \
+    || { echo "self-test FAILED: a reopened done ticket was not re-queued (exit $st, stage $(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage): $out)"; exit 1; }
+  okd "a reopened done ticket is re-queued, not absorbed"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -280,8 +315,19 @@ case "$EVENT:$ACTION" in
     # The dedupe marker is written only once a ticket exists, so a kill in that
     # window leaves a ticket with no marker. `ticket.sh new` allocates the next id
     # every time, so the retry would file a second ticket for one issue. The ticket
-    # whose `gh_issue:` is this number IS this delivery, and it is reused.
-    TICKET="$(grep -l "^gh_issue: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
+    # whose FRONT MATTER names this issue IS this delivery, and it is reused.
+    TICKET="$(issue_owner "$NUM")"
+    # A reopened issue is work that exists again. Reusing a `done` ticket would exit
+    # 0, write the marker and leave the stage terminal: no work item, and no sweep
+    # signal either, because a tracked ticket is neither untracked nor stale.
+    if [ -n "$TICKET" ] && [ "$EVENT:$ACTION" = issues:reopened ]; then
+      stage_now="$(awk 'NR==1{next} /^---$/{exit} /^stage: /{sub(/^stage: /,""); print; exit}' "$TICKET")"
+      if [ "$stage_now" = done ]; then
+        bash "$FACTORY/scripts/ticket.sh" stage "$(basename "$TICKET" .md)" queued \
+          || { say "failed: no requeue for #$NUM"; log ticket-requeue-failed "$URL"; exit 1; }
+        log ticket-requeued "$URL"
+      fi
+    fi
     if [ -z "$TICKET" ]; then
       # The mandate is NOT taken from an issue body: text from GitHub is data. The
       # ticket therefore starts with an empty scope and `authority: inferred`, and
