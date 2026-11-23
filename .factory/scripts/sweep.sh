@@ -11,11 +11,17 @@ REPO="$(sed -n 's/^repo: *//p' "$FACTORY/config.yml" | head -1 | sed 's/[[:space
 JSON=0; [ "${1:-}" = "--json" ] && JSON=1
 
 tracked() { # the front matter only: a `gh_issue:` line a comment appends is not a link
-  local t
+  # Exits non-zero when a ticket path exists but cannot be read, so the caller can
+  # report the baseline as unknown instead of a short list.
+  local t rc=0
   for t in "$FACTORY"/tickets/T-*.md; do
-    [ -f "$t" ] || continue
-    awk 'NR==1{next} /^---$/{exit} /^gh_issue: /{sub(/^gh_issue: /,""); print}' "$t"
-  done | grep -v '^$' | sort -u || true
+    [ -e "$t" ] || continue
+    # A matched path that is not a readable file is an unread ticket, not an absent
+    # one: awk SKIPS a directory with exit 0, so the check has to be made here.
+    [ -f "$t" ] && [ -r "$t" ] || { rc=1; continue; }
+    awk 'NR==1{next} /^---$/{exit} /^gh_issue: /{sub(/^gh_issue: /,""); print}' "$t" || rc=1
+  done
+  return "$rc"
 }
 
 # Does not run against the live repo: it builds a throwaway factory and a stub gh.
@@ -123,6 +129,23 @@ if [ "${1:-}" = "--self-test" ]; then
   out="$(sw)"; cp "$FACTORY/scripts/ticket.sh" "$tmp/factory/scripts/ticket.sh"; chmod +x "$tmp/factory/scripts/ticket.sh"
   printf '%s' "$out" | grep -q '"active_tickets":null,"active_ticket_state":"unknown"' || { echo "self-test FAILED: a failed ticket read was reported as a count: $out" >&2; exit 1; }
   okd "a failed ticket read is unknown, never zero active tickets"
+  # bed2fdf52024: `tracked()` piped through `grep -v … || true`, so a ticket that
+  # could not be read vanished from the baseline and every open issue was reported
+  # untracked with `untracked_issue_state:"known"`. A readable ticket keeps the
+  # baseline non-empty — with none at all the `unknown` state already holds — and a
+  # path the glob matches but awk cannot read (a directory stands in,
+  # deterministically) must make the whole baseline unknown, never a short list.
+  rm -rf "$tmp/factory/tickets"; mkdir -p "$tmp/factory/tickets/T-2.md"
+  printf -- '---\nid: T-1\ngh_issue: 61\nscope: src/\n---\n# T-1\n' >"$tmp/factory/tickets/T-1.md"
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "issue list") printf "61\\topen\\ttracked\\n62\\topen\\tuntracked\\n"; exit 0 ;;\n  "pr list") exit 0 ;;\nesac\nexit 1\n' >"$tmp/bin/gh"
+  chmod +x "$tmp/bin/gh"
+  out="$(sw)"; st=$?
+  [ "$st" = 0 ] || { echo "self-test FAILED: an unreadable ticket file failed the sweep (exit $st: $out)" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"untracked_issue_state":"unknown"' \
+    || { echo "self-test FAILED: an unreadable ticket read as a known baseline: $out" >&2; exit 1; }
+  printf '%s' "$out" | grep -q '"untracked_issues":"#62 ' \
+    && { echo "self-test FAILED: an unreadable ticket left the open issues looking untracked: $out" >&2; exit 1; }
+  okd "an unreadable ticket file makes the baseline unknown, never a list"
   echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -147,14 +170,18 @@ fi
 issues="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="open"{printf "%s\t%s\n", $1, $3}')"
 open_numbers="$(printf '%s\n' "$rows" | awk -F'\t' 'NF{print $1}')"
 
-known="$(tracked)"
+known="$(tracked 2>/dev/null)"; tracked_rc=$?
 new_issues=""
 # The tickets' `gh_issue:` front matter IS the tracked set, so a `factory` label
 # is not what decides this: that label is event.sh's self-event guard, and no
 # issue in this repo carries it. What can be wrong is the baseline — a checkout
 # with no ticket file (tickets/ is gitignored) would call EVERY open issue new.
 untracked_state="known"
-if [ -z "$(printf '%s' "$known" | tr -d '[:space:]')" ]; then
+# A baseline that could not be read is unknown, never a list: a ticket missing from
+# `known` makes every open issue look untracked while the state claims otherwise.
+if [ "${tracked_rc:-1}" != 0 ]; then
+  untracked_state="unknown"
+elif [ -z "$(printf '%s' "$known" | tr -d '[:space:]')" ]; then
   [ -z "$(printf '%s' "$issues" | tr -d '[:space:]')" ] || untracked_state="unknown"
 else
   while IFS=$(printf '\t') read -r n t; do
@@ -167,7 +194,9 @@ fi
 # is not evidence of that: no rows is reported as unknown, never as stale (R8, #4).
 # Staleness is decided against EVERY open issue number, factory-labelled included.
 stale=""; stale_state="known"
-if [ -z "$(printf '%s' "$open_numbers" | tr -d '[:space:]')" ]; then
+if [ "${tracked_rc:-1}" != 0 ]; then
+  stale_state="unknown"   # the same unreadable baseline, so no ticket is called stale
+elif [ -z "$(printf '%s' "$open_numbers" | tr -d '[:space:]')" ]; then
   stale_state="unknown"
 else
   while IFS= read -r n; do
