@@ -10,6 +10,7 @@
 #   ticket.sh done <T-n> <taskId>
 #   ticket.sh bump <T-n>                        attempts += 1
 #   ticket.sh list | resume | next
+#   ticket.sh --self-test                       # prove the stage writer refuses what it cannot route
 set -euo pipefail
 FACTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TICKETS="$FACTORY/tickets"
@@ -17,6 +18,11 @@ STATE="$FACTORY/state.md"
 LEDGER="$FACTORY/ledger.jsonl"
 mkdir -p "$TICKETS"
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# The stages .factory/README.md:46-47 documents. config.yml carries no stage
+# list, so this is the one copy: every writer of `stage:` is checked against it.
+# `done` is here although next_action has no arm for it — it is the terminal
+# state write_state and resume skip, so rejecting it would strand a ticket.
+STAGES="queued researching planning building verifying merging post-merge-watch done blocked failed paused"
 
 ledger() { # <ticket> <role> <event> <detail>
   jq -cn --arg ts "$(now)" --arg ticket "$1" --arg role "$2" --arg event "$3" \
@@ -47,8 +53,22 @@ block_scalar() { # write stdin as an indented block scalar body
 
 # fm_set edits only the front matter, inserting the key before its closing ---
 fm_set() {
-  local f="$1" k="$2" v="$3" tmp
+  local f="$1" k="$2" v="$3" tmp s valid
   v="$(flatten "$v")" # one line: a newline would start a front-matter field
+  # A stage is one of the documented states; validate the flattened value, since
+  # that is what lands. One stage at a time: a substring test over the whole list
+  # accepted any contiguous run of ADJACENT names (`merging post-merge-watch`, or
+  # the entire $STAGES), which lands a value next_action has no arm for — the
+  # stuck ticket this check exists to prevent. Nothing is written or ledgered
+  # before this point, so a refusal leaves the ticket byte-identical.
+  if [ "$k" = stage ]; then
+    valid=""
+    for s in $STAGES; do # unquoted on purpose: one word per stage
+      [ "$v" = "$s" ] || continue
+      valid=1
+    done
+    [ -n "$valid" ] || { echo "unknown stage: $v — one of: $STAGES" >&2; exit 2; }
+  fi
   tmp="$(mktemp)"
   # Through the environment, not `awk -v`: -v interprets backslash escapes, so a
   # value carrying a backslash (`docs\path`) came back as `docspath`.
@@ -255,8 +275,81 @@ case "$cmd" in
     write_state
     cat "$STATE"
     ;;
+  --self-test)
+    # Proves the stage writer refuses what next_action has no arm for. Runs the
+    # COPY in a throwaway .factory, so no drill can touch a real ticket.
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    mkdir -p "$tmp/.factory/scripts" "$tmp/.factory/tickets"
+    cp "$FACTORY/config.yml" "$tmp/.factory/config.yml"
+    cp "$FACTORY/scripts/ticket.sh" "$tmp/.factory/scripts/ticket.sh"
+    # Counted, not typed: a removed drill must not leave a green line that still
+    # claims its number. Same mechanism as gate.sh --self-test.
+    ASSERTIONS="$tmp/assertions"; : >"$ASSERTIONS"
+    okd() { echo . >>"$ASSERTIONS"; echo "ok  - $1"; }
+    tk() { bash "$tmp/.factory/scripts/ticket.sh" "$@"; }
+    tk new drill --request 'prove the stage writer' --scope 'src/' --authority explicit >/dev/null
+    t="$tmp/.factory/tickets/T-1.md"
+    before="$(cksum <"$t")"
+    # `merging post-merge-watch` and `verifying merging` are the values the old
+    # substring test accepted because those names are ADJACENT in $STAGES;
+    # `mergin` was refused then too, so it alone cannot carry this drill.
+    for bad in mergin "merging post-merge-watch" "verifying merging" "$STAGES"; do
+      st=0; out="$(tk stage T-1 "$bad" 2>&1)" || st=$?
+      [ "$st" = 2 ] || { echo "self-test FAILED: stage accepted '$bad' (exit $st: $out)" >&2; exit 1; }
+      [ "$(tk get T-1 stage)" = queued ] || { echo "self-test FAILED: '$bad' reached the front matter" >&2; exit 1; }
+      [ "$(cksum <"$t")" = "$before" ] || { echo "self-test FAILED: refusing '$bad' changed the ticket" >&2; exit 1; }
+      okd "stage refuses '$bad' with exit 2 and leaves the ticket byte-identical"
+    done
+    # The second writer of the same field, reached by `set <T> stage <v>`.
+    st=0; out="$(tk set T-1 stage "verifying merging" 2>&1)" || st=$?
+    [ "$st" = 2 ] || { echo "self-test FAILED: set wrote a value the stage writer refuses (exit $st: $out)" >&2; exit 1; }
+    [ "$(cksum <"$t")" = "$before" ] || { echo "self-test FAILED: a refused set changed the ticket" >&2; exit 1; }
+    okd "set is refused the same value the stage verb refuses"
+    st=0; tk stage T-1 building >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] && [ "$(tk get T-1 stage)" = building ] \
+      || { echo "self-test FAILED: a documented stage was refused (exit $st)" >&2; exit 1; }
+    okd "a documented stage is still accepted"
+    st=0; tk stage T-1 done >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] && [ "$(tk get T-1 stage)" = done ] \
+      || { echo "self-test FAILED: done is unreachable, stranding every finished ticket (exit $st)" >&2; exit 1; }
+    okd "done stays reachable"
+    # Every accepted value but `done` must route to a named next action, or
+    # `resume` prints "inspect the ticket" with no way back. Assert the ROW that
+    # names the stage, not the absence of a string: `grep -q` also exits 2 on a
+    # state.md that was never written, and an `if grep` on that is false for
+    # every stage, so the drill would pass without proving anything.
+    state="$tmp/.factory/state.md"
+    for s in $STAGES; do # unquoted on purpose: one word per stage
+      [ "$s" = done ] && continue # the terminal skip is proven below, not here
+      tk stage T-1 "$s" >/dev/null
+      [ -f "$state" ] || { echo "self-test FAILED: stage '$s' wrote no $state" >&2; exit 1; }
+      tk next >/dev/null
+      row="$(grep -F '| T-1 |' "$state")" || row=""
+      case "$row" in
+        "") echo "self-test FAILED: stage '$s' left no state row to route" >&2; exit 1 ;;
+        *'inspect the ticket'*) echo "self-test FAILED: stage '$s' has no next_action arm" >&2; exit 1 ;;
+      esac
+    done
+    okd "every accepted stage but done routes to a named next action"
+    # `done` is accepted although next_action has no arm: write_state and resume
+    # skip it as the terminal state. Prove that skip, since there is no row to grep.
+    tk stage T-1 done >/dev/null
+    [ -f "$state" ] || { echo "self-test FAILED: stage 'done' wrote no $state" >&2; exit 1; }
+    tk next >/dev/null
+    if grep -qF '| T-1 |' "$state"; then
+      echo "self-test FAILED: done is not skipped by write_state" >&2; exit 1
+    fi
+    st=0; out="$(tk resume 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: resume on a done ticket exited $st: $out" >&2; exit 1; }
+    case "$out" in
+      *'T-1'*) echo "self-test FAILED: done is not skipped by resume: $out" >&2; exit 1 ;;
+    esac
+    okd "done is skipped by write_state and resume, not routed"
+    echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
+    exit 0
+    ;;
   *)
-    echo "usage: ticket.sh new|get|set|stage|dispatch|done|bump|list|resume|next" >&2
+    echo "usage: ticket.sh new|get|set|stage|dispatch|done|bump|list|resume|next|--self-test" >&2
     exit 2
     ;;
 esac
