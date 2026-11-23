@@ -54,6 +54,12 @@ block_scalar() { # write stdin as an indented block scalar body
 # fm_set edits only the front matter, inserting the key before its closing ---
 fm_set() {
   local f="$1" k="$2" v="$3" tmp s valid
+  # `key:` is a field name, not data. A two-word key was measured writing
+  # `original_request  Th: …` and exiting 0, which is a colon-less line every
+  # later reader sees as an empty field, so the key is checked before any write.
+  case "$k" in
+    ''|*[!A-Za-z0-9_]*) echo "$k is not a front-matter field name ([A-Za-z0-9_]); nothing was written" >&2; exit 2 ;;
+  esac
   v="$(flatten "$v")" # one line: a newline would start a front-matter field
   # A stage is one of the documented states; validate the flattened value, since
   # that is what lands. One stage at a time: a substring test over the whole list
@@ -69,7 +75,11 @@ fm_set() {
     done
     [ -n "$valid" ] || { echo "unknown stage: $v — one of: $STAGES" >&2; exit 2; }
   fi
-  tmp="$(mktemp)"
+  # Same directory as the target, so the final mv is rename(2) and not a
+  # cross-device copy: `/tmp` is another device than the ticket dir (measured
+  # 57 vs 54), and a copy killed mid-way leaves a truncated ticket. A bare
+  # mktemp also honours TMPDIR, so an unreadable TMPDIR failed every write.
+  tmp="$(mktemp "$TICKETS/.tmp.XXXXXX")"
   # Through the environment, not `awk -v`: -v interprets backslash escapes, so a
   # value carrying a backslash (`docs\path`) came back as `docspath`.
   FM_K="$k" FM_V="$v" awk '
@@ -100,6 +110,9 @@ next_action() {
 }
 
 write_state() {
+  local tmp
+  # rename(2) in one directory, for the reason fm_set's temp gives above.
+  tmp="$(mktemp "$FACTORY/.state.tmp.XXXXXX")"
   {
     echo "# .factory/state.md — rewritten by ticket.sh on every stage change."
     echo "# Read this first after a restart, crash or compaction. Files are truth."
@@ -119,7 +132,8 @@ write_state() {
     else
       echo "| (none) | - | - | - | - | file a ticket: ticket.sh new ... |"
     fi
-  } >"$STATE"
+  } >"$tmp"
+  mv "$tmp" "$STATE"
 }
 
 cmd="${1:-}"
@@ -151,13 +165,22 @@ case "$cmd" in
     # whitespace, which is what router-guard refuses on shape.
     base="$(flatten "$base" | tr -cd 'A-Za-z0-9._/-')"
     case "$authority" in explicit|inferred) ;; *) echo "--authority explicit|inferred" >&2; exit 2 ;; esac
-    last=0
-    if compgen -G "$TICKETS/T-*.md" >/dev/null; then
-      last=$(ls "$TICKETS"/T-*.md | sed 's/.*\/T-//; s/\.md$//' | sort -n | tail -1)
-    fi
-    id="T-$((last + 1))"
-    file="$TICKETS/$id.md"
-    {
+    # The id is derived from a listing, so two concurrent calls can pick the same
+    # one — measured in 2 of 12 runs, and the second `>` truncated the first, which
+    # is the splice shape T-28 was found in. noclobber makes the whole body one
+    # O_EXCL create, so a collision fails instead of overwriting, and the loop
+    # re-derives. The shell's own `File exists` line is left on stderr: silencing
+    # it would silence a real write error too. `set -e` does not fire on a failing
+    # redirection inside the `if` list.
+    tries=0
+    while :; do
+      last=0
+      if compgen -G "$TICKETS/T-*.md" >/dev/null; then
+        last=$(ls "$TICKETS"/T-*.md | sed 's/.*\/T-//; s/\.md$//' | sort -n | tail -1)
+      fi
+      id="T-$((last + 1))"
+      file="$TICKETS/$id.md"
+      if ( set -o noclobber; {
       echo "---"
       echo "id: $id"
       echo "slug: $slug"
@@ -213,7 +236,10 @@ case "$cmd" in
       echo
       echo "## Injection log"
       echo
-    } >"$file"
+      } >"$file" ); then break; fi
+      tries=$((tries + 1))
+      [ "$tries" -lt 20 ] || { echo "new: no id could be reserved after 20 tries" >&2; exit 1; }
+    done
     ledger "$id" router ticket-created "authority=$authority scope=$scope issue=$issue"
     write_state
     echo "$file"
@@ -558,6 +584,157 @@ T-2 stage=queued issue= attempts=0
       || { echo "self-test FAILED: --stale on a ticket with no live task exited $st, not 2" >&2; exit 1; }
     [ "$(cksum <"$sf")" = "$before" ] || { echo "self-test FAILED: a --stale with nothing to replace changed the ticket" >&2; exit 1; }
     okd "--stale with no live task to replace is refused and writes nothing"
+    # --- the writers ---
+    # `new` must not truncate a ticket that already holds an id it derived. This is
+    # the sequential half: the derived id is the highest + 1, so the file it must
+    # leave alone is the one it would have written next.
+    last=$(ls "$tmp/.factory/tickets"/T-*.md | sed 's/.*\/T-//; s/\.md$//' | sort -n | tail -1)
+    coll="T-$((last + 1))"
+    printf 'keep\n' >"$tmp/.factory/tickets/$coll.md"
+    c0="$(cksum <"$tmp/.factory/tickets/$coll.md")"
+    st=0; f="$(tk new race --request 'prove the exclusive create' --scope 'src/' --authority explicit 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: new beside an occupied id exited $st: $f" >&2; exit 1; }
+    [ "$(cksum <"$tmp/.factory/tickets/$coll.md")" = "$c0" ] \
+      || { echo "self-test FAILED: new truncated an existing ticket file ($coll)" >&2; exit 1; }
+    [ "$(basename "$f" .md)" = "T-$((last + 2))" ] \
+      || { echo "self-test FAILED: new did not land on the next free id: $f" >&2; exit 1; }
+    [ "$(grep -c '^## Scope (the mandate)' "$f")" = 1 ] \
+      || { echo "self-test FAILED: a ticket landed with a spliced body" >&2; exit 1; }
+    [ "$(jq -r 'select(.event=="ticket-created") | .ticket' "$tmp/.factory/ledger.jsonl" | grep -cFx "$(basename "$f" .md)")" = 1 ] \
+      || { echo "self-test FAILED: a ticket landed without exactly one ticket-created row" >&2; exit 1; }
+    okd "new leaves an existing ticket byte-identical and lands on the next free id"
+    # The same property where it is decided: with the tickets dir unreadable, the id
+    # listing returns nothing, so the target is an id that already exists. `>` would
+    # truncate it and exit 0 (measured: 5 bytes became 746); noclobber refuses, the
+    # loop exhausts, and the existing ticket is byte-identical. Exit 1 is right here:
+    # a listing it cannot read is a refusal, not an empty ticket set.
+    keep="$tmp/.factory/tickets/$coll.md"
+    c0="$(cksum <"$keep")"
+    c1="$(cksum <"$tmp/.factory/tickets/T-1.md")" # the id a blind listing derives
+    chmod 0300 "$tmp/.factory/tickets"
+    st=0; out="$(tk new blind --request 'prove the exclusive create' --scope 'src/' --authority explicit 2>&1)" || st=$?
+    chmod 0700 "$tmp/.factory/tickets"
+    [ "$(cksum <"$tmp/.factory/tickets/T-1.md")" = "$c1" ] \
+      || { echo "self-test FAILED: new truncated T-1.md when it could not read the ids" >&2; exit 1; }
+    [ "$(cksum <"$keep")" = "$c0" ] \
+      || { echo "self-test FAILED: new truncated $coll.md when it could not read the ids" >&2; exit 1; }
+    [ "$st" = 1 ] \
+      || { echo "self-test FAILED: new exited $st on an id it could not see; a truncating write exits 0, so only a refusal is safe: $out" >&2; exit 1; }
+    okd "an unresolvable id collision refuses and writes nothing instead of truncating"
+    # 8 concurrent `new` calls: no loss, no spliced body, one ledger row per id. This
+    # asserts the outcome and is NOT the mechanism proof — the two drills above are,
+    # because this shape was measured intermittent (2 of 12 runs) before the fix.
+    n0=$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)
+    pids=""
+    for i in 1 2 3 4 5 6 7 8; do
+      tk new "race$i" --request 'r' --scope 'src/' --authority explicit >/dev/null 2>&1 &
+      pids="$pids $!"
+    done
+    for p in $pids; do wait "$p" || { echo "self-test FAILED: a concurrent new failed" >&2; exit 1; }; done
+    n1=$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)
+    [ "$((n1 - n0))" = 8 ] || { echo "self-test FAILED: 8 concurrent new calls produced $((n1 - n0)) files" >&2; exit 1; }
+    for i in 1 2 3 4 5 6 7 8; do
+      m="$(grep -l "^slug: race$i$" "$tmp/.factory/tickets"/T-*.md)" || m=""
+      [ -n "$m" ] || { echo "self-test FAILED: race$i landed nowhere" >&2; exit 1; }
+      [ "$(grep -c '^## Scope (the mandate)' "$m")" = 1 ] \
+        || { echo "self-test FAILED: race$i's body was spliced or duplicated" >&2; exit 1; }
+      [ "$(jq -r 'select(.event=="ticket-created") | .ticket' "$tmp/.factory/ledger.jsonl" | grep -cFx "$(basename "$m" .md)")" = 1 ] \
+        || { echo "self-test FAILED: race$i did not get exactly one ticket-created row" >&2; exit 1; }
+    done
+    okd "8 concurrent new calls lose nothing: one file, one heading and one ledger row each"
+    # A temp in /tmp is honoured by a bare mktemp, so an unreadable TMPDIR failed
+    # every write; in the target's own directory it is not consulted at all. Also
+    # the rename(2) half: /tmp is another device than the ticket dir (57 vs 54).
+    c0="$(cksum <"$tmp/.factory/tickets/T-1.md")"
+    st=0; TMPDIR=/nonexistent tk set T-1 attempts 3 >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: a write with an unreadable TMPDIR exited $st" >&2; exit 1; }
+    [ "$(cksum <"$tmp/.factory/tickets/T-1.md")" != "$c0" ] \
+      || { echo "self-test FAILED: the TMPDIR drill changed nothing, so it proves nothing" >&2; exit 1; }
+    okd "a write ignores TMPDIR and lands in the target's own directory"
+    # A two-word key was measured writing `original_request  Th: …` and exiting 0.
+    c0="$(cksum <"$tmp/.factory/tickets/T-1.md")"
+    st=0; out="$(tk set T-1 'original_request  Th' x 2>&1)" || st=$?
+    [ "$st" = 2 ] || { echo "self-test FAILED: a field name with a space exited $st: $out" >&2; exit 1; }
+    [ "$(cksum <"$tmp/.factory/tickets/T-1.md")" = "$c0" ] \
+      || { echo "self-test FAILED: a refused field name changed the ticket" >&2; exit 1; }
+    st=0; tk set T-1 original_request x >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: a real field name was refused (exit $st)" >&2; exit 1; }
+    okd "a field name outside [A-Za-z0-9_] is refused before any write; a real key still sets"
+    # The sweep: no verb may truncate or splice a ticket in the shapes real tickets
+    # carry. It proves that and nothing more — T-15's 0 bytes is NOT explained here.
+    keys() { sed -n '2,/^---$/p' "$1" | sed -n 's/^\([A-Za-z0-9_]*\):.*/\1/p' | sort | tr '\n' ' '; }
+    heads() { grep -n '^## ' "$1"; }
+    cat >"$tmp/.factory/tickets/T-90.md" <<'T15'
+---
+id: T-90
+slug: t15shape
+gh_issue:
+original_request: |
+  Triage the unexplained 0-byte ticket write.
+scope: .factory/scripts/,src/
+authority: inferred
+base: d915c6dc262d1ec118201117728fd46319cdbd7a
+stage: queued
+task_ids: researcher=task-0123456789abcdef;planner=task-fedcba9876543210;builder=task-0011223344556677;verifier=task-8899aabbccddeeff;
+live_task:
+worktree:
+attempts: 0
+research_refs: .factory/research/x.md
+verdict:
+created: 2026-11-01T00:00:00Z
+park_reason: "queued behind PR 175, which owns .factory/scripts/ticket.sh until it merges; dispatching now would put two builders on one file."
+---
+
+# T-90 — t15shape
+
+## Scope (the mandate)
+
+## Plan
+
+## Injection log
+T15
+    cat >"$tmp/.factory/tickets/T-91.md" <<'T28'
+---
+id: T-91
+slug: t28shape
+gh_issue:
+original_request  Th  Triage the threads.
+scope: .factory/research/
+authority: inferred
+stage: queued
+task_ids:
+live_task:
+worktree:
+attempts: 0
+created: 2026-11-01T00:00:00Z
+---
+
+# T-91 — t28shape
+
+## Injection log
+
+## Scope
+
+- [ ] a foreign block, preserved verbatim
+T28
+    for shp in T-90 T-91; do
+      f="$tmp/.factory/tickets/$shp.md"
+      k0="$(keys "$f")"; h0="$(heads "$f")"
+      for v in "set $shp attempts 1" "stage $shp planning" "dispatch $shp builder task-sweep" \
+               "done $shp task-sweep" "bump $shp" "resume" "next" "get $shp stage" \
+               "set $shp stage queued"; do
+        st=0; tk $v >/dev/null 2>&1 || st=$?
+        [ "$st" = 0 ] || { echo "self-test FAILED: '$v' exited $st on the $shp shape" >&2; exit 1; }
+        [ "$(wc -c <"$f")" -gt 0 ] || { echo "self-test FAILED: '$v' left $shp at 0 bytes" >&2; exit 1; }
+        [ "$(keys "$f")" = "$k0" ] || { echo "self-test FAILED: '$v' changed $shp's front-matter key set" >&2; exit 1; }
+        [ "$(heads "$f")" = "$h0" ] || { echo "self-test FAILED: '$v' changed $shp's section headings" >&2; exit 1; }
+      done
+      okd "nine verbs leave the $shp shape non-empty, with its key set and headings unchanged"
+    done
+    if compgen -G "$tmp/.factory/tickets/.tmp.*" >/dev/null || compgen -G "$tmp/.factory/.state.tmp.*" >/dev/null; then
+      echo "self-test FAILED: a temporary file was left behind" >&2; exit 1
+    fi
+    okd "no temporary file is left in the tickets dir or the factory root"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
