@@ -313,16 +313,38 @@ case "$cmd" in
     [ "$st" = 0 ] && [ "$(tk get T-1 stage)" = done ] \
       || { echo "self-test FAILED: done is unreachable, stranding every finished ticket (exit $st)" >&2; exit 1; }
     okd "done stays reachable"
-    # Every accepted value must have a next_action arm, or `resume` prints
-    # "inspect the ticket" with no way back.
+    # Every accepted value but `done` must route to a named next action, or
+    # `resume` prints "inspect the ticket" with no way back. Assert the ROW that
+    # names the stage, not the absence of a string: `grep -q` also exits 2 on a
+    # state.md that was never written, and an `if grep` on that is false for
+    # every stage, so the drill would pass without proving anything.
+    state="$tmp/.factory/state.md"
     for s in $STAGES; do # unquoted on purpose: one word per stage
+      [ "$s" = done ] && continue # the terminal skip is proven below, not here
       tk stage T-1 "$s" >/dev/null
+      [ -f "$state" ] || { echo "self-test FAILED: stage '$s' wrote no $state" >&2; exit 1; }
       tk next >/dev/null
-      if grep -q 'inspect the ticket' "$tmp/.factory/state.md"; then
-        echo "self-test FAILED: stage '$s' has no next_action arm" >&2; exit 1
-      fi
+      row="$(grep -F '| T-1 |' "$state")" || row=""
+      case "$row" in
+        "") echo "self-test FAILED: stage '$s' left no state row to route" >&2; exit 1 ;;
+        *'inspect the ticket'*) echo "self-test FAILED: stage '$s' has no next_action arm" >&2; exit 1 ;;
+      esac
     done
-    okd "every accepted stage has a next_action arm"
+    okd "every accepted stage but done routes to a named next action"
+    # `done` is accepted although next_action has no arm: write_state and resume
+    # skip it as the terminal state. Prove that skip, since there is no row to grep.
+    tk stage T-1 done >/dev/null
+    [ -f "$state" ] || { echo "self-test FAILED: stage 'done' wrote no $state" >&2; exit 1; }
+    tk next >/dev/null
+    if grep -qF '| T-1 |' "$state"; then
+      echo "self-test FAILED: done is not skipped by write_state" >&2; exit 1
+    fi
+    st=0; out="$(tk resume 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: resume on a done ticket exited $st: $out" >&2; exit 1; }
+    case "$out" in
+      *'T-1'*) echo "self-test FAILED: done is not skipped by resume: $out" >&2; exit 1 ;;
+    esac
+    okd "done is skipped by write_state and resume, not routed"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
