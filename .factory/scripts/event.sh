@@ -242,20 +242,47 @@ if [ "${1:-}" = "--self-test" ]; then
   { [ "$st" = 0 ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$((before+1))" ]; } \
     || { echo "self-test FAILED: a gh_issue line in a ticket body was read as the link, so the issue got no ticket (exit $st: $out)"; exit 1; }
   okd "a gh_issue line in a ticket body is not a link"
-  # verifier round 10, finding 2: a reopened issue whose ticket is `done` reused
-  # the ticket, exited 0, wrote .seen and left the stage terminal — no work item,
-  # and no sweep signal either, because a tracked ticket is neither untracked nor
-  # stale. A reopened issue is work that exists again, so it is re-queued.
+  # verifier round 10, finding 2: a reopened issue whose reused ticket is terminal
+  # was absorbed: exit 0, marker written, stage terminal, and no sweep signal either,
+  # because a tracked ticket is neither untracked nor stale. The stage resets AND the
+  # mandate does: a scope widened for the last round is not authority for this one.
   out="$(ev d-20 issues '{"action":"opened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"it broke again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
-  rt="$(ls "$tmp/.factory/tickets"/T-*.md | tail -1)"; rid="$(basename "$rt" .md)"
+  rid="$(bash "$tmp/.factory/scripts/ticket.sh" list | sort -V | tail -1)"
   bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" done >/dev/null
-  [ "$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)" = done ] \
-    || { echo "self-test FAILED: the drill could not park $rid at done"; exit 1; }
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" scope "src/a.rs,src/b.rs" >/dev/null
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" authority explicit >/dev/null
   before="$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)"
   out="$(ev d-21 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"it broke again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
-  { [ "$st" = 0 ] && [ "$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)" = queued ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$before" ]; } \
-    || { echo "self-test FAILED: a reopened done ticket was not re-queued (exit $st, stage $(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage): $out)"; exit 1; }
-  okd "a reopened done ticket is re-queued, not absorbed"
+  stg="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)"; sc="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" scope)"; au="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" authority)"
+  { [ "$st" = 0 ] && [ "$stg" = queued ] && [ -z "$sc" ] && [ "$au" = inferred ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$before" ]; } \
+    || { echo "self-test FAILED: a reopened done ticket was not re-queued with a fresh mandate (exit $st, stage '$stg', scope '$sc', authority '$au': $out)"; exit 1; }
+  okd "a reopened done ticket is re-queued with a fresh mandate"
+  # `post-merge-watch` is terminal too: a reopen is evidence the merged fix did not
+  # hold, so it re-enters the ladder exactly like done.
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" scope "src/c.rs" >/dev/null
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" authority explicit >/dev/null
+  bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" post-merge-watch >/dev/null
+  out="$(ev d-22 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"still broken"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  stg="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)"; sc="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" scope)"
+  { [ "$st" = 0 ] && [ "$stg" = queued ] && [ -z "$sc" ]; } \
+    || { echo "self-test FAILED: a reopened post-merge-watch ticket was not re-queued (exit $st, stage '$stg', scope '$sc': $out)"; exit 1; }
+  okd "a reopened post-merge-watch ticket is re-queued too"
+  # A reopen does not lift a scope refusal or exhausted retries, so blocked stays.
+  # It is ledgered instead: a blocked ticket collecting reopens is discoverable.
+  bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" blocked >/dev/null
+  out="$(ev d-23 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  stg="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)"
+  { [ "$st" = 0 ] && [ "$stg" = blocked ] && grep -q 'ticket-reopen-blocked' "$tmp/.factory/ledger.jsonl"; } \
+    || { echo "self-test FAILED: a reopened blocked ticket was not kept and ledgered (exit $st, stage '$stg': $out)"; exit 1; }
+  okd "a reopened blocked ticket keeps its stage and is ledgered, not swallowed"
+  # A stage that cannot be read is a refusal, not "not terminal": the marker stays
+  # unwritten so the delivery is retried, instead of the issue being absorbed.
+  sed -i.bak '/^stage: /d' "$tmp/.factory/tickets/$rid.md"
+  out="$(ev d-24 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" != 0 ] && [ ! -f "$tmp/.factory/inbox/d-24.seen" ]; } \
+    || { echo "self-test FAILED: a ticket with no readable stage absorbed the reopen (exit $st: $out)"; exit 1; }
+  mv "$tmp/.factory/tickets/$rid.md.bak" "$tmp/.factory/tickets/$rid.md"
+  okd "a ticket with no readable stage refuses the reopen instead of absorbing it"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -317,16 +344,41 @@ case "$EVENT:$ACTION" in
     # every time, so the retry would file a second ticket for one issue. The ticket
     # whose FRONT MATTER names this issue IS this delivery, and it is reused.
     TICKET="$(issue_owner "$NUM")"
-    # A reopened issue is work that exists again. Reusing a `done` ticket would exit
-    # 0, write the marker and leave the stage terminal: no work item, and no sweep
-    # signal either, because a tracked ticket is neither untracked nor stale.
+    # A reopened issue is work that exists again. Reusing a terminal ticket would
+    # exit 0, write the marker and leave the stage terminal: no work item, and no
+    # sweep signal either, because a tracked ticket is neither untracked nor stale.
+    # `post-merge-watch` is terminal the same way: a reopen is evidence the merged
+    # fix did not hold. `blocked` stays blocked — a reopen does not lift a scope
+    # refusal or exhausted retries, that is the Router's or a human's call — but the
+    # reopen is ledgered so a blocked ticket that keeps collecting them is
+    # discoverable. `failed` and `paused` keep their stage by decision; no semantics
+    # are invented for a stage the router did not name.
     if [ -n "$TICKET" ] && [ "$EVENT:$ACTION" = issues:reopened ]; then
-      stage_now="$(awk 'NR==1{next} /^---$/{exit} /^stage: /{sub(/^stage: /,""); print; exit}' "$TICKET")"
-      if [ "$stage_now" = done ]; then
-        bash "$FACTORY/scripts/ticket.sh" stage "$(basename "$TICKET" .md)" queued \
-          || { say "failed: no requeue for #$NUM"; log ticket-requeue-failed "$URL"; exit 1; }
-        log ticket-requeued "$URL"
-      fi
+      tid="$(basename "$TICKET" .md)"
+      # Through ticket.sh, not an awk one-liner: a stage that cannot be read is a
+      # refusal, never "not terminal", so the issue cannot be absorbed in silence.
+      stage_now="$(bash "$FACTORY/scripts/ticket.sh" get "$tid" stage)" \
+        || { say "failed: no stage read for $tid"; log ticket-stage-unread "$URL"; exit 1; }
+      case "$stage_now" in
+        '')
+          say "failed: $tid has no readable stage"
+          log ticket-stage-unreadable "$URL"; exit 1 ;;
+        done|post-merge-watch)
+          # The stage resets, and so does the mandate: a scope widened for the
+          # previous round is not authority for this one. Empty scope plus
+          # `authority: inferred` is the state a new ticket starts in, and the
+          # planner re-derives both before a builder runs.
+          bash "$FACTORY/scripts/ticket.sh" stage "$tid" queued \
+            || { say "failed: no requeue for #$NUM"; log ticket-requeue-failed "$URL"; exit 1; }
+          bash "$FACTORY/scripts/ticket.sh" set "$tid" scope "" \
+            || { say "failed: no scope reset for $tid"; log ticket-scope-reset-failed "$URL"; exit 1; }
+          bash "$FACTORY/scripts/ticket.sh" set "$tid" authority inferred \
+            || { say "failed: no authority reset for $tid"; log ticket-authority-reset-failed "$URL"; exit 1; }
+          log ticket-requeued "$URL" ;;
+        blocked)
+          say "recorded: #$NUM reopened while $tid is blocked (stage untouched)"
+          log ticket-reopen-blocked "$URL" ;;
+      esac
     fi
     if [ -z "$TICKET" ]; then
       # The mandate is NOT taken from an issue body: text from GitHub is data. The
