@@ -30,16 +30,34 @@ fm_guard() {
   sed -e 's/^---/---(quoted)/' -e 's/^\([A-Za-z_][A-Za-z0-9_]*\):/[\1]:/'
 }
 
-# The ticket whose FRONT MATTER names issue $1. A `gh_issue:` line a body or a
-# follow-up comment carries is not a link: sweep.sh's tracked() reads the same
-# window, and the two must agree on what "tracked" means.
-issue_owner() {
-  local t
+# The ticket whose FRONT MATTER sets $1 to $2. Only the front matter: a
+# `gh_issue:` or `pr:` line a body or a follow-up comment carries is not a link.
+# sweep.sh's tracked() reads the same window, and the two must agree on what
+# "tracked" means — so every branch reads it through this one function.
+#
+# Exits non-zero when a matched path exists but cannot be read and no ticket
+# claims the value. An unread store is a refusal, never "no ticket": the create
+# branch treats "no owner" as permission to allocate, and a ticket that exists
+# but cannot be read is the owner of some issue, possibly this one.
+#
+# `-L`: a broken symlink the glob matches is not `-e`, and skipping it made an
+# unreadable store read as absent (the same bug sweep.sh's tracked() carried).
+# `-e` still covers the unmatched glob, which is a literal path here.
+fm_owner() {
+  local key="$1" want="$2" t v rc=0
   for t in "$FACTORY"/tickets/T-*.md; do
-    [ -f "$t" ] || continue
-    awk -v want="$1" 'NR==1{next} /^---$/{exit} /^gh_issue: /{v=$0; sub(/^gh_issue: /,"",v); if (v==want) {print FILENAME; exit}}' "$t"
+    [ -e "$t" ] || [ -L "$t" ] || continue
+    # A matched path that is not a readable file is an unread ticket, not an absent
+    # one: awk SKIPS a directory with exit 0, so the check has to be made here.
+    [ -f "$t" ] && [ -r "$t" ] || { rc=1; continue; }
+    v="$(awk -v k="$key" -v want="$want" 'NR==1{next} /^---$/{exit} $0 ~ "^" k ": " {v=$0; sub("^" k ": ","",v); if (v==want) print FILENAME}' "$t")" || { rc=1; continue; }
+    [ -n "$v" ] || continue
+    printf '%s\n' "$v"
+    return 0
   done
+  return "$rc"
 }
+issue_owner() { fm_owner gh_issue "$1"; }
 
 if [ "${1:-}" = "--self-test" ]; then
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -283,6 +301,70 @@ if [ "${1:-}" = "--self-test" ]; then
     || { echo "self-test FAILED: a ticket with no readable stage absorbed the reopen (exit $st: $out)"; exit 1; }
   mv "$tmp/.factory/tickets/$rid.md.bak" "$tmp/.factory/tickets/$rid.md"
   okd "a ticket with no readable stage refuses the reopen instead of absorbing it"
+  # Round-13 defect 2, review of 6a88b5f0: `failed` and `paused` are live stages
+  # (ticket.sh:25) and fell through the reopened case entirely — marker written,
+  # exit 0, no ledger line, so the reopen was indistinguishable from a handled one
+  # and undiscoverable. They keep their stage by decision; the line is the record.
+  for keep in failed paused; do
+    bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" "$keep" >/dev/null
+    out="$(ev "d-25-$keep" issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+    stg="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)"
+    { [ "$st" = 0 ] && [ "$stg" = "$keep" ] && grep -q "ticket-reopen-kept-$keep" "$tmp/.factory/ledger.jsonl"; } \
+      || { echo "self-test FAILED: a reopened $keep ticket kept its stage with no ledger line (exit $st, stage '$stg': $out)"; exit 1; }
+  done
+  okd "a reopened failed or paused ticket keeps its stage and is ledgered"
+  # Round-13 defect 3, review of 6a88b5f0: issue_owner() tested `[ -f ]` only and
+  # let awk fail, so an existing-but-unreadable ticket read as "no owner" and the
+  # issue got a SECOND ticket. An unread store is a refusal — no ticket, no marker,
+  # so GitHub retries. A broken symlink is the fixture the glob matches and nothing
+  # can read, at any uid: `-f` is false for it, so the old check skipped it as
+  # absent. (Not a directory: `ls` prints a directory argument's header, which
+  # breaks ticket.sh's own id scan and would hide the second ticket.)
+  ln -s /nonexistent/T-90.md "$tmp/.factory/tickets/T-90.md"
+  before="$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)"
+  out="$(ev d-26 issues '{"action":"opened","issue":{"number":50,"title":"Still open","html_url":"https://github.com/o/r/issues/50","body":"please file this"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" != 0 ] && [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$before" ] && [ ! -f "$tmp/.factory/inbox/d-26.seen" ]; } \
+    || { echo "self-test FAILED: an unreadable ticket read as no owner and the issue got a second ticket (exit $st: $out)"; exit 1; }
+  rm -f "$tmp/.factory/tickets/T-90.md"
+  okd "an unreadable ticket refuses the delivery instead of filing a duplicate"
+  # Round-13 defect 1: the comment branch still matched the WHOLE file with `grep
+  # -l`, the unbounded shape issue_owner() removed one branch up. A ticket body line
+  # absorbed a comment for issue 43 onto T-1 at exit 0. Front matter only now, and
+  # the delivery is refused by name instead of landing on the wrong ticket.
+  printf '\n## Reports\ngh_issue: 43\n' >>"$tmp/.factory/tickets/T-1.md"
+  c1="$(cat "$tmp/.factory/tickets/T-1.md")"
+  out="$(ev d-27 issue_comment '{"action":"created","issue":{"number":43},"comment":{"body":"DECOY-COMMENT","html_url":"https://github.com/o/r/issues/43#issuecomment-5"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 3 ] && [ "$c1" = "$(cat "$tmp/.factory/tickets/T-1.md")" ]; } \
+    || { echo "self-test FAILED: a gh_issue line in a ticket body absorbed a comment for another issue (exit $st: $out)"; exit 1; }
+  grep -q 'DECOY-COMMENT' "$tmp/.factory/tickets/T-1.md" \
+    && { echo "self-test FAILED: the comment was appended to the body-matched ticket"; exit 1; }
+  okd "a gh_issue line in a ticket body does not absorb a comment"
+  # Round-13 defect 6: the same unbounded match on `pr:`, pre-existing. A body line
+  # made a PR delivery link to the ticket carrying it, exit 0, instead of exiting 3
+  # as an orphan.
+  printf '\n## Reports\npr: 27\n' >>"$tmp/.factory/tickets/T-1.md"
+  p1="$(cat "$tmp/.factory/tickets/T-1.md")"
+  out="$(ev d-28 pull_request '{"action":"opened","pull_request":{"number":27,"html_url":"https://github.com/o/r/pull/27","title":"no ticket here","body":"just a change"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  { [ "$st" = 3 ] && [ "$p1" = "$(cat "$tmp/.factory/tickets/T-1.md")" ]; } \
+    || { echo "self-test FAILED: a pr line in a ticket body absorbed a PR delivery (exit $st: $out)"; exit 1; }
+  okd "a pr line in a ticket body does not absorb a PR delivery"
+  # Round-13 defect 5: the requeue was three separate calls with the STAGE first, so
+  # a failure at `set scope` left a non-terminal ticket behind. The retry then found
+  # nothing to do, wrote the marker, and a mandate widened for the last round was
+  # judged handled. The stage move is last now, so a failed step leaves the ticket
+  # terminal and the retry repeats every step: still an error, still no marker.
+  bash "$tmp/.factory/scripts/ticket.sh" stage "$rid" done >/dev/null
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" scope "src/a.rs,src/b.rs" >/dev/null
+  bash "$tmp/.factory/scripts/ticket.sh" set "$rid" authority explicit >/dev/null
+  mv "$tmp/.factory/scripts/ticket.sh" "$tmp/.factory/scripts/ticket.real"
+  printf '#!/bin/sh\n[ "$1" = set ] && [ "$3" = scope ] && exit 1\nexec bash "%s" "$@"\n' "$tmp/.factory/scripts/ticket.real" >"$tmp/.factory/scripts/ticket.sh"; chmod +x "$tmp/.factory/scripts/ticket.sh"
+  out="$(ev d-29 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st=$?
+  out2="$(ev d-29 issues '{"action":"reopened","issue":{"number":41,"title":"Regressed","html_url":"https://github.com/o/r/issues/41","body":"again"},"sender":{"login":"PremModhaOfficial"},"repository":{"full_name":"o/r"}}')"; st2=$?
+  mv "$tmp/.factory/scripts/ticket.real" "$tmp/.factory/scripts/ticket.sh"; chmod +x "$tmp/.factory/scripts/ticket.sh"
+  stg="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" stage)"; sc="$(bash "$tmp/.factory/scripts/ticket.sh" get "$rid" scope)"
+  { [ "$st" != 0 ] && [ "$st2" != 0 ] && [ "$stg" = done ] && [ "$sc" = 'src/a.rs,src/b.rs' ] && [ ! -f "$tmp/.factory/inbox/d-29.seen" ]; } \
+    || { echo "self-test FAILED: a failed mandate reset was absorbed by the retry (attempt 1 exit $st, retry exit $st2, stage '$stg', scope '$sc': $out / $out2)"; exit 1; }
+  okd "a requeue whose mandate reset fails stays terminal and is not absorbed by the retry"
   echo "event self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi
@@ -343,7 +425,8 @@ case "$EVENT:$ACTION" in
     # window leaves a ticket with no marker. `ticket.sh new` allocates the next id
     # every time, so the retry would file a second ticket for one issue. The ticket
     # whose FRONT MATTER names this issue IS this delivery, and it is reused.
-    TICKET="$(issue_owner "$NUM")"
+    TICKET="$(issue_owner "$NUM")" \
+      || { say "failed: a ticket could not be read, so #$NUM is not filed"; log ticket-store-unread "$URL"; exit 1; }
     # A reopened issue is work that exists again. Reusing a terminal ticket would
     # exit 0, write the marker and leave the stage terminal: no work item, and no
     # sweep signal either, because a tracked ticket is neither untracked nor stale.
@@ -368,16 +451,33 @@ case "$EVENT:$ACTION" in
           # previous round is not authority for this one. Empty scope plus
           # `authority: inferred` is the state a new ticket starts in, and the
           # planner re-derives both before a builder runs.
-          bash "$FACTORY/scripts/ticket.sh" stage "$tid" queued \
-            || { say "failed: no requeue for #$NUM"; log ticket-requeue-failed "$URL"; exit 1; }
+          #
+          # The order IS the atomicity: the mandate resets while the ticket is still
+          # terminal, and the stage move is last, so a failure at any step leaves a
+          # terminal ticket and the retry (no marker was written) repeats every step.
+          # Stage-first left a non-terminal ticket behind on a failed `set scope`,
+          # and the retry then found nothing to do at all: it wrote the marker with
+          # the widened mandate still in place, so the widening read as handled.
           bash "$FACTORY/scripts/ticket.sh" set "$tid" scope "" \
             || { say "failed: no scope reset for $tid"; log ticket-scope-reset-failed "$URL"; exit 1; }
           bash "$FACTORY/scripts/ticket.sh" set "$tid" authority inferred \
             || { say "failed: no authority reset for $tid"; log ticket-authority-reset-failed "$URL"; exit 1; }
+          bash "$FACTORY/scripts/ticket.sh" stage "$tid" queued \
+            || { say "failed: no requeue for #$NUM"; log ticket-requeue-failed "$URL"; exit 1; }
           log ticket-requeued "$URL" ;;
         blocked)
           say "recorded: #$NUM reopened while $tid is blocked (stage untouched)"
           log ticket-reopen-blocked "$URL" ;;
+        failed|paused)
+          # `failed` and `paused` are live stages (`ticket.sh:25`) and keep them: a
+          # reopen invents no semantics for a stage the Router did not name. Silence
+          # is not an option either — the delivery exited 0 with the marker written
+          # and nothing to show for it, indistinguishable from a handled one. The
+          # ledger line is the record, and the stage stays where the failure left it.
+          # Any other stage is already inside the ladder: a reopen of live work needs
+          # no requeue and no record beyond the delivery itself.
+          say "recorded: #$NUM reopened while $tid is $stage_now (stage untouched)"
+          log "ticket-reopen-kept-$stage_now" "$URL" ;;
       esac
     fi
     if [ -z "$TICKET" ]; then
@@ -407,7 +507,12 @@ case "$EVENT:$ACTION" in
     case "$NUM" in
       ''|*[!0-9]*|0) say "ignored: comment carries no issue number ('$NUM')"; log orphan-comment "$URL"; exit 3 ;;
     esac
-    TICKET="$(grep -l "^gh_issue: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
+    # Through the front-matter reader, not `grep -l` over the whole file: a ticket
+    # BODY line (`gh_issue: 42` in a Reports section) matched and absorbed a
+    # comment for another issue, exit 0. The read status is honoured, not dropped,
+    # for the reason issue_owner() honours it: an unread store is not "no ticket".
+    TICKET="$(issue_owner "$NUM")" \
+      || { say "failed: a ticket could not be read, so the comment on #$NUM is not filed"; log ticket-store-unread "$URL"; exit 1; }
     if [ -z "$TICKET" ]; then say "ignored: comment on #$NUM has no ticket"; log orphan-comment "$URL"; exit 3; fi
     # Appended raw, a comment carrying `gh_issue: 61` fabricated a tracked issue
     # and a `---` closed the front matter: the same guard as the issue branch.
@@ -421,8 +526,10 @@ case "$EVENT:$ACTION" in
     esac
     # Matched on the ticket's `pr` field, which `ticket.sh set <T> pr <num>`
     # writes. Nothing ever wrote the "PR #N" text this used to grep for, so
-    # every PR delivery read as an orphan.
-    TICKET="$(grep -l "^pr: $NUM$" "$FACTORY"/tickets/T-*.md 2>/dev/null | head -1)"
+    # every PR delivery read as an orphan. Read through the same front-matter-only
+    # reader as `gh_issue`: a `pr:` line in a body is not a link either.
+    TICKET="$(fm_owner pr "$NUM")" \
+      || { say "failed: a ticket could not be read while looking for PR #$NUM"; log pr-store-unread "$URL"; exit 1; }
     # Nothing else writes that field: the builder opens the PR with `gh pr
     # create` and names the ticket on its own line in the body, so the delivery
     # carries the link and the field is learned here.
