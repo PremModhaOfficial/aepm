@@ -148,12 +148,19 @@ case "$cmd" in
     shift
     request="" scope="" authority="inferred" issue="" base=""
     while [ $# -gt 0 ]; do
+      # Every flag here takes a value, so a flag with nothing after it is the
+      # caller's mistake and must say so: `$2` unset aborted under `set -u` with
+      # bash's own `unbound variable` and exit 1 (measured on all five arms at
+      # 75c13cb, `--base` last), which a caller cannot tell from a real failure.
+      [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       case "$1" in
         --request) request="$2"; shift 2 ;;
         --scope) scope="$2"; shift 2 ;;
         --authority) authority="$2"; shift 2 ;;
         --issue) issue="$2"; shift 2 ;;
-        --base) base="$2"; shift 2 ;;
+        # An empty value is not "no flag": it would fall through to the no-base
+        # branch and file a ticket whose caller thinks it named a base.
+        --base) [ -n "$2" ] || { echo "--base needs a ref" >&2; exit 2; }; base="$2"; shift 2 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
       esac
     done
@@ -164,18 +171,31 @@ case "$cmd" in
     scope="$(path_charset "$scope")"
     slug="$(token_charset "$slug")"
     issue="$(printf '%s' "$issue" | tr -cd '0-9')"
-    # The base lands in the front matter and in an emitted command, so it is a
-    # ref and nothing else: `A-Za-z0-9._/-` carries no shell metacharacter and no
-    # whitespace, which is what router-guard refuses on shape.
-    base="$(flatten "$base" | tr -cd 'A-Za-z0-9._/-')"
+    # The base lands in the front matter and in a command a builder pastes, so it
+    # is a revision and nothing else — and it is REFUSED, never stripped. The
+    # `tr -cd 'A-Za-z0-9._/-'` this replaces deleted `~`, `^` and `@`, so `HEAD~1`
+    # was recorded as `HEAD1`: a ref the caller never named, in `base:` and in the
+    # emitted line (measured at 75c13cb). The allowed set is what git reads as a
+    # revision minus what router-guard refuses on shape (SHELL_META: backtick, $,
+    # ( ) { } ! \ ; & | < >), so `main@{1}` is refused by name rather than
+    # silently becoming `main1`; gate.sh still refuses a base that does not
+    # resolve, which is the backstop this cannot be.
+    case "$base" in
+      *[!A-Za-z0-9._/~^@+-]*) echo "--base '$base' carries whitespace or a character router-guard refuses in a pasted command (allowed: A-Za-z0-9._/-~^@+); nothing was filed" >&2; exit 2 ;;
+    esac
     case "$authority" in explicit|inferred) ;; *) echo "--authority explicit|inferred" >&2; exit 2 ;; esac
     # The id is derived from a listing, so two concurrent calls can pick the same
     # one — measured in 2 of 12 runs, and the second `>` truncated the first, which
-    # is the splice shape T-28 was found in. noclobber makes the whole body one
-    # O_EXCL create, so a collision fails instead of overwriting, and the loop
-    # re-derives. The shell's own `File exists` line is left on stderr: silencing
-    # it would silence a real write error too. `set -e` does not fire on a failing
-    # redirection inside the `if` list.
+    # is the splice shape T-28 was found in. The body is written to a temp in the
+    # same directory and then LINKED into place, because link(2) is the exclusive
+    # create: a body write that stops half way (file-size limit, full disk, killed)
+    # cannot leave a reserved id holding truncated front matter. Writing `> "$file"`
+    # under noclobber did exactly that — measured at 75c13cb as 20 truncated
+    # tickets, one per retry, each treated as a reserved id. The write runs in a
+    # subshell so a killed writer is a status this loop can clean up after instead
+    # of the script's own death. A collision still leaves the shell's own line on
+    # stderr: silencing it would silence a real write error too, and the branch
+    # below tells the two apart by whether the target exists.
     tries=0
     while :; do
       last=0
@@ -184,7 +204,8 @@ case "$cmd" in
       fi
       id="T-$((last + 1))"
       file="$TICKETS/$id.md"
-      if ( set -o noclobber; {
+      tmpf="$(mktemp "$TICKETS/.new.XXXXXX")"
+      if ( {
       echo "---"
       echo "id: $id"
       echo "slug: $slug"
@@ -220,9 +241,13 @@ case "$cmd" in
       echo
       # A ticket is filed before its head exists, so the head stays a word the
       # runner substitutes. The pasted shape is the one router-guard allows: a
-      # relative gate path, a literal base, no `$(` and no `$(git`.
+      # relative gate path, a literal base, and none of the characters its
+      # SHELL_META refuses on shape — the parenthesised `git rev-parse HEAD` hint
+      # and its backticks were refused shapes, claimed guard-legal by an assertion
+      # that could not fail. The self-test now tests the emitted bytes for that
+      # class instead of for a `$FACTORY` that `echo` had already expanded.
       if [ -n "$base" ]; then
-        echo "- [ ] gate exits 0 (substitute HEAD_SHA from \`git rev-parse HEAD\`): \`bash .factory/gates/gate.sh all --base $base --sha HEAD_SHA --ticket-file $FACTORY/tickets/$id.md\`"
+        echo "- [ ] gate exits 0, substituting HEAD_SHA from git rev-parse HEAD: bash .factory/gates/gate.sh all --base $base --sha HEAD_SHA --ticket-file $FACTORY/tickets/$id.md"
       else
         # Loud, not a green line that judged nothing: with no base the gate falls
         # back to `merge-base HEAD origin/main`, which lists every other ticket's
@@ -240,7 +265,21 @@ case "$cmd" in
       echo
       echo "## Injection log"
       echo
-      } >"$file" ); then break; fi
+      } >"$tmpf" ); then
+        # 0644, the mode `> "$file"` gave under the usual umask; mktemp's own is
+        # 0600 and a silent mode change is drift nobody asked for.
+        chmod 0644 "$tmpf"
+        if ln "$tmpf" "$file"; then rm -f "$tmpf"; break; fi
+        rm -f "$tmpf"
+        if [ ! -e "$file" ]; then
+          echo "new: could not link a body into $file; nothing was filed" >&2
+          exit 1
+        fi
+      else
+        rm -f "$tmpf"
+        echo "new: could not write the body of $id; nothing was filed" >&2
+        exit 1
+      fi
       tries=$((tries + 1))
       [ "$tries" -lt 20 ] || { echo "new: no id could be reserved after 20 tries" >&2; exit 1; }
     done
@@ -470,10 +509,18 @@ T-2 stage=queued issue= attempts=0
       *"bash .factory/gates/gate.sh all --base $bsha"*) ;;
       *) echo "self-test FAILED: the emitted line names no relative gate path and base: $line" >&2; exit 1 ;;
     esac
-    case "$line" in
-      *'$('*|*'$FACTORY'*) echo "self-test FAILED: the emitted line carries a substitution the guard refuses: $line" >&2; exit 1 ;;
-    esac
     okd "new --base records the ref and emits a relative, guard-legal --base line"
+    # The line a builder pastes is judged by its bytes, never by what the emitter
+    # meant. These are router-guard's SHELL_META characters; the assertion this
+    # replaces tested for `$(` and for a literal `$FACTORY` that `echo` had already
+    # expanded, so it could not fail while the line it passed carried a
+    # parenthesised hint and two backticks — shapes the guard refuses.
+    for ch in ';' '&' '|' '<' '>' '`' '$' '(' ')' '{' '}' '!' '\'; do
+      if printf '%s' "$line" | grep -qF -- "$ch"; then
+        echo "self-test FAILED: the emitted gate line carries '$ch', which router-guard refuses in a pasted command: $line" >&2; exit 1
+      fi
+    done
+    okd "the emitted gate line carries no character router-guard refuses on shape"
     st=0; f="$(tk new unbased --request 'no base' --scope 'src/' --authority explicit 2>&1)" || st=$?
     [ "$st" = 0 ] || { echo "self-test FAILED: new without --base exited $st; event.sh files every ticket that way" >&2; exit 1; }
     bid="$(basename "$f" .md)"
@@ -482,14 +529,45 @@ T-2 stage=queued issue= attempts=0
     case "$line" in *--base*) ;; *) echo "self-test FAILED: no NOT EMITTED line, and no refusal by name: $line" >&2; exit 1 ;; esac
     case "$line" in *"ticket.sh set"*) ;; *) echo "self-test FAILED: the refused line names no way to record a base: $line" >&2; exit 1 ;; esac
     okd "new without --base still exits 0 and refuses to emit a line that judged nothing"
-    st=0; f="$(tk new junky --request 'junk base' --scope 'src/' --authority explicit --base 'a b;$(id)/x&y' 2>&1)" || st=$?
-    [ "$st" = 0 ] || { echo "self-test FAILED: new --base rejected a hostile ref instead of stripping it (exit $st)" >&2; exit 1; }
-    junk="$(tk get "$(basename "$f" .md)" base)"
-    [ -n "$junk" ] || { echo "self-test FAILED: a hostile --base recorded nothing" >&2; exit 1; }
-    case "$junk" in
-      *[!A-Za-z0-9._/-]*) echo "self-test FAILED: an untrusted --base reached the front matter: $junk" >&2; exit 1 ;;
+    # A base is a revision, not a prefix of one: stripping `~`, `^` and `@` recorded
+    # `HEAD1` for `HEAD~1` — a ref the caller never named, in `base:` and in the line
+    # a builder runs. `HEAD~1` is guard-legal as written, so it is kept; `main@{1}`
+    # needs braces the guard refuses, so it is refused by name, never rewritten.
+    st=0; f="$(tk new refbase --request 'a ref' --scope 'src/' --authority explicit --base 'HEAD~1' 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: new --base HEAD~1 exited $st: $f" >&2; exit 1; }
+    [ "$(tk get "$(basename "$f" .md)" base)" = 'HEAD~1' ] \
+      || { echo "self-test FAILED: --base HEAD~1 recorded '$(tk get "$(basename "$f" .md)" base)'" >&2; exit 1; }
+    rline="$(sed -n '/^- \[ \] gate exits 0/p' "$f")" || rline=""
+    case "$rline" in
+      *'--base HEAD~1'*) ;;
+      *) echo "self-test FAILED: the emitted line names a base the caller did not: $rline" >&2; exit 1 ;;
     esac
-    okd "an untrusted --base cannot carry a metacharacter into the front matter"
+    n0=$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)
+    for bad in 'main@{1}' 'a b;$(id)/x&y'; do
+      st=0; out="$(tk new junkbase --request 'junk base' --scope 'src/' --authority explicit --base "$bad" 2>&1)" || st=$?
+      [ "$st" = 2 ] \
+        || { echo "self-test FAILED: --base '$bad' exited $st instead of refusing a ref it cannot carry: $out" >&2; exit 1; }
+      case "$out" in *--base*) ;; *) echo "self-test FAILED: the refusal does not name the flag: $out" >&2; exit 1 ;; esac
+    done
+    [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$n0" ] \
+      || { echo "self-test FAILED: a refused --base still filed a ticket" >&2; exit 1; }
+    okd "a base keeps its revision syntax, and a ref it cannot carry is refused rather than rewritten"
+    # A flag with nothing after it aborted with bash's own `unbound variable` and
+    # exit 1 on all five arms (measured at 75c13cb), which reads like a crash. An
+    # empty `--base` is the same mistake and must not fall through to no-base.
+    for flag in --request --scope --authority --issue --base; do
+      st=0; out="$(tk new novalue "$flag" 2>&1)" || st=$?
+      [ "$st" = 2 ] || { echo "self-test FAILED: 'new novalue $flag' exited $st, not 2: $out" >&2; exit 1; }
+      case "$out" in
+        *"$flag needs a value"*) ;;
+        *) echo "self-test FAILED: '$flag' with no value is not named in a refusal: $out" >&2; exit 1 ;;
+      esac
+    done
+    st=0; out="$(tk new emptybase --request 'r' --scope 'src/' --authority explicit --base '' 2>&1)" || st=$?
+    [ "$st" = 2 ] || { echo "self-test FAILED: --base with an empty value exited $st, not 2: $out" >&2; exit 1; }
+    [ "$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)" = "$n0" ] \
+      || { echo "self-test FAILED: a refused new filed a ticket" >&2; exit 1; }
+    okd "a flag with no value is refused by name with exit 2, and files nothing"
     # A ticket filed with no scope is legal (event.sh files every webhook ticket
     # that way); dispatching a worker into it is not. Keys on emptiness: a
     # present-but-short `src/` was measured dispatching and must keep dispatching.
@@ -625,6 +703,21 @@ T-2 stage=queued issue= attempts=0
     [ "$st" = 1 ] \
       || { echo "self-test FAILED: new exited $st on an id it could not see; a truncating write exits 0, so only a refusal is safe: $out" >&2; exit 1; }
     okd "an unresolvable id collision refuses and writes nothing instead of truncating"
+    # The body is written to a temp and linked into place, so a write that cannot
+    # finish leaves no ticket at all. Writing `> "$file"` under noclobber left a
+    # truncated ticket on EVERY retry — measured at 75c13cb as 20 files of 1024
+    # bytes with no closing `---`, each one an id no later call could reuse. The
+    # limit kills the writer mid-body, which is the cheapest deterministic way to
+    # make a body write fail; the tick is a killed process, not a broken script.
+    n0=$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)
+    st=0; out="$( ( ulimit -f 1; bash "$tmp/.factory/scripts/ticket.sh" new bigbody \
+      --request "$(printf 'x%.0s' $(seq 1 1200))" --scope 'src/' --authority explicit ) 2>&1 )" || st=$?
+    [ "$st" != 0 ] \
+      || { echo "self-test FAILED: a body write that could not finish exited 0" >&2; exit 1; }
+    n1=$(ls "$tmp/.factory/tickets"/T-*.md | wc -l)
+    [ "$n1" = "$n0" ] \
+      || { echo "self-test FAILED: a failed body write left $((n1 - n0)) truncated ticket files: $out" >&2; exit 1; }
+    okd "a body write that cannot finish leaves no ticket, not a reserved id with truncated front matter"
     # 8 concurrent `new` calls: no loss, no spliced body, one ledger row per id. This
     # asserts the outcome and is NOT the mechanism proof — the two drills above are,
     # because this shape was measured intermittent (2 of 12 runs) before the fix.
@@ -735,7 +828,7 @@ T28
       done
       okd "nine verbs leave the $shp shape non-empty, with its key set and headings unchanged"
     done
-    if compgen -G "$tmp/.factory/tickets/.tmp.*" >/dev/null || compgen -G "$tmp/.factory/.state.tmp.*" >/dev/null; then
+    if compgen -G "$tmp/.factory/tickets/.tmp.*" >/dev/null || compgen -G "$tmp/.factory/tickets/.new.*" >/dev/null || compgen -G "$tmp/.factory/.state.tmp.*" >/dev/null; then
       echo "self-test FAILED: a temporary file was left behind" >&2; exit 1
     fi
     okd "no temporary file is left in the tickets dir or the factory root"
