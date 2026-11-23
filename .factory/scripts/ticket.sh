@@ -2,11 +2,15 @@
 # ticket.sh — the ticket file IS the state. No ticket, no work.
 #
 #   ticket.sh new <slug> --request <verbatim> --scope <p1,p2> --authority explicit|inferred [--issue N]
+#                   [--base <ref>]             the base a gate run is diffed against
 #   ticket.sh get <T-n> <key>
 #   ticket.sh set <T-n> <key> <value>           e.g. `set T-1 pr 168`: the PR a ticket's branch opened
 #                                              (event.sh matches a delivery's pull_request.number on it)
 #   ticket.sh stage <T-n> <stage>
-#   ticket.sh dispatch <T-n> <role> <taskId>    refuses while another task is live
+#   ticket.sh dispatch <T-n> <role> <taskId> [--stale <recorded taskId>]
+#                                              refuses while a task is recorded;
+#                                              --stale replaces one the caller
+#                                              declares dead or already reported
 #   ticket.sh done <T-n> <taskId>
 #   ticket.sh bump <T-n>                        attempts += 1
 #   ticket.sh list | resume | next
@@ -739,7 +743,7 @@ T28
     exit 0
     ;;
   *)
-    echo "usage: ticket.sh new|get|set|stage|dispatch|done|bump|list|resume|next|--self-test" >&2
+    echo "usage: ticket.sh new [--base <ref>] | get | set | stage | dispatch [--stale <taskId>] | done | bump | list | resume | next | --self-test" >&2
     exit 2
     ;;
 esac
