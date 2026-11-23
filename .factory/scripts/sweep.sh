@@ -12,15 +12,19 @@ JSON=0; [ "${1:-}" = "--json" ] && JSON=1
 
 tracked() { # the front matter only: a `gh_issue:` line a comment appends is not a link
   # Exits non-zero when a ticket path exists but cannot be read, so the caller can
-  # report the baseline as unknown instead of a short list.
-  local t rc=0
+  # report the baseline as unknown instead of a short list. The filter the old pipe
+  # carried lives here, after the read, so the status is the read's and not grep's:
+  # a blank `gh_issue:` line is not a ticket and a duplicate is one value.
+  local t v rc=0 out=""
   for t in "$FACTORY"/tickets/T-*.md; do
     [ -e "$t" ] || continue
     # A matched path that is not a readable file is an unread ticket, not an absent
     # one: awk SKIPS a directory with exit 0, so the check has to be made here.
     [ -f "$t" ] && [ -r "$t" ] || { rc=1; continue; }
-    awk 'NR==1{next} /^---$/{exit} /^gh_issue: /{sub(/^gh_issue: /,""); print}' "$t" || rc=1
+    v="$(awk 'NR==1{next} /^---$/{exit} /^gh_issue: /{sub(/^gh_issue: /,""); print}' "$t")" || rc=1
+    out="$out$v"$'\n'
   done
+  printf '%s' "$out" | grep -v '^$' | sort -u
   return "$rc"
 }
 
@@ -146,6 +150,18 @@ if [ "${1:-}" = "--self-test" ]; then
   printf '%s' "$out" | grep -q '"untracked_issues":"#62 ' \
     && { echo "self-test FAILED: an unreadable ticket left the open issues looking untracked: $out" >&2; exit 1; }
   okd "an unreadable ticket file makes the baseline unknown, never a list"
+  # 865491534c25: dropping the pipe that carried `sort -u` also dropped the dedupe
+  # and the blank-line filter. The rc now comes from tracked() itself and the filter
+  # is applied to its output, because the consumer greps a number: a blank line is
+  # not a ticket and a duplicate is one value.
+  rm -rf "$tmp/factory/tickets"; mkdir -p "$tmp/factory/tickets"
+  printf -- '---\nid: T-1\ngh_issue: 61\n---\n' >"$tmp/factory/tickets/T-1.md"
+  printf -- '---\nid: T-2\ngh_issue: 61\n---\n' >"$tmp/factory/tickets/T-2.md"
+  printf -- '---\nid: T-3\ngh_issue: \n---\n' >"$tmp/factory/tickets/T-3.md"
+  out="$(FACTORY="$tmp/factory" tracked)"; st=$?
+  { [ "$st" = 0 ] && [ "$out" = 61 ]; } \
+    || { echo "self-test FAILED: tracked() emitted a blank or a duplicate gh_issue (exit $st, output '$out')" >&2; exit 1; }
+  okd "tracked() drops a blank and a duplicate gh_issue"
   echo "sweep self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
   exit 0
 fi

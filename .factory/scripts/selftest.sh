@@ -149,9 +149,24 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s/gh-argv"\nexit 1\n' "$SW" >"$BIN/g
 out="$(SWEEP_FACTORY="$SW" PATH="$BIN:$PATH" bash "$FACTORY/scripts/sweep.sh" 2>&1)"; st=$?
 [ "$st" -ne 0 ] && ok "an unreadable GitHub fails the sweep (exit $st)" || bad "the sweep reported success while offline: $out"
 printf '%s' "$out" | grep -q "gh read failed" && ok "the sweep says why it failed" || bad "the sweep failed silently: $out"
-grep -q -- "--repo throwaway/sentinel" "$SW/gh-argv" 2>/dev/null \
-  && ok "the offline drill reads only its throwaway store" \
-  || bad "the offline drill read the live store, not the throwaway: $(cat "$SW/gh-argv" 2>/dev/null)"
+# 464534c37f28: one grep answered "the live store" for a run that never recorded a
+# call at all, which is a different fault. The verdict names the cause, and the repo
+# it saw when there was a call.
+argv_verdict() { # <argv file>
+  [ -s "${1:-}" ] || { echo no-call; return 0; }
+  grep -q -- "--repo throwaway/sentinel" "$1" && { echo throwaway; return 0; }
+  sed -n 's/.*--repo \([^ ][^ ]*\) *.*/\1/p' "$1" | head -1 | grep . || echo no-repo
+}
+case "$(argv_verdict "$SW/gh-argv")" in
+  throwaway) ok "the offline drill reads only its throwaway store" ;;
+  no-call) bad "the offline drill never recorded a gh call, so it failed before gh: $out" ;;
+  *) bad "the offline drill read the live store ($(argv_verdict "$SW/gh-argv")), not the throwaway: $out" ;;
+esac
+# The no-call verdict must be reachable: an empty record is not the live store.
+: >"$SW/gh-argv.empty"
+[ "$(argv_verdict "$SW/gh-argv.empty")" = no-call ] \
+  && ok "a run that recorded no gh call is named as that, not as the live store" \
+  || bad "the drill conflates a call it never saw with the live store"
 
 head1 "9. sweep self-test: unknown-vs-zero and the failed ticket read"
 # sweep.sh --self-test carries the drills for a gh read that halves through, an
