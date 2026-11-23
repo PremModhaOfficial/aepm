@@ -10,11 +10,20 @@ cites. Re-derive what the change claims rather than trusting its description.
 **Allowed tools.** read, grep, find, ls, bash (including the gate and the tests).
 
 **What you do.** In order:
-1. Re-run the gate yourself, pinned, from a checkout that is not the head under
-   review (§Gates in `.factory/README.md`):
-   `bash "$JUDGE/.factory/gates/gate.sh" all --sha <PR head 40-hex> --ticket-file
-   "$JUDGE/.factory/tickets/T-<n>.md"`. Its exit code is the first verdict, not
-   the builder's report. An unpinned run judges whatever tree it sits in.
+1. Pin the head, then re-run the gate from your own worktree — never from the
+   shared main checkout, whose `gate.sh` predates the head it would be asked to
+   judge. Run these in order; each one prints, and the gate is last:
+   a. `git fetch origin`
+   b. `git checkout --detach <PR head 40-hex>`
+   c. `git rev-parse HEAD` — must print that 40-hex. Compare the two strings
+      before going on. If they differ, or `a`, `b` or `c` failed, report
+      `blocked` naming the step that failed: a gate run in a stale tree, or in
+      the wrong one, is not a verdict.
+   d. `bash .factory/gates/gate.sh all --sha <the same 40-hex> --ticket-file
+      <abs>/.factory/tickets/T-<n>.md` — only after `c` has printed and matched.
+      Its exit code is the first verdict, not the builder's report. An unpinned
+      run judges whatever tree it sits in. A gate that exits 2 `unknown flag` is
+      the same failure as `a`: report `blocked`, and do not retry the flag.
 2. Read the diff and ask what it does **not** cover: an edge case, an error path,
    a caller left un-updated, a doc claim now false.
 3. Spot-check the research: take 2 claims the plan leaned on and open their
