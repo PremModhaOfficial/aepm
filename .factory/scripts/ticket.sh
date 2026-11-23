@@ -255,9 +255,33 @@ case "$cmd" in
       exit 2
     fi
     live="$(fm_get "$t" live_task)"
+    # `--stale <taskId>` is the caller's declaration about the recorded task. This
+    # script reads no task state at all, so it cannot tell a live task from a dead
+    # one and must not pretend to. The flag requires the recorded id exactly (the
+    # last word, the same match `done` uses and for the same reason: a substring
+    # test cleared task-10 for task-1) and records who replaced what before it
+    # dispatches, so the ledger always says what was declared.
+    stale=""
+    if [ $# -gt 3 ]; then
+      [ "$4" = --stale ] || { echo "unknown flag: $4" >&2; exit 2; }
+      stale="${5:-}"
+      [ -n "$stale" ] || { echo "--stale needs a taskId" >&2; exit 2; }
+      [ $# -le 5 ] || { echo "unknown flag: $6" >&2; exit 2; }
+    fi
     if [ -n "$live" ]; then
-      echo "REFUSED: $1 already has a live task ($live). task_status it first." >&2
-      exit 1
+      if [ -z "$stale" ]; then
+        echo "REFUSED: $1 already records a live task ($live), and ticket.sh cannot read task state, so it cannot tell live from dead. If that task is dead: dispatch $1 $role $tid --stale ${live##* }. If it reported: bash .factory/scripts/ticket.sh done $1 ${live##* }" >&2
+        exit 2
+      fi
+      if [ "${live##* }" != "$stale" ]; then
+        echo "REFUSED: --stale $stale is not the recorded task (${live##* }); nothing was written" >&2
+        exit 2
+      fi
+      fm_set "$t" live_task ""
+      ledger "$(basename "$t" .md)" router task-replaced "$live -> $role $tid"
+    elif [ -n "$stale" ]; then
+      echo "REFUSED: --stale $stale on $1, which records no live task; nothing was written" >&2
+      exit 2
     fi
     fm_set "$t" live_task "$role $tid"
     fm_set "$t" task_ids "$(fm_get "$t" task_ids)$role=$tid;"
@@ -455,6 +479,7 @@ T-2 stage=queued issue= attempts=0
     st=0; sf="$(tk new shortscope --request 'a short mandate' --scope 'src/' --authority explicit 2>&1)" || st=$?
     [ "$st" = 0 ] || { echo "self-test FAILED: filing a short-scope ticket exited $st" >&2; exit 1; }
     st=0; out="$(tk dispatch "$(basename "$sf" .md)" builder task-s 2>&1)" || st=$?
+    ssid="$(basename "$sf" .md)"
     [ "$st" = 0 ] \
       || { echo "self-test FAILED: a present-but-short scope was refused (exit $st): $out" >&2; exit 1; }
     okd "a present-but-short scope still dispatches"
@@ -470,6 +495,69 @@ T-2 stage=queued issue= attempts=0
     [ "$st" = 0 ] \
       || { echo "self-test FAILED: the empty-scope refusal leaked into another verb (exit $st)" >&2; exit 1; }
     okd "the empty-scope refusal is dispatch's alone: get set stage bump resume next done still exit 0"
+    # The recorded task cannot be judged from here, so dispatch takes a declaration.
+    st=0; df="$(tk new stateful --request 'prove the state refusal' --scope 'src/' --authority explicit 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: filing the state fixture exited $st" >&2; exit 1; }
+    did="$(basename "$df" .md)"
+    st=0; tk dispatch "$did" builder task-a >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: a first dispatch was refused (exit $st)" >&2; exit 1; }
+    [ "$(tk get "$did" live_task)" = "builder task-a" ] \
+      || { echo "self-test FAILED: dispatch recorded '$(tk get "$did" live_task)'" >&2; exit 1; }
+    okd "dispatch records the task when none is recorded"
+    before="$(cksum <"$df")"
+    st=0; out="$(tk dispatch "$did" verifier task-b 2>&1)" || st=$?
+    [ "$st" = 2 ] \
+      || { echo "self-test FAILED: a second dispatch was not refused with exit 2 (exit $st): $out" >&2; exit 1; }
+    [ "$(tk get "$did" live_task)" = "builder task-a" ] \
+      || { echo "self-test FAILED: a refused dispatch changed live_task" >&2; exit 1; }
+    [ "$(cksum <"$df")" = "$before" ] || { echo "self-test FAILED: a refused dispatch changed the ticket" >&2; exit 1; }
+    case "$out" in *"--stale"*) ;; *) echo "self-test FAILED: the refusal names no way to replace a dead task: $out" >&2; exit 1 ;; esac
+    case "$out" in *"done $did task-a"*) ;; *) echo "self-test FAILED: the refusal does not name `done` for a task that reported: $out" >&2; exit 1 ;; esac
+    if jq -r --arg t "$did" 'select(.ticket==$t) | .detail' "$tmp/.factory/ledger.jsonl" | grep -qF 'task-b'; then
+      echo "self-test FAILED: a refused dispatch wrote a ledger row naming task-b" >&2; exit 1
+    fi
+    okd "a second dispatch is refused by name, writes nothing, and leaves no ledger row"
+    st=0; out="$(tk dispatch "$did" verifier task-b --stale task-zzz 2>&1)" || st=$?
+    [ "$st" = 2 ] \
+      || { echo "self-test FAILED: a --stale that is not the recorded task exited $st, not 2" >&2; exit 1; }
+    [ "$(cksum <"$df")" = "$before" ] || { echo "self-test FAILED: a mismatched --stale changed the ticket" >&2; exit 1; }
+    okd "a --stale that is not the recorded task is refused and writes nothing"
+    st=0; out="$(tk dispatch "$did" verifier task-b --stale task-a 2>&1)" || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: --stale <recorded id> exited $st: $out" >&2; exit 1; }
+    [ "$(tk get "$did" live_task)" = "verifier task-b" ] \
+      || { echo "self-test FAILED: --stale left live_task at '$(tk get "$did" live_task)'" >&2; exit 1; }
+    row="$(jq -r --arg t "$did" 'select(.ticket==$t and .event=="task-replaced") | .detail' "$tmp/.factory/ledger.jsonl")"
+    case "$row" in *task-a*) ;; *) echo "self-test FAILED: the task-replaced row names no replaced id: $row" >&2; exit 1 ;; esac
+    case "$row" in *task-b*) ;; *) echo "self-test FAILED: the task-replaced row names no replacement id: $row" >&2; exit 1 ;; esac
+    okd "--stale <recorded id> clears it, dispatches, and the ledger names both ids"
+    # The two shapes the Router hit: a task that reported `completed`, and one that
+    # died with no report. ticket.sh records the disposition its caller declares; it
+    # never observes one, so the drill pins the declaration, not a guess.
+    st=0; tk done "$did" task-b >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] && [ -z "$(tk get "$did" live_task)" ] \
+      || { echo "self-test FAILED: done did not clear a task that reported (exit $st)" >&2; exit 1; }
+    st=0; tk dispatch "$did" verifier task-c >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: re-dispatch after done exited $st" >&2; exit 1; }
+    st=0; tk dispatch "$did" tester task-d --stale task-c >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: --stale after re-dispatch exited $st" >&2; exit 1; }
+    fin="$(jq -r --arg t "$did" 'select(.ticket==$t) | .event + " " + .detail' "$tmp/.factory/ledger.jsonl")"
+    case "$fin" in
+      *"task-finished task-b"*) ;;
+      *) echo "self-test FAILED: no task-finished row for the task that reported: $fin" >&2; exit 1 ;;
+    esac
+    case "$fin" in
+      *"task-replaced verifier task-c -> tester task-d"*) ;;
+      *) echo "self-test FAILED: the replacement does not say what it replaced: $fin" >&2; exit 1 ;;
+    esac
+    okd "both dispositions are on the record: task-finished for a report, task-replaced for a dead task"
+    st=0; tk done "$ssid" task-s >/dev/null 2>&1 || st=$?
+    [ "$st" = 0 ] || { echo "self-test FAILED: done on the short-scope ticket exited $st" >&2; exit 1; }
+    before="$(cksum <"$sf")"
+    st=0; out="$(tk dispatch "$ssid" builder task-e --stale task-s 2>&1)" || st=$?
+    [ "$st" = 2 ] \
+      || { echo "self-test FAILED: --stale on a ticket with no live task exited $st, not 2" >&2; exit 1; }
+    [ "$(cksum <"$sf")" = "$before" ] || { echo "self-test FAILED: a --stale with nothing to replace changed the ticket" >&2; exit 1; }
+    okd "--stale with no live task to replace is refused and writes nothing"
     echo "ticket self-test: $(wc -l <"$ASSERTIONS" | tr -d ' ') assertions hold"
     exit 0
     ;;
